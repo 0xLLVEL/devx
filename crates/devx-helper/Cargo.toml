@@ -1,0 +1,40 @@
+[package]
+name = "devx-helper"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Privileged helper service for DevX: named-pipe server, hosts-file operations"
+
+[[bin]]
+name = "devx-helper"
+path = "src/main.rs"
+
+[dependencies]
+base64 = { workspace = true }
+devx-core = { workspace = true }
+devx-ipc = { workspace = true }
+devx-privileged = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+winreg = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Security_Cryptography",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_Pipes",
+    "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+devx-privileged = { workspace = true }
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "io-util", "time", "process"] }

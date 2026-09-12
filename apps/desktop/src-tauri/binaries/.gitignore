@@ -1,0 +1,3 @@
+# External binaries are build artifacts of the workspace crates, staged here
+# by the release script; the installer hooks reference them by name.
+binaries/

@@ -1,0 +1,42 @@
+# Rust
+/target
+**/target
+
+# Node
+node_modules
+dist
+dist-ssr
+*.local
+
+# Tauri generated
+apps/desktop/src-tauri/gen/schemas
+
+# NOTE: apps/desktop/src/bindings.ts is generated but intentionally committed,
+# so the frontend can be type-checked without building Rust first. A test in
+# apps/desktop/src-tauri/tests/ipc.rs fails if it drifts.
+
+# Editors
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# OS
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*
+
+# Test/coverage
+coverage
+.nyc_output
+
+# Local scratch
+/.scratch

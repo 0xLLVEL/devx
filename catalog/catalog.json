@@ -1,0 +1,278 @@
+{
+  "schema_version": 1,
+  "updated_at": "2026-09-11",
+  "components": [
+    {
+      "id": "php",
+      "name": "PHP",
+      "kind": "runtime",
+      "summary": "PHP runtime, served to Nginx as FastCGI worker pools.",
+      "homepage": "https://www.php.net/",
+      "license": "PHP-3.01",
+      "multi_version": true,
+      "source": {
+        "type": "php_net",
+        "thread_safe": false,
+        "arch": "x64"
+      },
+      "archive": "zip",
+      "layout": { "strip_prefix": "none" },
+      "binaries": {
+        "php": "php.exe",
+        "php-cgi": "php-cgi.exe"
+      }
+    },
+    {
+      "id": "node",
+      "name": "Node.js",
+      "kind": "runtime",
+      "summary": "JavaScript runtime with npm, for building frontends and running dev servers.",
+      "homepage": "https://nodejs.org/",
+      "license": "MIT",
+      "multi_version": true,
+      "source": {
+        "type": "node_dist",
+        "asset": "win-x64-zip"
+      },
+      "archive": "zip",
+      "binaries": {
+        "node": "node.exe",
+        "npm": "npm.cmd",
+        "npx": "npx.cmd",
+        "corepack": "corepack.cmd"
+      }
+    },
+    {
+      "id": "nginx",
+      "name": "Nginx",
+      "kind": "web_server",
+      "summary": "Reverse proxy and static file server that fronts every DevX site.",
+      "homepage": "https://nginx.org/",
+      "license": "BSD-2-Clause",
+      "multi_version": false,
+      "source": {
+        "type": "pinned",
+        "versions": [
+          {
+            "version": "1.31.5",
+            "url": "https://nginx.org/download/nginx-1.31.5.zip",
+            "sha256": "00ad32a2bf66cee0ec8eb194347e8e79917f47017ccd3ad4bebf5574fabe002c",
+            "size_bytes": 2796419
+          },
+          {
+            "version": "1.30.1",
+            "url": "https://nginx.org/download/nginx-1.30.1.zip",
+            "sha256": "b77dd8d72ba6cf35afcae87775b5832a1e99175a2bac70338040340807dba7c2",
+            "size_bytes": 2770225
+          }
+        ]
+      },
+      "archive": "zip",
+      "binaries": {
+        "nginx": "nginx.exe"
+      },
+      "caveat": "nginx.org publishes no checksum file for its Windows builds, so these hashes were computed from the released archives and pinned in the DevX catalog."
+    },
+    {
+      "id": "caddy",
+      "name": "Caddy",
+      "kind": "web_server",
+      "summary": "Alternative web server with automatic HTTPS, usable in place of Nginx.",
+      "homepage": "https://caddyserver.com/",
+      "license": "Apache-2.0",
+      "multi_version": false,
+      "source": {
+        "type": "github_releases",
+        "repo": "caddyserver/caddy",
+        "asset_pattern": "^caddy_[0-9.]+_windows_amd64\\.zip$",
+        "checksum_asset_pattern": "^caddy_[0-9.]+_checksums\\.txt$"
+      },
+      "archive": "zip",
+      "binaries": {
+        "caddy": "caddy.exe"
+      }
+    },
+    {
+      "id": "mariadb",
+      "name": "MariaDB",
+      "kind": "database",
+      "summary": "MySQL-compatible relational database. The default database for DevX sites.",
+      "homepage": "https://mariadb.org/",
+      "license": "GPL-2.0-only",
+      "multi_version": true,
+      "source": {
+        "type": "pinned",
+        "versions": [
+          {
+            "version": "11.8.4",
+            "url": "https://archive.mariadb.org/mariadb-11.8.4/winx64-packages/mariadb-11.8.4-winx64.zip",
+            "sha256": "9edaa6d7b8df4b5ba8630a24c174b9f6b1de9b48e5f79fc423a1378c02193dc1"
+          },
+          {
+            "version": "11.4.9",
+            "url": "https://archive.mariadb.org/mariadb-11.4.9/winx64-packages/mariadb-11.4.9-winx64.zip",
+            "sha256": "802f9f40a9dca774a3ba62f39c21093942954f178d6d7d458dc51453929bcdda"
+          }
+        ]
+      },
+      "archive": "zip",
+      "binaries": {
+        "mariadbd": "bin/mariadbd.exe",
+        "mariadb": "bin/mariadb.exe",
+        "mariadb-install-db": "bin/mariadb-install-db.exe",
+        "mariadb-dump": "bin/mariadb-dump.exe",
+        "mariadb-admin": "bin/mariadb-admin.exe"
+      }
+    },
+    {
+      "id": "postgresql",
+      "name": "PostgreSQL",
+      "kind": "database",
+      "summary": "Relational database with strong SQL conformance and rich extension support.",
+      "homepage": "https://www.postgresql.org/",
+      "license": "PostgreSQL",
+      "multi_version": true,
+      "source": {
+        "type": "github_releases",
+        "repo": "theseus-rs/postgresql-binaries",
+        "asset_pattern": "^postgresql-[0-9.]+-x86_64-pc-windows-msvc\\.zip$",
+        "checksum_asset_pattern": "^postgresql-[0-9.]+-x86_64-pc-windows-msvc\\.zip\\.sha256$"
+      },
+      "archive": "zip",
+      "binaries": {
+        "postgres": "bin/postgres.exe",
+        "psql": "bin/psql.exe",
+        "initdb": "bin/initdb.exe",
+        "pg_ctl": "bin/pg_ctl.exe",
+        "pg_dump": "bin/pg_dump.exe",
+        "pg_restore": "bin/pg_restore.exe"
+      },
+      "caveat": "The PostgreSQL project ships no portable Windows ZIP. These are reproducible community builds from theseus-rs/postgresql-binaries, verified against the checksum published with each release."
+    },
+    {
+      "id": "redis",
+      "name": "Redis",
+      "kind": "cache",
+      "summary": "In-memory key-value store used for caching, queues and sessions.",
+      "homepage": "https://redis.io/",
+      "license": "AGPL-3.0-or-later",
+      "multi_version": true,
+      "source": {
+        "type": "github_releases",
+        "repo": "redis-windows/redis-windows",
+        "asset_pattern": "^Redis-[0-9.]+-Windows-x64-cygwin\\.zip$"
+      },
+      "archive": "zip",
+      "binaries": {
+        "redis-server": "redis-server.exe",
+        "redis-cli": "redis-cli.exe"
+      },
+      "caveat": "Redis publishes no official Windows build. This is a community Cygwin-based build; if you need a production-identical Redis, run it under WSL2 instead."
+    },
+    {
+      "id": "mailpit",
+      "name": "Mailpit",
+      "kind": "mail",
+      "summary": "Catches every email your apps send and shows it in a local inbox.",
+      "homepage": "https://mailpit.axllent.org/",
+      "license": "MIT",
+      "multi_version": false,
+      "source": {
+        "type": "github_releases",
+        "repo": "axllent/mailpit",
+        "asset_pattern": "^mailpit-windows-amd64\\.zip$"
+      },
+      "archive": "zip",
+      "binaries": {
+        "mailpit": "mailpit.exe"
+      }
+    },
+    {
+      "id": "minio",
+      "name": "MinIO",
+      "kind": "storage",
+      "summary": "S3-compatible object storage for testing uploads without touching AWS.",
+      "homepage": "https://min.io/",
+      "license": "AGPL-3.0-only",
+      "multi_version": false,
+      "source": {
+        "type": "pinned",
+        "versions": [
+          {
+            "version": "RELEASE.2025-09-07T16-13-09Z",
+            "url": "https://dl.min.io/server/minio/release/windows-amd64/archive/minio.RELEASE.2025-09-07T16-13-09Z",
+            "sha256": "af709e6ba68488404e85acdd22a3030d0f5e56a108d4b27d744f18ceb50861b4"
+          }
+        ]
+      },
+      "archive": "executable",
+      "layout": { "executable_name": "minio.exe" },
+      "binaries": {
+        "minio": "minio.exe"
+      },
+      "caveat": "MinIO releases binaries from dl.min.io rather than GitHub, so versions are pinned in the DevX catalog with the SHA-256 published alongside each release."
+    },
+    {
+      "id": "meilisearch",
+      "name": "Meilisearch",
+      "kind": "search",
+      "summary": "Full-text search engine with a simple HTTP API.",
+      "homepage": "https://www.meilisearch.com/",
+      "license": "MIT",
+      "multi_version": false,
+      "source": {
+        "type": "github_releases",
+        "repo": "meilisearch/meilisearch",
+        "asset_pattern": "^meilisearch-windows-amd64\\.exe$"
+      },
+      "archive": "executable",
+      "layout": { "executable_name": "meilisearch.exe" },
+      "binaries": {
+        "meilisearch": "meilisearch.exe"
+      }
+    },
+    {
+      "id": "composer",
+      "name": "Composer",
+      "kind": "tool",
+      "summary": "Dependency manager for PHP. Runs on the PHP version of the active site.",
+      "homepage": "https://getcomposer.org/",
+      "license": "MIT",
+      "multi_version": false,
+      "source": {
+        "type": "pinned",
+        "versions": [
+          {
+            "version": "2.9.4",
+            "url": "https://getcomposer.org/download/2.9.4/composer.phar",
+            "sha256": "d3eb5c4cb2e708267dac5f9a76d2a57b07836c7ea68783a1a02bd6d94753ea80"
+          }
+        ]
+      },
+      "archive": "executable",
+      "layout": { "executable_name": "composer.phar" },
+      "binaries": {
+        "composer": "composer.phar"
+      }
+    },
+    {
+      "id": "cloudflared",
+      "name": "Cloudflare Tunnel",
+      "kind": "tunnel",
+      "summary": "Exposes a local site on a public URL without opening a port.",
+      "homepage": "https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/",
+      "license": "Apache-2.0",
+      "multi_version": false,
+      "source": {
+        "type": "github_releases",
+        "repo": "cloudflare/cloudflared",
+        "asset_pattern": "^cloudflared-windows-amd64\\.exe$"
+      },
+      "archive": "executable",
+      "layout": { "executable_name": "cloudflared.exe" },
+      "binaries": {
+        "cloudflared": "cloudflared.exe"
+      }
+    }
+  ]
+}

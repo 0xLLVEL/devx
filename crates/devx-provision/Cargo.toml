@@ -1,0 +1,42 @@
+[package]
+name = "devx-provision"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Component catalog, version resolution and artifact provisioning for DevX"
+
+[dependencies]
+devx-core = { workspace = true }
+devx-ipc = { workspace = true }
+minijinja = { workspace = true }
+rcgen = { workspace = true }
+regex = { workspace = true }
+reqwest = { workspace = true }
+semver = { workspace = true }
+serde = { workspace = true }
+once_cell = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+specta = { workspace = true }
+# Only for `#[specta(type = specta_typescript::Number)]`, which documents the
+# deliberate `u64` to `number` narrowing on artifact sizes.
+specta-typescript = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+futures = { workspace = true }
+tracing = { workspace = true }
+zip = { workspace = true }
+flate2 = { workspace = true }
+tar = { workspace = true }
+
+[dev-dependencies]
+devx-proc = { workspace = true }
+pretty_assertions = { workspace = true }
+reqwest = { workspace = true }
+sha2 = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "time", "process"] }
+wiremock = { workspace = true }
+zip = { workspace = true, features = ["deflate"] }

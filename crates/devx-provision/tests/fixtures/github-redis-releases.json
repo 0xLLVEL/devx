@@ -1,0 +1,130 @@
+﻿[
+    {
+        "tag_name":  "8.10.1",
+        "draft":  false,
+        "prerelease":  false,
+        "published_at":  "2026-08-18T02:20:25Z",
+        "assets":  [
+                       {
+                           "name":  "Redis-8.10.1-Windows-x64-cygwin-with-Service.zip",
+                           "browser_download_url":  "https://github.com/redis-windows/redis-windows/releases/download/8.10.1/Redis-8.10.1-Windows-x64-cygwin-with-Service.zip",
+                           "size":  21177469,
+                           "digest":  "sha256:e70eea271f2b8d4bc113fe4a95331beaa2cd4b22c4ed07c93c54e342cb1788db"
+                       },
+                       {
+                           "name":  "Redis-8.10.1-Windows-x64-cygwin.zip",
+                           "browser_download_url":  "https://github.com/redis-windows/redis-windows/releases/download/8.10.1/Redis-8.10.1-Windows-x64-cygwin.zip",
+                           "size":  14769085,
+                           "digest":  "sha256:5532f2cc38a0185556b648d25a0c2ff1cc58029f37fd76eceb38736976dcb056"
+                       },
+                       {
+                           "name":  "Redis-8.10.1-Windows-x64-msys2-with-Service.zip",
+                           "browser_download_url":  "https://github.com/redis-windows/redis-windows/releases/download/8.10.1/Redis-8.10.1-Windows-x64-msys2-with-Service.zip",
+                           "size":  20341313,
+                           "digest":  "sha256:8d7710c858eb9ef24685d040272fa42f6b045906cbab14dc635697a20303af1b"
+                       },
+                       {
+                           "name":  "Redis-8.10.1-Windows-x64-msys2.zip",
+                           "browser_download_url":  "https://github.com/redis-windows/redis-windows/releases/download/8.10.1/Redis-8.10.1-Windows-x64-msys2.zip",
+                           "size":  13933009,
+                           "digest":  "sha256:4e8f2f956ed92feadf3f64b4e137ed34026438821e692e7ae22c9bba5976607a"
+                       }
+                   ]
+    },
+    {
+        "tag_name":  "8.8.2",
+        "draft":  false,
+        "prerelease":  false,
+        "published_at":  "2026-08-18T09:54:57Z",
+        "assets":  [
+                       {
+                           "name":  "Redis-8.8.2-Windows-x64-cygwin-with-Service.zip",
+                           "browser_download_url":  "https://github.com/redis-windows/redis-windows/releases/download/8.8.2/Redis-8.8.2-Windows-x64-cygwin-with-Service.zip",
+                           "size":  20849319,
+                           "digest":  "sha256:ec6c628fcb0616b42831eafaef31069a5d5767d9480fdcd2724d637f0b1a8cb8"
+                       },
+                       {
+                           "name":  "Redis-8.8.2-Windows-x64-cygwin.zip",
+                           "browser_download_url":  "https://github.com/redis-windows/redis-windows/releases/download/8.8.2/Redis-8.8.2-Windows-x64-cygwin.zip",
+                           "size":  14440765,
+                           "digest":  "sha256:9e603ad77224b30ac090ba963735b6a014373f6510001f0d9af3b8c3415b9a17"
+                       },
+                       {
+                           "name":  "Redis-8.8.2-Windows-x64-msys2-with-Service.zip",
+                           "browser_download_url":  "https://github.com/redis-windows/redis-windows/releases/download/8.8.2/Redis-8.8.2-Windows-x64-msys2-with-Service.zip",
+                           "size":  20024638,
+                           "digest":  "sha256:3b86882c4b8358da5afcf36029f4b79cf3748c5c393c624b6cb00152095182e1"
+                       },
+                       {
+                           "name":  "Redis-8.8.2-Windows-x64-msys2.zip",
+                           "browser_download_url":  "https://github.com/redis-windows/redis-windows/releases/download/8.8.2/Redis-8.8.2-Windows-x64-msys2.zip",
+                           "size":  13616164,
+                           "digest":  "sha256:7e79469cb8644a5c1cc466625cad5b4a68f34af207ca2c6779b3128e010cb453"
+                       }
+                   ]
+    },
+    {
+        "tag_name":  "8.6.6",
+        "draft":  false,
+        "prerelease":  false,
+        "published_at":  "2026-08-18T09:58:59Z",
+        "assets":  [
+                       {
+                           "name":  "Redis-8.6.6-Windows-x64-cygwin-with-Service.zip",
+                           "browser_download_url":  "https://github.com/redis-windows/redis-windows/releases/download/8.6.6/Redis-8.6.6-Windows-x64-cygwin-with-Service.zip",
+                           "size":  20326562,
+                           "digest":  "sha256:2c2fcd70a6bab6e84daf2d27ff73c29aa37ac0129fd4148943adbfa338ef5301"
+                       },
+                       {
+                           "name":  "Redis-8.6.6-Windows-x64-cygwin.zip",
+                           "browser_download_url":  "https://github.com/redis-windows/redis-windows/releases/download/8.6.6/Redis-8.6.6-Windows-x64-cygwin.zip",
+                           "size":  13918008,
+                           "digest":  "sha256:1a83ebbc52f302fb9a2de2764bb96c1da9075f7988c9f9e9e1450edb759d8658"
+                       },
+                       {
+                           "name":  "Redis-8.6.6-Windows-x64-msys2-with-Service.zip",
+                           "browser_download_url":  "https://github.com/redis-windows/redis-windows/releases/download/8.6.6/Redis-8.6.6-Windows-x64-msys2-with-Service.zip",
+                           "size":  19490934,
+                           "digest":  "sha256:c4daf0a226bece41ca9e3ae94917da39846ac9319ffe11329af776186f64fc89"
+                       },
+                       {
+                           "name":  "Redis-8.6.6-Windows-x64-msys2.zip",
+                           "browser_download_url":  "https://github.com/redis-windows/redis-windows/releases/download/8.6.6/Redis-8.6.6-Windows-x64-msys2.zip",
+                           "size":  13082460,
+                           "digest":  "sha256:a3800521899e594e4e5634a94771abdeb966fec18aa46e731b90bfd11735dc8b"
+                       }
+                   ]
+    },
+    {
+        "tag_name":  "8.4.6",
+        "draft":  false,
+        "prerelease":  false,
+        "published_at":  "2026-08-18T09:55:05Z",
+        "assets":  [
+                       {
+                           "name":  "Redis-8.4.6-Windows-x64-cygwin-with-Service.zip",
+                           "browser_download_url":  "https://github.com/redis-windows/redis-windows/releases/download/8.4.6/Redis-8.4.6-Windows-x64-cygwin-with-Service.zip",
+                           "size":  20027323,
+                           "digest":  "sha256:dccc420ecf0ef66c72f9cb2a36dc142637f17f17736651ba6e6b9b159cdc0ec2"
+                       },
+                       {
+                           "name":  "Redis-8.4.6-Windows-x64-cygwin.zip",
+                           "browser_download_url":  "https://github.com/redis-windows/redis-windows/releases/download/8.4.6/Redis-8.4.6-Windows-x64-cygwin.zip",
+                           "size":  13618769,
+                           "digest":  "sha256:58b45cb89fa2ccd99f9814adb77b6c459a794f78f89a38335205829db6990b0f"
+                       },
+                       {
+                           "name":  "Redis-8.4.6-Windows-x64-msys2-with-Service.zip",
+                           "browser_download_url":  "https://github.com/redis-windows/redis-windows/releases/download/8.4.6/Redis-8.4.6-Windows-x64-msys2-with-Service.zip",
+                           "size":  19188671,
+                           "digest":  "sha256:c6f0fd7c4dd07ec7d621d3d8e03870cba6539980e2aca41a3a32a44c2b1788d5"
+                       },
+                       {
+                           "name":  "Redis-8.4.6-Windows-x64-msys2.zip",
+                           "browser_download_url":  "https://github.com/redis-windows/redis-windows/releases/download/8.4.6/Redis-8.4.6-Windows-x64-msys2.zip",
+                           "size":  12780197,
+                           "digest":  "sha256:3f3714e0b005fdbfda358a8ccd9b7e9c43a16566e53a032a3c8dba04bf7b3782"
+                       }
+                   ]
+    }
+]

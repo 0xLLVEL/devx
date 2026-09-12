@@ -1,0 +1,138 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/devx-cli",
+    "crates/devx-core",
+    "crates/devx-db",
+    "crates/devx-dns",
+    "crates/devx-mail",
+    "crates/devx-helper",
+    "crates/devx-ipc",
+    "crates/devx-proc",
+    "crates/devx-provision",
+    "crates/devx-privileged",
+    "crates/devx-sys",
+    "apps/desktop/src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT"
+authors = ["DevX Contributors"]
+repository = "https://github.com/devx/devx"
+description = "DevX - developer environment manager for Windows"
+
+[workspace.dependencies]
+# --- Error handling / utility ---
+anyhow = "1.0"
+thiserror = "2.0"
+once_cell = "1.21"
+parking_lot = "0.12"
+indexmap = { version = "2.14", features = ["serde"] }
+regex = "1.13"
+minijinja = "2.24"
+semver = { version = "1.0", features = ["serde"] }
+
+# --- Serialization ---
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "1.1"
+
+# --- Logging ---
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+tracing-appender = "0.2"
+
+# --- Async ---
+tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "fs", "io-util", "process", "net", "time", "sync", "signal"] }
+tokio-util = { version = "0.7", features = ["io"] }
+futures = "0.3"
+
+# --- HTTP ---
+# `rustls` avoids depending on the machine's certificate store configuration,
+# which is one less thing to go wrong on a locked-down corporate laptop.
+reqwest = { version = "0.13", default-features = false, features = [
+    "rustls",
+    "json",
+    "gzip",
+    "stream",
+    "http2",
+    "charset",
+    "system-proxy",
+] }
+wiremock = "0.6"
+
+# --- Filesystem / paths ---
+directories = "6.0"
+tempfile = "3.27"
+walkdir = "2.5"
+
+# --- Hashing / crypto ---
+sha2 = "0.10"
+base64 = "0.23"
+# Local CA and site certificates. `x509-parser` re-enables loading the saved
+# CA certificate back (`CertificateParams::from_ca_cert_pem`).
+rcgen = { version = "0.13", features = ["x509-parser"] }
+
+# --- Database browser (devx-db, Task 12) ---
+# `mysql_async` for MariaDB/MySQL, `tokio-postgres` for PostgreSQL, and the
+# official `redis` crate. All read-only usage: the browser runs SELECT/
+# SHOW/EXPLAIN and Redis GET-style commands only.
+mysql_async = { version = "0.37", default-features = false, features = ["minimal"] }
+tokio-postgres = "0.7"
+redis = { version = "1.7", default-features = false, features = ["tokio-comp"] }
+
+# --- Archives ---
+# `zip` 4.x with only the codecs Windows release archives actually use, keeping
+# the dependency tree small. `enclosed_name` gives us zip-slip protection.
+zip = { version = "4.6", default-features = false, features = ["deflate"] }
+flate2 = "1.1"
+tar = "0.4"
+
+# --- Time ---
+time = { version = "0.3", features = ["formatting", "parsing", "macros", "serde-well-known", "local-offset"] }
+
+# --- Windows platform ---
+windows = "0.62"
+winreg = "0.56"
+
+# --- Typed IPC bindings (Tauri 2 compatible line) ---
+specta = { version = "=2.0.0-rc.25", features = ["derive"] }
+specta-typescript = "0.0.12"
+tauri-specta = { version = "=2.0.0-rc.25", features = ["derive", "typescript"] }
+
+# --- Tauri ---
+tauri = { version = "2.11", features = ["tray-icon"] }
+tauri-build = { version = "2.5", features = [] }
+tauri-plugin-opener = "2.5"
+tauri-plugin-autostart = "2.5"
+tauri-plugin-single-instance = "2.3"
+
+# --- Testing ---
+insta = { version = "1.48", features = ["json", "redactions"] }
+pretty_assertions = "1.4"
+
+# --- Internal crates ---
+devx-core = { path = "crates/devx-core" }
+devx-db = { path = "crates/devx-db" }
+devx-dns = { path = "crates/devx-dns" }
+devx-mail = { path = "crates/devx-mail" }
+devx-ipc = { path = "crates/devx-ipc" }
+devx-proc = { path = "crates/devx-proc" }
+devx-provision = { path = "crates/devx-provision" }
+devx-privileged = { path = "crates/devx-privileged" }
+devx-helper = { path = "crates/devx-helper" }
+devx-sys = { path = "crates/devx-sys" }
+
+[profile.dev]
+# Faster incremental builds for a workspace this size.
+debug = 1
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

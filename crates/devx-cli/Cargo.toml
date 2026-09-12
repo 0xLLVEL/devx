@@ -1,0 +1,25 @@
+[package]
+name = "devx-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "DevX command-line companion"
+
+[[bin]]
+name = "devx"
+path = "src/main.rs"
+
+[dependencies]
+devx-core = { workspace = true }
+devx-provision = { workspace = true }
+devx-sys = { workspace = true }
+anyhow = { workspace = true }
+serde_json = { workspace = true }
+clap = { version = "4.5", features = ["derive", "string", "wrap_help"] }
+tokio = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

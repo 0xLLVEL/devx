@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Manifest embedded into *test* binaries only.
+
+  `tauri-build` embeds an application manifest into the real executable via a
+  Windows resource, but that resource is not linked into `cargo test` binaries.
+  Without the Common Controls v6 dependency below, loading a test binary that
+  links `tauri` fails with STATUS_ENTRYPOINT_NOT_FOUND (0xc0000139) because
+  comctl32 v5 does not export the entry points tauri imports.
+
+  See https://github.com/tauri-apps/tauri/issues/11028
+-->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity
+        type="win32"
+        name="Microsoft.Windows.Common-Controls"
+        version="6.0.0.0"
+        processorArchitecture="*"
+        publicKeyToken="6595b64144ccf1df"
+        language="*"
+      />
+    </dependentAssembly>
+  </dependency>
+</assembly>

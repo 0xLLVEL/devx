@@ -1,0 +1,103 @@
+﻿[
+    {
+        "version":  "v26.5.0",
+        "date":  "2026-07-08",
+        "files":  [
+                      "aix-ppc64",
+                      "headers",
+                      "linux-arm64",
+                      "linux-ppc64le",
+                      "linux-s390x",
+                      "linux-x64",
+                      "osx-arm64-tar",
+                      "osx-x64-pkg",
+                      "osx-x64-tar",
+                      "src",
+                      "win-arm64-7z",
+                      "win-arm64-zip",
+                      "win-x64-7z",
+                      "win-x64-exe",
+                      "win-x64-msi",
+                      "win-x64-zip"
+                  ],
+        "npm":  "11.17.0",
+        "lts":  false,
+        "security":  false
+    },
+    {
+        "version":  "v24.12.0",
+        "date":  "2025-12-10",
+        "files":  [
+                      "aix-ppc64",
+                      "headers",
+                      "linux-arm64",
+                      "linux-ppc64le",
+                      "linux-s390x",
+                      "linux-x64",
+                      "osx-arm64-tar",
+                      "osx-x64-pkg",
+                      "osx-x64-tar",
+                      "src",
+                      "win-arm64-7z",
+                      "win-arm64-zip",
+                      "win-x64-7z",
+                      "win-x64-exe",
+                      "win-x64-msi",
+                      "win-x64-zip"
+                  ],
+        "npm":  "11.6.2",
+        "lts":  "Krypton",
+        "security":  false
+    },
+    {
+        "version":  "v22.22.0",
+        "date":  "2026-01-12",
+        "files":  [
+                      "aix-ppc64",
+                      "headers",
+                      "linux-arm64",
+                      "linux-armv7l",
+                      "linux-ppc64le",
+                      "linux-s390x",
+                      "linux-x64",
+                      "osx-arm64-tar",
+                      "osx-x64-pkg",
+                      "osx-x64-tar",
+                      "src",
+                      "win-arm64-7z",
+                      "win-arm64-zip",
+                      "win-x64-7z",
+                      "win-x64-exe",
+                      "win-x64-msi",
+                      "win-x64-zip",
+                      "win-x86-7z",
+                      "win-x86-exe",
+                      "win-x86-msi",
+                      "win-x86-zip"
+                  ],
+        "npm":  "10.9.4",
+        "lts":  "Jod",
+        "security":  true
+    },
+    {
+        "version":  "v0.10.48",
+        "date":  "2016-10-18",
+        "files":  [
+                      "headers",
+                      "linux-x64",
+                      "linux-x86",
+                      "osx-x64-pkg",
+                      "osx-x64-tar",
+                      "osx-x86-tar",
+                      "src",
+                      "sunos-x64",
+                      "sunos-x86",
+                      "win-x64-exe",
+                      "win-x86-exe",
+                      "win-x86-msi"
+                  ],
+        "npm":  "2.15.1",
+        "lts":  false,
+        "security":  true
+    }
+]

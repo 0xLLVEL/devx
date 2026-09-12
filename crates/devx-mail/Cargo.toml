@@ -1,0 +1,21 @@
+[package]
+name = "devx-mail"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Typed client for the bundled Mailpit mail catcher's HTTP API"
+
+[dependencies]
+devx-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+specta = { workspace = true }
+specta-typescript = { workspace = true }
+reqwest = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+wiremock = { workspace = true }
+pretty_assertions = { workspace = true }

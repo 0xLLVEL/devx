@@ -1,0 +1,23 @@
+[package]
+name = "devx-db"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Read-only database introspection and query execution for the DevX database browser"
+
+[dependencies]
+devx-core = { workspace = true }
+mysql_async = { workspace = true }
+redis = { workspace = true }
+serde = { workspace = true }
+specta = { workspace = true }
+specta-typescript = { workspace = true }
+tokio = { workspace = true }
+tokio-postgres = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "time"] }
