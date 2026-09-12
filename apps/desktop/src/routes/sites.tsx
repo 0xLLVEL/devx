@@ -8,6 +8,7 @@ import {
   Plus,
   ShieldCheck,
   Trash2,
+  Variable,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -65,6 +66,16 @@ export function SitesPage() {
   const dnsStop = useMutation({
     mutationFn: ipc.dnsStop,
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["dns"] }),
+  });
+  const aliasAdd = useMutation({
+    mutationFn: ({ hostname, alias }: { hostname: string; alias: string }) =>
+      ipc.siteAliasAdd(hostname, alias),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["sites"] }),
+  });
+  const aliasDelete = useMutation({
+    mutationFn: ({ hostname, alias }: { hostname: string; alias: string }) =>
+      ipc.siteAliasDelete(hostname, alias),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["sites"] }),
   });
 
   const phpChoices = (phpPools.data ?? []).map((pool) => pool.version);
@@ -180,6 +191,8 @@ export function SitesPage() {
           </CardContent>
         </Card>
 
+        <TemplatesCard phpChoices={phpChoices} />
+
         {sites.isPending ? (
           <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
             <Loader2 className="size-4 animate-spin" />
@@ -198,6 +211,9 @@ export function SitesPage() {
                 site={site}
                 removing={remove.isPending && remove.variables === site.hostname}
                 onRemove={() => remove.mutate(site.hostname)}
+                onAliasAdd={(alias) => aliasAdd.mutate({ hostname: site.hostname, alias })}
+                onAliasDelete={(alias) => aliasDelete.mutate({ hostname: site.hostname, alias })}
+                aliasBusy={aliasAdd.isPending || aliasDelete.isPending}
               />
             ))}
           </ul>
@@ -315,16 +331,25 @@ function CaCard({
   );
 }
 
-/** One configured site: host, docroot, PHP target, and a remove control. */
+/** One configured site: host, docroot, PHP target, env vars, and remove. */
 function SiteRow({
   site,
   removing,
   onRemove,
+  onAliasAdd,
+  onAliasDelete,
+  aliasBusy,
 }: {
   site: SiteStatus;
   removing: boolean;
   onRemove: () => void;
+  onAliasAdd: (alias: string) => void;
+  onAliasDelete: (alias: string) => void;
+  aliasBusy: boolean;
 }) {
+  const [showEnv, setShowEnv] = useState(false);
+  const [showAliases, setShowAliases] = useState(false);
+
   return (
     <li>
       <Card>
@@ -345,6 +370,14 @@ function SiteRow({
                   <Lock className="size-3" aria-hidden /> HTTPS
                 </Badge>
               ) : null}
+              {Object.keys(site.env).length > 0 ? (
+                <Badge variant="outline">
+                  <Variable className="size-3" aria-hidden /> {Object.keys(site.env).length} env
+                </Badge>
+              ) : null}
+              {site.aliases.length > 0 ? (
+                <Badge variant="outline">+{site.aliases.length} alias</Badge>
+              ) : null}
             </div>
             <p className="mt-1 truncate pl-6 text-xs text-muted-foreground" data-selectable>
               {site.docroot}
@@ -355,18 +388,379 @@ function SiteRow({
               </p>
             ) : null}
           </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={removing}
-            onClick={onRemove}
-            aria-label={`Remove ${site.hostname}`}
-          >
-            {removing ? <Loader2 className="animate-spin" /> : <Trash2 />}
-            Remove
-          </Button>
+          <div className="flex shrink-0 items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowAliases((open) => !open)}
+              aria-expanded={showAliases}
+            >
+              <Network />
+              Aliases
+            </Button>
+            {site.php_version ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowEnv((open) => !open)}
+                aria-expanded={showEnv}
+              >
+                <Variable />
+                Env
+              </Button>
+            ) : null}
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={removing}
+              onClick={onRemove}
+              aria-label={`Remove ${site.hostname}`}
+            >
+              {removing ? <Loader2 className="animate-spin" /> : <Trash2 />}
+              Remove
+            </Button>
+          </div>
         </CardContent>
+        {showEnv ? <EnvPanel site={site} /> : null}
+        {showAliases ? (
+          <AliasPanel
+            site={site}
+            busy={aliasBusy}
+            onAdd={onAliasAdd}
+            onDelete={onAliasDelete}
+          />
+        ) : null}
       </Card>
     </li>
+  );
+}
+
+/**
+ * Edits a site's alias host names: the nginx `server_name` list. Each alias
+ * resolves like the primary name and shows up in the same server block.
+ */
+function AliasPanel({
+  site,
+  busy,
+  onAdd,
+  onDelete,
+}: {
+  site: SiteStatus;
+  busy: boolean;
+  onAdd: (alias: string) => void;
+  onDelete: (alias: string) => void;
+}) {
+  const [alias, setAlias] = useState("");
+
+  const entries = [...site.aliases].sort((a, b) => a.localeCompare(b));
+
+  return (
+    <div className="space-y-3 border-t border-border p-4">
+      {entries.length > 0 ? (
+        <ul className="space-y-1.5">
+          {entries.map((name) => (
+            <li key={name} className="flex items-center justify-between gap-3">
+              <span className="font-mono text-xs" data-selectable>
+                {name}
+              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={busy}
+                onClick={() => onDelete(name)}
+                aria-label={`Delete ${name}`}
+              >
+                <Trash2 />
+              </Button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          No aliases. Add extra host names the site answers to alongside{" "}
+          {site.hostname}.
+        </p>
+      )}
+
+      <form
+        className="flex flex-wrap items-end gap-2"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const trimmed = alias.trim().toLowerCase();
+          if (trimmed.length === 0) {
+            return;
+          }
+          onAdd(trimmed);
+          setAlias("");
+        }}
+      >
+        <div className="space-y-1.5">
+          <Label htmlFor={`alias-${site.hostname}`}>Alias host name</Label>
+          <Input
+            id={`alias-${site.hostname}`}
+            value={alias}
+            placeholder={`www.${site.hostname}`}
+            className="w-64 font-mono text-xs"
+            onChange={(event) => setAlias(event.target.value.toLowerCase())}
+            autoComplete="off"
+            spellCheck={false}
+          />
+        </div>
+        <Button type="submit" size="sm" disabled={busy || alias.trim().length === 0}>
+          <Plus />
+          Add alias
+        </Button>
+      </form>
+    </div>
+  );
+}
+
+/**
+ * Edits a site's environment variables: one row per var, plus an add form.
+ *
+ * Saving re-renders the nginx block and restarts nginx, so the values reach
+ * the site's PHP as `fastcgi_param`s immediately.
+ */
+function EnvPanel({ site }: { site: SiteStatus }) {
+  const queryClient = useQueryClient();
+  const [key, setKey] = useState("");
+  const [value, setValue] = useState("");
+
+  const invalidate = () => {
+    void queryClient.invalidateQueries({ queryKey: ["sites"] });
+  };
+
+  const setEnv = useMutation({
+    mutationFn: ({ key: k, value: v }: { key: string; value: string }) =>
+      ipc.siteEnvSet(site.hostname, k, v),
+    onSuccess: invalidate,
+  });
+  const deleteEnv = useMutation({
+    mutationFn: (k: string) => ipc.siteEnvDelete(site.hostname, k),
+    onSuccess: invalidate,
+  });
+
+  const error =
+    setEnv.error instanceof Error
+      ? setEnv.error
+      : deleteEnv.error instanceof Error
+        ? deleteEnv.error
+        : null;
+  const entries = Object.entries(site.env).sort(([a], [b]) => a.localeCompare(b));
+
+  return (
+    <div className="space-y-3 border-t border-border p-4">
+      {site.php_version ? null : (
+        <p className="text-xs text-muted-foreground">
+          This site is static; environment variables only reach PHP sites.
+        </p>
+      )}
+
+      {entries.length > 0 ? (
+        <ul className="space-y-1.5">
+          {entries.map(([k, v]) => (
+            <li key={k} className="flex items-center justify-between gap-3">
+              <span className="min-w-0 truncate font-mono text-xs" data-selectable>
+                <span className="font-medium">{k}</span>
+                <span className="text-muted-foreground"> = {v}</span>
+              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={deleteEnv.isPending}
+                onClick={() => deleteEnv.mutate(k)}
+                aria-label={`Delete ${k}`}
+              >
+                <Trash2 />
+              </Button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          No environment variables yet. They are exposed to the site's PHP
+          requests, like a server-level .env.
+        </p>
+      )}
+
+      <form
+        className="flex flex-wrap items-end gap-2"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (key.trim().length === 0) {
+            return;
+          }
+          setEnv.mutate({ key: key.trim(), value });
+          setKey("");
+          setValue("");
+        }}
+      >
+        <div className="space-y-1.5">
+          <Label htmlFor={`env-key-${site.hostname}`}>Name</Label>
+          <Input
+            id={`env-key-${site.hostname}`}
+            value={key}
+            placeholder="APP_ENV"
+            className="w-40 font-mono text-xs"
+            onChange={(event) => setKey(event.target.value.toUpperCase())}
+            autoComplete="off"
+            spellCheck={false}
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor={`env-value-${site.hostname}`}>Value</Label>
+          <Input
+            id={`env-value-${site.hostname}`}
+            value={value}
+            placeholder="local"
+            className="w-56"
+            onChange={(event) => setValue(event.target.value)}
+            autoComplete="off"
+            spellCheck={false}
+          />
+        </div>
+        <Button type="submit" size="sm" disabled={setEnv.isPending || key.trim().length === 0}>
+          {setEnv.isPending ? <Loader2 className="animate-spin" /> : <Plus />}
+          Set
+        </Button>
+      </form>
+
+      {error ? (
+        <p className="flex items-center gap-2 text-sm text-destructive" role="alert">
+          <CircleAlert className="size-4" />
+          {error.message}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * New site from template: scaffold the docroot and register the site in one
+ * step. Download-based templates (WordPress, Laravel) return a suggested
+ * terminal command instead of fetching anything without a checksum.
+ */
+function TemplatesCard({ phpChoices }: { phpChoices: string[] }) {
+  const queryClient = useQueryClient();
+  const templates = useQuery({ queryKey: ["templates"], queryFn: ipc.templateList });
+
+  const [templateId, setTemplateId] = useState("static");
+  const [hostname, setHostname] = useState("");
+  const [docroot, setDocroot] = useState("");
+  const [phpVersion, setPhpVersion] = useState("");
+
+  const create = useMutation({
+    mutationFn: () => ipc.templateCreate(templateId, hostname.trim(), docroot.trim(), phpVersion, false),
+    onSuccess: () => {
+      setHostname("");
+      setDocroot("");
+      queryClient.invalidateQueries({ queryKey: ["sites"] });
+    },
+  });
+
+  const chosen = (templates.data ?? []).find((template) => template.id === templateId);
+  const error =
+    create.error instanceof Error ? create.error : null;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>New site from template</CardTitle>
+        <CardDescription>
+          Scaffolds the folder and registers the .test site in one step.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <form
+          className="grid gap-3 sm:grid-cols-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            create.mutate();
+          }}
+        >
+          <div className="space-y-1.5">
+            <Label htmlFor="template-id">Template</Label>
+            <Select
+              id="template-id"
+              value={templateId}
+              onChange={(event) => setTemplateId(event.target.value)}
+            >
+              {(templates.data ?? []).map((template) => (
+                <option key={template.id} value={template.id}>
+                  {template.name}
+                </option>
+              ))}
+            </Select>
+            <p className="text-xs text-muted-foreground">{chosen?.description}</p>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="template-hostname">Site host name</Label>
+            <Input
+              id="template-hostname"
+              value={hostname}
+              placeholder="myapp.test"
+              onChange={(event) => setHostname(event.target.value)}
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="template-docroot">Document root (new folder)</Label>
+            <Input
+              id="template-docroot"
+              value={docroot}
+              placeholder="C:\dev\myapp\public"
+              onChange={(event) => setDocroot(event.target.value)}
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="template-php">PHP version</Label>
+            <Select
+              id="template-php"
+              value={phpVersion}
+              onChange={(event) => setPhpVersion(event.target.value)}
+              disabled={templateId === "static"}
+            >
+              <option value="">None (static)</option>
+              {phpChoices.map((version) => (
+                <option key={version} value={version}>
+                  {version}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div className="sm:col-span-2">
+            <Button
+              type="submit"
+              size="sm"
+              disabled={create.isPending || hostname.trim().length === 0 || docroot.trim().length === 0}
+            >
+              {create.isPending ? <Loader2 className="animate-spin" /> : <Plus />}
+              Create site
+            </Button>
+          </div>
+        </form>
+
+        {create.data?.follow_up_command ? (
+          <div className="rounded-md border border-border bg-muted/40 p-3 text-sm">
+            <p className="mb-1 text-xs text-muted-foreground">
+              Finish the scaffold in the Terminal (runtimes are already on
+              PATH):
+            </p>
+            <code className="font-mono text-xs" data-selectable>
+              {create.data.follow_up_command}
+            </code>
+          </div>
+        ) : null}
+        {error ? (
+          <p className="flex items-center gap-2 text-sm text-destructive" role="alert">
+            <CircleAlert className="size-4" />
+            {error.message}
+          </p>
+        ) : null}
+      </CardContent>
+    </Card>
   );
 }

@@ -1,11 +1,14 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CircleAlert,
   Database,
   HardDrive,
   Loader2,
   Play,
+  Save,
   Table2,
+  Trash2,
+  Undo2,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -211,11 +214,163 @@ export function DatabasesPage() {
                 </div>
               </CardContent>
             </Card>
+
+            {chosen ? <BackupsCard server={chosen} /> : null}
           </>
         )}
       </div>
     </>
   );
+}
+
+/**
+ * Backups for one database server: SQL dumps for MariaDB/PostgreSQL, RDB
+ * snapshots for Redis. The ten newest are kept; older ones are pruned.
+ */
+function BackupsCard({ server }: { server: DbServer }) {
+  const queryClient = useQueryClient();
+  const serviceId = server.service_id;
+
+  const backups = useQuery({
+    queryKey: ["backups", serviceId],
+    queryFn: () => ipc.backupList(serviceId),
+  });
+
+  const create = useMutation({
+    mutationFn: () => ipc.backupCreate(serviceId),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["backups", serviceId] }),
+  });
+  const restore = useMutation({
+    mutationFn: (fileName: string) => ipc.backupRestore(serviceId, fileName),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["backups", serviceId] }),
+  });
+  const remove = useMutation({
+    mutationFn: (fileName: string) => ipc.backupDelete(serviceId, fileName),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["backups", serviceId] }),
+  });
+
+  const entries = backups.data ?? [];
+  const actionError =
+    create.error instanceof Error
+      ? create.error
+      : restore.error instanceof Error
+        ? restore.error
+        : remove.error instanceof Error
+          ? remove.error
+          : null;
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Save className="size-4 text-muted-foreground" aria-hidden />
+              Backups — {engineLabel(server.engine)}
+            </CardTitle>
+            <CardDescription>
+              {server.engine === "redis"
+                ? "Snapshots the keyspace with SAVE and copies the RDB file; restoring needs Redis stopped."
+                : "Dumps all databases through the engine's own tool into plain SQL."}{" "}
+              The ten newest backups are kept.
+            </CardDescription>
+          </div>
+          <Button size="sm" onClick={() => create.mutate()} disabled={create.isPending}>
+            {create.isPending ? <Loader2 className="animate-spin" /> : <Save />}
+            Back up now
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {backups.isPending ? (
+          <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
+            <Loader2 className="size-4 animate-spin" />
+            Loading backups…
+          </p>
+        ) : entries.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            No backups yet. Take one before schema experiments or upgrades.
+          </p>
+        ) : (
+          <ul className="space-y-1.5">
+            {entries.map((entry) => (
+              <li
+                key={entry.file_name}
+                className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2"
+              >
+                <div className="min-w-0">
+                  <p className="truncate font-mono text-xs" data-selectable>
+                    {entry.file_name}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {formatTimestamp(entry.created_unix)} · {formatSize(entry.size_bytes)}
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={restore.isPending}
+                    onClick={() => {
+                      if (window.confirm(`Restore ${entry.file_name} over the running ${serviceId}?`)) {
+                        restore.mutate(entry.file_name);
+                      }
+                    }}
+                  >
+                    {restore.isPending && restore.variables === entry.file_name ? (
+                      <Loader2 className="animate-spin" />
+                    ) : (
+                      <Undo2 />
+                    )}
+                    Restore
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={remove.isPending}
+                    onClick={() => remove.mutate(entry.file_name)}
+                    aria-label={`Delete ${entry.file_name}`}
+                  >
+                    {remove.isPending && remove.variables === entry.file_name ? (
+                      <Loader2 className="animate-spin" />
+                    ) : (
+                      <Trash2 />
+                    )}
+                  </Button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {actionError ? (
+          <p className="flex items-center gap-2 text-sm text-destructive" role="alert">
+            <CircleAlert className="size-4" />
+            {actionError.message}
+          </p>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Formats Unix seconds as a local date-time string. */
+function formatTimestamp(unixSeconds: number): string {
+  if (unixSeconds === 0) {
+    return "unknown time";
+  }
+  return new Date(unixSeconds * 1000).toLocaleString();
+}
+
+/** Formats a byte count for the backup list. */
+function formatSize(bytes: number): string {
+  if (bytes >= 1024 ** 2) {
+    return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+  }
+  if (bytes >= 1024) {
+    return `${(bytes / 1024).toFixed(0)} KB`;
+  }
+  return `${bytes} B`;
 }
 
 /** The table-name listing inside its card. */

@@ -1,6 +1,7 @@
 import {
   Boxes,
   Database,
+  FileText,
   Globe,
   LayoutDashboard,
   Mail,
@@ -8,6 +9,7 @@ import {
   Settings,
   Share2,
   Stethoscope,
+  TerminalSquare,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { NavLink } from "react-router-dom";
@@ -25,10 +27,12 @@ const NAV_ITEMS: NavItem[] = [
   { to: "/components", label: "Components", icon: <Boxes /> },
   { to: "/services", label: "Services", icon: <Package /> },
   { to: "/sites", label: "Sites", icon: <Globe /> },
+  { to: "/logs", label: "Logs", icon: <FileText /> },
   { to: "/share", label: "Share", icon: <Share2 /> },
   { to: "/databases", label: "Databases", icon: <Database /> },
   { to: "/mail", label: "Mail", icon: <Mail /> },
   { to: "/diagnostics", label: "Diagnostics", icon: <Stethoscope /> },
+  { to: "/terminal", label: "Terminal", icon: <TerminalSquare /> },
   { to: "/settings", label: "Settings", icon: <Settings /> },
 ];
 

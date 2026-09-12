@@ -17,6 +17,8 @@ pub mod tray;
 
 use tauri::Manager;
 use tauri_plugin_autostart::MacosLauncher;
+use tauri_plugin_notification::NotificationExt;
+use tauri_specta::Event;
 
 /// Runs the DevX desktop application.
 ///
@@ -43,6 +45,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
             None,
@@ -75,6 +78,8 @@ pub fn run() {
 
             session::restore(app.handle().clone());
 
+            spawn_service_watcher(app.handle().clone());
+
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -98,5 +103,79 @@ pub fn persist_session(app: &tauri::AppHandle) {
 
     if let Err(err) = session::save(&state.paths, &snapshot) {
         tracing::warn!(error = %err, "could not persist the session");
+    }
+}
+
+/// Relays supervised-service transitions to the user.
+///
+/// Every transition is emitted as a typed event so the frontend reacts the
+/// moment something happens; a non-requested failure additionally surfaces as
+/// a Windows notification, unless the setting is turned off. A lagged receiver
+/// is not fatal — the frontend's polling resyncs statuses on its own.
+fn spawn_service_watcher(app: tauri::AppHandle) {
+    let state = app.state::<state::AppState>();
+    let mut events = state.services.events();
+
+    tauri::async_runtime::spawn(async move {
+        loop {
+            match events.recv().await {
+                Ok(event) => {
+                    let update = events::ServiceEventUpdate {
+                        event: event.clone(),
+                    };
+                    if let Err(err) = update.emit(&app) {
+                        tracing::warn!(error = %err, "could not emit service event");
+                    }
+
+                    if event.state == devx_proc::ServiceState::Failed {
+                        notify_failure(&app, &event);
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(missed)) => {
+                    tracing::warn!(
+                        missed,
+                        "service event bus lagged; statuses resync by polling"
+                    );
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    });
+}
+
+/// Sends the failure toast, when the setting allows it.
+fn notify_failure(app: &tauri::AppHandle, event: &devx_proc::ServiceEvent) {
+    let notify = app
+        .state::<state::AppState>()
+        .with_config(|config| config.config().general.notify_on_failure);
+    if !notify {
+        return;
+    }
+
+    let body = match &event.exit {
+        Some(devx_proc::ExitReason::Crashed { code: Some(code) }) => {
+            format!("{} exited unexpectedly (code {code}).", event.id)
+        }
+        Some(devx_proc::ExitReason::Crashed { code: None }) => {
+            format!("{} exited unexpectedly.", event.id)
+        }
+        Some(devx_proc::ExitReason::HealthTimeout) => format!(
+            "{} started but never became healthy; check its logs.",
+            event.id
+        ),
+        Some(devx_proc::ExitReason::SpawnFailed { message }) => {
+            format!("{} could not start: {message}.", event.id)
+        }
+        _ => format!("{} failed. Check its logs in DevX.", event.id),
+    };
+
+    if let Err(err) = app
+        .notification()
+        .builder()
+        .title("DevX service failed")
+        .body(body)
+        .show()
+    {
+        tracing::warn!(error = %err, id = %event.id, "could not show failure notification");
     }
 }

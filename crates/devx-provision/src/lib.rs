@@ -35,15 +35,16 @@ pub mod sites;
 pub mod tunnel;
 pub mod verify;
 pub mod version;
+pub mod worker;
 
 pub use catalog::{Catalog, Component, ComponentKind, ComponentSummary, Layout, Source};
 pub use download::{DownloadOptions, Downloader, Progress};
 pub use http::HttpClient;
 pub use install::{InstallStage, Installer};
 pub use php_pool::{
-    is_pool_id, plan_pool, pool_id, pool_listen_addr, validate_workers, version_of_pool,
-    write_pool_files, PhpPoolPlan, PhpPoolSummary, PoolPlanOptions, DEFAULT_WORKERS,
-    FIRST_POOL_PORT, MAX_WORKERS,
+    is_pool_id, list_php_extensions, plan_pool, pool_id, pool_listen_addr, validate_workers,
+    version_of_pool, write_pool_files, PhpPoolPlan, PhpPoolSummary, PoolPlanOptions,
+    DEFAULT_WORKERS, FIRST_POOL_PORT, MAX_WORKERS,
 };
 pub use pki::{
     ensure_ca, ensure_site_cert, load_ca, tls_listen_snippet, CertificateFiles, LocalCa,
@@ -58,3 +59,4 @@ pub use sites::{
     write_site_block, SiteSpec, SiteSyncReport,
 };
 pub use version::{Artifact, Checksum, ComponentVersion, ReleaseChannel};
+pub use worker::{is_worker_id, plan_worker, plan_worker_instances, worker_id, WorkerPlan};

@@ -14,6 +14,7 @@ export function configFixture(overrides: Partial<Config> = {}): Config {
       start_with_windows: false,
       close_to_tray: true,
       restore_services_on_start: true,
+      notify_on_failure: true,
     },
     network: {
       domain_suffix: "test",
@@ -30,7 +31,10 @@ export function configFixture(overrides: Partial<Config> = {}): Config {
       auto_refresh_catalog: true,
     },
     php_pools: {},
+    php_extensions: {},
     sites: [],
+    workers: [],
+    cron: [],
     ...overrides,
   };
 }

@@ -154,6 +154,8 @@ fn sites_add(
         hostname: hostname.to_owned(),
         docroot: docroot.clone(),
         php_version: php.map(str::to_owned),
+        env: Vec::new(),
+        aliases: Vec::new(),
     };
 
     devx_provision::validate_spec(&spec, &paths.service_config_dir())
@@ -165,6 +167,8 @@ fn sites_add(
         docroot: docroot.to_string_lossy().into_owned(),
         php_version: spec.php_version.clone().unwrap_or_default(),
         https,
+        env: Default::default(),
+        aliases: Vec::new(),
     };
     store
         .update(|config| {
@@ -223,6 +227,8 @@ fn sync_site_blocks(paths: &AppPaths, store: &ConfigStore) -> anyhow::Result<()>
             hostname: site.hostname.clone(),
             docroot: std::path::PathBuf::from(&site.docroot),
             php_version: site.php().map(str::to_owned),
+            env: site.env.clone().into_iter().collect(),
+            aliases: site.aliases.clone(),
         };
         let endpoint = match &spec.php_version {
             Some(version) => Some(

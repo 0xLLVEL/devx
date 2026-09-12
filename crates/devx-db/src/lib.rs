@@ -20,8 +20,10 @@ use std::time::Duration;
 use devx_core::{Error, ErrorCode, Result};
 use serde::{Deserialize, Serialize};
 
+pub mod backup;
 pub mod value;
 
+pub use backup::{plan_dump, plan_restore, redis_snapshot, run_tool, ToolPlan};
 pub use value::DbValue;
 
 /// How to reach one database server.

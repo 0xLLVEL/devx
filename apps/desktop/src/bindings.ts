@@ -23,6 +23,20 @@ export const commands = {
 	configSet: (config: Config) => typedError<Config, DevxError>(__TAURI_INVOKE("config_set", { config })),
 	/**  Restores the default configuration. */
 	configReset: () => typedError<Config, DevxError>(__TAURI_INVOKE("config_reset")),
+	/**
+	 *  Exports the current configuration as TOML text.
+	 * 
+	 *  The text round-trips: `config_import` accepts it verbatim, and so does a
+	 *  fresh DevX via the same parse-and-validate path a config file receives.
+	 */
+	configExport: () => typedError<string, DevxError>(__TAURI_INVOKE("config_export")),
+	/**
+	 *  Imports a configuration from TOML text, validating before it persists.
+	 * 
+	 *  Missing sections fall back to defaults, so a partial export still imports;
+	 *  anything invalid is refused and leaves the running configuration alone.
+	 */
+	configImport: (body: string) => typedError<Config, DevxError>(__TAURI_INVOKE("config_import", { body })),
 	/**  Runs environment diagnostics against the live system. */
 	doctorRun: () => typedError<DoctorReport, DevxError>(__TAURI_INVOKE("doctor_run")),
 	/**  Lists the components DevX can install. */
@@ -63,6 +77,23 @@ export const commands = {
 	/**  Returns log lines for a service newer than `after` (0 for all retained). */
 	serviceLogs: (id: string, after: number) => typedError<LogEntry[], DevxError>(__TAURI_INVOKE("service_logs", { id, after })),
 	/**
+	 *  Samples the CPU and memory use of every supervised service.
+	 * 
+	 *  CPU percent is relative to the previous sample this process took, so the
+	 *  first call after launch reports 0. Stopped services report zero usage but
+	 *  are still listed, letting the dashboard zip this against the service list.
+	 */
+	serviceMetrics: () => typedError<ServiceMetrics[], DevxError>(__TAURI_INVOKE("service_metrics")),
+	/**  Lists every log file DevX has written, newest first. */
+	logsList: () => typedError<LogFileInfo[], DevxError>(__TAURI_INVOKE("logs_list")),
+	/**
+	 *  Reads the last `tail` lines of one DevX log file.
+	 * 
+	 *  The file name is validated against the logs directory so the viewer can
+	 *  never be coaxed into reading anything else on the machine.
+	 */
+	logsRead: (fileName: string, tail: number) => typedError<LogFileContent, DevxError>(__TAURI_INVOKE("logs_read", { fileName, tail })),
+	/**
 	 *  Lists the PHP FastCGI pools DevX can supervise: one per installed PHP.
 	 * 
 	 *  Pools are planned on the fly rather than persisted, so the list always
@@ -89,12 +120,32 @@ export const commands = {
 	 *  reaching into service ids by hand.
 	 */
 	phpPoolLogs: (version: string, after: number) => typedError<LogEntry[], DevxError>(__TAURI_INVOKE("php_pool_logs", { version, after })),
+	/**  Lists the extensions of one installed PHP version and which are enabled. */
+	phpExtList: (version: string) => typedError<PhpExtensionInfo, DevxError>(__TAURI_INVOKE("php_ext_list", { version })),
+	/**
+	 *  Enables or disables one extension of a PHP version.
+	 * 
+	 *  The setting is persisted first; a running pool is then restarted with a
+	 *  re-rendered `php.ini`, so the change applies immediately. A failed restart
+	 *  does not roll back the setting — the next manual start picks it up.
+	 */
+	phpExtSet: (version: string, extension: string, enabled: boolean) => typedError<PhpExtensionInfo, DevxError>(__TAURI_INVOKE("php_ext_set", { version, extension, enabled })),
 	/**  Lists the configured sites with their resolved PHP endpoints. */
 	siteList: () => typedError<SiteStatus[], DevxError>(__TAURI_INVOKE("site_list")),
 	/**  Adds (or replaces) a site, renders its nginx block, and syncs the set. */
 	siteAdd: (hostname: string, docroot: string, phpVersion: string, https: boolean) => typedError<SiteStatus[], DevxError>(__TAURI_INVOKE("site_add", { hostname, docroot, phpVersion, https })),
 	/**  Removes a site, prunes its block, and syncs. */
 	siteRemove: (hostname: string) => typedError<SiteStatus[], DevxError>(__TAURI_INVOKE("site_remove", { hostname })),
+	/**
+	 *  Sets one environment variable on a site, syncs its nginx block, and
+	 *  restarts nginx when it is running so the change applies immediately.
+	 */
+	siteEnvSet: (hostname: string, key: string, value: string) => typedError<SiteStatus[], DevxError>(__TAURI_INVOKE("site_env_set", { hostname, key, value })),
+	/**
+	 *  Removes one environment variable from a site, syncing as
+	 *  [`site_env_set`] does.
+	 */
+	siteEnvDelete: (hostname: string, key: string) => typedError<SiteStatus[], DevxError>(__TAURI_INVOKE("site_env_delete", { hostname, key })),
 	/**  Reports the local CA's status: present on disk and machine-trusted. */
 	caStatus: () => typedError<CaStatus, DevxError>(__TAURI_INVOKE("ca_status")),
 	/**
@@ -130,6 +181,26 @@ export const commands = {
 	dbListDatabases: (params: ConnectionParams) => typedError<DbResult, DevxError>(__TAURI_INVOKE("db_list_databases", { params })),
 	/**  Lists the tables in `params.database`. */
 	dbListTables: (params: ConnectionParams) => typedError<DbResult, DevxError>(__TAURI_INVOKE("db_list_tables", { params })),
+	/**  Lists the backups of one database service, newest first. */
+	backupList: (serviceId: string) => typedError<BackupEntry[], DevxError>(__TAURI_INVOKE("backup_list", { serviceId })),
+	/**
+	 *  Creates a backup of one database service and prunes old ones.
+	 * 
+	 *  MariaDB and PostgreSQL are dumped through their own tools into plain SQL;
+	 *  Redis is snapshotted with a blocking `SAVE` and the RDB file copied. The
+	 *  service must be running: the tools connect over TCP like any client.
+	 */
+	backupCreate: (serviceId: string) => typedError<BackupEntry, DevxError>(__TAURI_INVOKE("backup_create", { serviceId })),
+	/**
+	 *  Restores a database service from one of its backups.
+	 * 
+	 *  SQL dumps are replayed through the engine's client against the running
+	 *  server; a Redis snapshot is copied back into the service data directory,
+	 *  which requires the server to be stopped first.
+	 */
+	backupRestore: (serviceId: string, fileName: string) => typedError<null, DevxError>(__TAURI_INVOKE("backup_restore", { serviceId, fileName })),
+	/**  Deletes one backup of a database service. */
+	backupDelete: (serviceId: string, fileName: string) => typedError<null, DevxError>(__TAURI_INVOKE("backup_delete", { serviceId, fileName })),
 	/**  Reports whether Mailpit is running and how full its inbox is. */
 	mailStatus: () => typedError<MailStatus, DevxError>(__TAURI_INVOKE("mail_status")),
 	/**  Lists the newest messages in Mailpit's inbox. */
@@ -153,6 +224,16 @@ export const commands = {
 	 *  process's captured log output.
 	 */
 	tunnelStatus: (hostname: string) => typedError<TunnelStatus, DevxError>(__TAURI_INVOKE("tunnel_status", { hostname })),
+	/**  Lists every configured worker with its live instance states. */
+	workerList: () => typedError<WorkerStatus[], DevxError>(__TAURI_INVOKE("worker_list")),
+	/**  Adds (or replaces) a configured worker. */
+	workerAdd: (name: string, program: string | null, phpVersion: string | null, args: string[], workingDir: string, instances: number) => typedError<WorkerStatus[], DevxError>(__TAURI_INVOKE("worker_add", { name, program, phpVersion, args, workingDir, instances })),
+	/**  Removes a worker, stopping any running instances first. */
+	workerRemove: (name: string) => typedError<WorkerStatus[], DevxError>(__TAURI_INVOKE("worker_remove", { name })),
+	/**  Starts every instance of a worker. Idempotent for running instances. */
+	workerStart: (name: string) => typedError<WorkerStatus[], DevxError>(__TAURI_INVOKE("worker_start", { name })),
+	/**  Stops every instance of a worker. */
+	workerStop: (name: string) => typedError<WorkerStatus[], DevxError>(__TAURI_INVOKE("worker_stop", { name })),
 	/**
 	 *  Probes the privileged helper so the UI can show whether elevated
 	 *  operations (hosts entries today, HTTPS and NRPT later) are possible.
@@ -185,11 +266,57 @@ export const commands = {
 	 *  resolver cache, so repeated checks are cheap.
 	 */
 	updateCheck: () => typedError<UpdateStatus, DevxError>(__TAURI_INVOKE("update_check")),
+	/**
+	 *  Runs one command through `cmd /c` in `cwd`, streaming its output.
+	 * 
+	 *  Streams `TerminalOutput` events as lines arrive and resolves once the
+	 *  process exits. This is a command runner, not a pty: interactive prompts
+	 *  are not supported, which keeps the surface honest and typed. The child
+	 *  gets the DevX runtimes on its `PATH` plus the usual working directory.
+	 */
+	terminalRun: (cwd: string, command: string) => typedError<TerminalExit, DevxError>(__TAURI_INVOKE("terminal_run", { cwd, command })),
+	/**
+	 *  The `PATH` string the terminal runs with: DevX runtimes first, then the
+	 *  system's own `PATH` untouched.
+	 */
+	terminalPath: () => typedError<string, DevxError>(__TAURI_INVOKE("terminal_path")),
+	/**
+	 *  Lists the site templates DevX can scaffold.
+	 * 
+	 *  Templates follow the catalog's integrity policy: anything needing a
+	 *  download without an obtainable checksum (WordPress publishes none for its
+	 *  zip; Laravel scaffolds through composer) is not offered as a download —
+	 *  the template only carries the suggested terminal command.
+	 */
+	templateList: () => typedError<TemplateInfo[], DevxError>(__TAURI_INVOKE("template_list")),
+	/**
+	 *  Scaffolds `template_id` into `docroot` and creates the site.
+	 * 
+	 *  Local templates write their files into the (created) docroot and never
+	 *  overwrite existing content; download-based templates only create the
+	 *  folder and return their suggested command, to be run in the Terminal.
+	 */
+	templateCreate: (templateId: string, hostname: string, docroot: string, phpVersion: string, https: boolean) => typedError<TemplateCreateResult, DevxError>(__TAURI_INVOKE("template_create", { templateId, hostname, docroot, phpVersion, https })),
+	/**  Adds an alias host name to a site, syncs, and restarts nginx when running. */
+	siteAliasAdd: (hostname: string, alias: string) => typedError<SiteStatus[], DevxError>(__TAURI_INVOKE("site_alias_add", { hostname, alias })),
+	/**  Removes an alias host name from a site, syncing as [`site_alias_add`]. */
+	siteAliasDelete: (hostname: string, alias: string) => typedError<SiteStatus[], DevxError>(__TAURI_INVOKE("site_alias_delete", { hostname, alias })),
+	/**  Lists the configured scheduled tasks with their Windows registration. */
+	cronList: () => typedError<CronStatus[], DevxError>(__TAURI_INVOKE("cron_list")),
+	/**
+	 *  Creates or updates a scheduled task: persist the definition, then
+	 *  reconcile the Windows task with it.
+	 */
+	cronSet: (name: string, program: string | null, phpVersion: string | null, args: string[], workingDir: string, everyMinutes: number) => typedError<CronStatus[], DevxError>(__TAURI_INVOKE("cron_set", { name, program, phpVersion, args, workingDir, everyMinutes })),
+	/**  Deletes a scheduled task from the config and from Windows. */
+	cronDelete: (name: string) => typedError<CronStatus[], DevxError>(__TAURI_INVOKE("cron_delete", { name })),
 };
 
 /** Events */
 export const events = {
 	installProgress: makeEvent<InstallProgress>("install-progress"),
+	serviceEventUpdate: makeEvent<ServiceEventUpdate>("service-event-update"),
+	terminalOutput: makeEvent<TerminalOutput>("terminal-output"),
 };
 
 /* Types */
@@ -264,6 +391,18 @@ export type Attachment = {
 	content_type: string,
 	/**  Size in bytes, exported to TypeScript as a plain `number`. */
 	size: number,
+};
+
+/**  One database backup file, for the UI. */
+export type BackupEntry = {
+	/**  Service the backup belongs to (`mariadb`, `postgresql`, `redis`). */
+	service_id: string,
+	/**  File name inside the service's backups directory. */
+	file_name: string,
+	/**  Size on disk, in bytes. */
+	size_bytes: number,
+	/**  Creation time as Unix seconds. */
+	created_unix: number,
 };
 
 /**  The local CA's trust status, for the UI. */
@@ -408,8 +547,14 @@ export type Config = {
 	provisioning: Provisioning,
 	/**  FastCGI worker counts per installed PHP version. */
 	php_pools: PhpPools,
+	/**  Enabled PHP extensions per installed PHP version. */
+	php_extensions: PhpExtensions,
 	/**  User-configured local sites. */
 	sites: Site[],
+	/**  User-configured supervised worker processes. */
+	workers: Worker[],
+	/**  User-configured scheduled tasks. */
+	cron: CronJob[],
 };
 
 /**  How to reach one database server. */
@@ -429,6 +574,46 @@ export type ConnectionParams = {
 	password: string | null,
 	/**  Optional database/schema to scope table listings to. */
 	database: string | null,
+};
+
+/**
+ *  One user-configured scheduled task, run by Windows every N minutes.
+ * 
+ *  Stored under `[[cron]]`. The shape mirrors [`Worker`] minus instances —
+ *  a scheduled run is a one-shot command, not a supervised process — with
+ *  `every_minutes` driving the Windows task's `/SC MINUTE /MO` interval.
+ */
+export type CronJob = {
+	/**  Unique short name, prefixed `DevX` in the Windows task list. */
+	name: string,
+	/**  Executable to run, when not using a DevX-managed PHP version. */
+	program: string | null,
+	/**  PHP version whose `php.exe` runs the task, when using one. */
+	php_version: string | null,
+	/**  Arguments passed to the program. */
+	args: string[],
+	/**  Absolute path the task runs in. */
+	working_dir: string,
+	/**  Minutes between runs, 1..=10080 (a week). */
+	every_minutes: number,
+};
+
+/**  One scheduled task, as the UI shows it. */
+export type CronStatus = {
+	/**  The user-chosen task name (Windows task: `DevX <name>`). */
+	name: string,
+	/**  Program to run; a relative name runs off `PATH`. */
+	program: string | null,
+	/**  PHP version running the task, when DevX supplies the interpreter. */
+	php_version: string | null,
+	/**  Arguments passed to the program. */
+	args: string[],
+	/**  Directory the task runs in. */
+	working_dir: string,
+	/**  The interval in minutes. */
+	every_minutes: number,
+	/**  Whether the Windows scheduled task exists right now. */
+	registered: boolean,
 };
 
 /**  One column of a result set. */
@@ -567,6 +752,21 @@ export type ErrorCode =
 /**  Something failed that we could not classify. */
 "internal";
 
+/**  Why a service left the `Running` or `Starting` state. */
+export type ExitReason = 
+/**  A stop was requested and the process exited. */
+{ kind: "requested" } | 
+/**  The process exited on its own, with this code. */
+{ kind: "crashed"; 
+/**  Process exit code, when known. */
+code: number | null } | 
+/**  The health check never passed within the allowed time. */
+{ kind: "health_timeout" } | 
+/**  The process could not be spawned at all. */
+{ kind: "spawn_failed"; 
+/**  Human-readable reason. */
+message: string };
+
 /**  Application-wide preferences. */
 export type General = {
 	/**  UI colour scheme. */
@@ -577,6 +777,8 @@ export type General = {
 	close_to_tray: boolean,
 	/**  Start services that were running when DevX last exited. */
 	restore_services_on_start: boolean,
+	/**  Send a Windows notification when a service fails. */
+	notify_on_failure: boolean,
 };
 
 /**
@@ -634,6 +836,30 @@ export type LogEntry = {
 	stream: LogStream,
 	/**  Line text. */
 	text: string,
+};
+
+/**  The tail of one log file, for the log viewer. */
+export type LogFileContent = {
+	/**  The file that was read. */
+	file_name: string,
+	/**  Last `tail` lines, in file order. */
+	lines: string[],
+	/**  Whether the file has more lines than were returned. */
+	truncated: boolean,
+};
+
+/**  One log file in the DevX logs directory, for the log viewer. */
+export type LogFileInfo = {
+	/**  File name inside the logs directory, e.g. `nginx.log.1`. */
+	file_name: string,
+	/**  Service the log belongs to (`nginx`, `php-pool-8.4.25`, …). */
+	service_id: string,
+	/**  Whether this is a rotated (previous-generation) file. */
+	rotated: boolean,
+	/**  Size on disk, in bytes. */
+	size_bytes: number,
+	/**  Last modification as Unix seconds; `null` when unavailable. */
+	modified_unix: number | null,
 };
 
 /**  Which standard stream a line came from. */
@@ -741,6 +967,29 @@ export type Network = {
 	dns_mode: DnsMode,
 };
 
+/**  The PHP extensions a version ships and which are enabled, for the UI. */
+export type PhpExtensionInfo = {
+	/**  PHP version these extensions belong to. */
+	version: string,
+	/**  Every extension DLL the installed version ships, sorted. */
+	installed: string[],
+	/**  Extension DLLs currently enabled for the version. */
+	enabled: string[],
+};
+
+/**
+ *  Enabled PHP extensions, keyed by PHP version.
+ * 
+ *  Entries are the exact DLL file names found in the version's `ext/`
+ *  directory (e.g. `php_gd.dll`), because that is what the rendered
+ *  `extension =` directive must spell. A version missing from the map has no
+ *  extensions enabled, so uninstalling PHP or resetting settings needs no
+ *  cleanup here.
+ */
+export type PhpExtensions = 
+/**  Enabled extension DLL names keyed by PHP version. */
+{ [key in string]: string[] };
+
 /**  A summary of one PHP FastCGI pool, including its live state. */
 export type PhpPoolStatus = {
 	/**  Pool identifier (`php-pool-8.4.25`). */
@@ -796,6 +1045,48 @@ export type ReleaseChannel =
 /**  Pre-release, only offered when the catalog opts in. */
 "prerelease";
 
+/**
+ *  A state transition announced by a supervisor.
+ * 
+ *  Published on a registry-wide broadcast channel so a single subscriber can
+ *  observe every service at once; `exit` carries why the service left the
+ *  running state, when it did.
+ */
+export type ServiceEvent = {
+	/**  Id of the supervised service. */
+	id: string,
+	/**  The state it moved to. */
+	state: ServiceState,
+	/**  Why it left the running state, if it did. */
+	exit: ExitReason | null,
+};
+
+/**
+ *  A state transition of a supervised service.
+ * 
+ *  Mirrors [`devx_proc::ServiceEvent`] so the frontend can update status
+ *  badges and log tails the moment something happens instead of waiting for
+ *  the next poll.
+ */
+export type ServiceEventUpdate = {
+	/**  The transition. */
+	event: ServiceEvent,
+};
+
+/**  Point-in-time resource use of one supervised service. */
+export type ServiceMetrics = {
+	/**  Id of the supervised service. */
+	id: string,
+	/**  Current lifecycle state. */
+	state: ServiceState,
+	/**  CPU use since the previous sample, normalised to one core (0–100). */
+	cpu_percent: number | null,
+	/**  Resident memory of every process in the service's job, in bytes. */
+	memory_bytes: number,
+	/**  How many live processes the job contains. */
+	processes: number,
+};
+
 /**  Where a supervised service is in its lifecycle. */
 export type ServiceState = 
 /**  Not running, and not trying to. */
@@ -832,6 +1123,17 @@ export type Site = {
 	php_version: string,
 	/**  Serve the site over HTTPS with the local CA's certificate. */
 	https?: boolean,
+	/**
+	 *  Environment variables passed to the site's PHP requests, rendered as
+	 *  `fastcgi_param` lines in the site's nginx block. Static sites ignore
+	 *  them.
+	 */
+	env?: { [key in string]: string },
+	/**
+	 *  Additional host names the site answers to, rendered into the nginx
+	 *  `server_name` list. Subdomain wildcards are covered by the resolver.
+	 */
+	aliases?: string[],
 };
 
 /**  One site as the UI sees it, with the resolved FastCGI endpoint. */
@@ -846,6 +1148,53 @@ export type SiteStatus = {
 	php_endpoint: string | null,
 	/**  Whether the site is served over HTTPS with the local CA certificate. */
 	https: boolean,
+	/**  Environment variables exposed to the site's PHP requests. */
+	env: { [key in string]: string },
+	/**  Additional host names the site answers to. */
+	aliases: string[],
+};
+
+/**  The result of scaffolding a site from a template. */
+export type TemplateCreateResult = {
+	/**  The site that was created. */
+	hostname: string,
+	/**  The suggested terminal command, when the template delegates to one. */
+	follow_up_command: string | null,
+};
+
+/**  One scaffoldable site template, for the UI. */
+export type TemplateInfo = {
+	/**  Template identifier. */
+	id: string,
+	/**  Display name. */
+	name: string,
+	/**  What the template sets up. */
+	description: string,
+	/**  Whether the files are generated locally, without downloading. */
+	local: boolean,
+};
+
+/**  The exit of one terminal command run. */
+export type TerminalExit = {
+	/**  Which run this belongs to, matching the streamed `TerminalOutput`s. */
+	run_id: number,
+	/**  Exit code, when the process ended normally. */
+	code: number | null,
+};
+
+/**
+ *  One chunk of output from a terminal command run.
+ * 
+ *  The backend streams lines as they are written instead of returning the
+ *  whole output at the end, so long-running commands feel live.
+ */
+export type TerminalOutput = {
+	/**  Which run the line belongs to. */
+	run_id: number,
+	/**  Which stream it came from: `out` or `err`. */
+	stream: string,
+	/**  The line text, without its newline. */
+	text: string,
 };
 
 /**  UI colour scheme. */
@@ -892,6 +1241,55 @@ export type VersionListing = {
 	stale: boolean,
 	/**  Versions that were skipped because no checksum is published for them. */
 	unverifiable: string[],
+};
+
+/**
+ *  One user-configured supervised worker process.
+ * 
+ *  Stored under `[[workers]]`. Either `program` (a path or a name on `PATH`)
+ *  or `php_version` (runs that installed version's `php.exe`) must be set —
+ *  never both — and `instances` identical copies run side by side, each its
+ *  own supervised process.
+ */
+export type Worker = {
+	/**  Unique short name, also used to build the service id. */
+	name: string,
+	/**  Executable to run, when not using a DevX-managed PHP version. */
+	program: string | null,
+	/**  PHP version whose `php.exe` runs the worker, when using one. */
+	php_version: string | null,
+	/**  Arguments passed to the program. */
+	args: string[],
+	/**  Absolute path the process runs in. */
+	working_dir: string,
+	/**  How many copies to run. */
+	instances: number,
+};
+
+/**  One supervised worker instance, as the UI shows it. */
+export type WorkerInstanceStatus = {
+	/**  Supervisor id: `worker-<name>-<instance>`. */
+	id: string,
+	/**  Current lifecycle state. */
+	state: ServiceState,
+};
+
+/**  One configured worker with the live state of its instances. */
+export type WorkerStatus = {
+	/**  The user-chosen worker name. */
+	name: string,
+	/**  Program to run; a relative name runs off `PATH`. */
+	program: string | null,
+	/**  PHP version running the worker, when DevX supplies the interpreter. */
+	php_version: string | null,
+	/**  Arguments passed to the program. */
+	args: string[],
+	/**  Directory the process runs in. */
+	working_dir: string,
+	/**  How many instances are configured. */
+	instances: number,
+	/**  Live state of each instance that has been started. */
+	live: WorkerInstanceStatus[],
 };
 
 /* Tauri Specta runtime */

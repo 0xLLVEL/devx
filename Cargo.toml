@@ -109,6 +109,7 @@ tauri-build = { version = "2.5", features = [] }
 tauri-plugin-opener = "2.5"
 tauri-plugin-autostart = "2.5"
 tauri-plugin-single-instance = "2.3"
+tauri-plugin-notification = "2.4"
 
 # --- Testing ---
 insta = { version = "1.48", features = ["json", "redactions"] }

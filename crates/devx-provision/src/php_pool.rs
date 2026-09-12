@@ -79,12 +79,14 @@ pub fn validate_workers(workers: u32) -> Result<()> {
 }
 
 /// Knobs a pool is planned with.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PoolPlanOptions {
     /// Port the pool binds to.
     pub port: u16,
     /// Number of FastCGI workers behind the pool.
     pub workers: u32,
+    /// Enabled extension DLL file names, rendered into the pool's `php.ini`.
+    pub extensions: Vec<String>,
 }
 
 impl PoolPlanOptions {
@@ -93,12 +95,19 @@ impl PoolPlanOptions {
         Self {
             port,
             workers: DEFAULT_WORKERS,
+            extensions: Vec::new(),
         }
     }
 
     /// Overrides the worker count.
     pub fn with_workers(mut self, workers: u32) -> Self {
         self.workers = workers;
+        self
+    }
+
+    /// Overrides the enabled extensions.
+    pub fn with_extensions(mut self, extensions: Vec<String>) -> Self {
+        self.extensions = extensions;
         self
     }
 }
@@ -120,6 +129,8 @@ pub struct PhpPoolPlan {
     pub workers: u32,
     /// Port the pool binds to.
     pub port: u16,
+    /// Enabled extension DLL file names rendered into `php.ini`.
+    pub extensions: Vec<String>,
     /// The rendered `php.ini`, written by the shell before launch.
     pub php_ini: String,
     /// The rendered `pool.conf`; Task 9's nginx sites read `listen` from it.
@@ -181,6 +192,9 @@ pub fn plan_pool(
         ("workers", options.workers.to_string()),
         // Referenced by the ini's error_log and the pool conf header.
         ("version", version.to_owned()),
+        // Pre-rendered `extension =` lines; the loop lives in Rust because the
+        // renderer only handles flat string maps.
+        ("extensions", render_extension_lines(&options.extensions)),
     ];
 
     let php_ini = render(PHP_INI_TEMPLATE, &values)?;
@@ -207,6 +221,7 @@ pub fn plan_pool(
         ],
         workers: options.workers,
         port: options.port,
+        extensions: options.extensions.clone(),
         php_ini,
         pool_conf,
     })
@@ -245,6 +260,84 @@ pub fn pool_listen_addr(config_dir: &Path) -> Result<String> {
         })
 }
 
+/// Renders the `[PHP]` extension block for the enabled extensions.
+///
+/// Zend extensions (`opcache`, `xdebug`) must load through `zend_extension`,
+/// not `extension`, or PHP refuses to start — the one trap here.
+fn render_extension_lines(extensions: &[String]) -> String {
+    if extensions.is_empty() {
+        return String::new();
+    }
+
+    let mut lines = vec!["; Extensions enabled in DevX.".to_owned()];
+    for name in extensions {
+        let directive = if is_zend_extension(name) {
+            "zend_extension"
+        } else {
+            "extension"
+        };
+        lines.push(format!("{directive} = {name}"));
+    }
+    lines.join("\n")
+}
+
+/// Whether an extension DLL must load as a Zend extension.
+///
+/// Names are the DLL file names as discovered in `ext/`; the plain stem is
+/// matched so either `opcache` or `php_opcache.dll` classifies the same.
+fn is_zend_extension(file_name: &str) -> bool {
+    let stem = file_name
+        .strip_prefix("php_")
+        .and_then(|rest| rest.strip_suffix(".dll"))
+        .unwrap_or(file_name);
+    matches!(stem, "opcache" | "xdebug")
+}
+
+/// Lists the extension DLLs an installed PHP version ships.
+///
+/// Returns the exact file names (e.g. `php_gd.dll`) because that is what the
+/// rendered directive must spell. A version without an `ext/` directory has
+/// none; a missing directory is not an error.
+///
+/// # Errors
+///
+/// Fails only when the directory exists but cannot be read.
+pub fn list_php_extensions(install_dir: &Path) -> Result<Vec<String>> {
+    let ext_dir = install_dir.join("ext");
+    if !ext_dir.is_dir() {
+        return Ok(Vec::new());
+    }
+
+    let mut names = Vec::new();
+    let entries = std::fs::read_dir(&ext_dir).map_err(|err| {
+        Error::new(
+            ErrorCode::Io,
+            format!("failed to read {}: {err}", ext_dir.display()),
+        )
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|err| {
+            Error::new(
+                ErrorCode::Io,
+                format!("failed to read {}: {err}", ext_dir.display()),
+            )
+        })?;
+        let file_name = entry.file_name();
+        let Some(name) = file_name.to_str() else {
+            continue;
+        };
+        let is_dll = name
+            .rsplit('.')
+            .next()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("dll"));
+        if is_dll && name.to_ascii_lowercase().starts_with("php_") {
+            names.push(name.to_owned());
+        }
+    }
+    names.sort();
+    Ok(names)
+}
+
 /// Writes the pool's `php.ini` into `config_dir` before launch.
 ///
 /// `pool.conf` is documentation and a machine-readable lookup for Task 9, so
@@ -265,10 +358,11 @@ pub fn write_pool_files(config_dir: &Path, plan: &PhpPoolPlan) -> Result<()> {
 
 /// The `php.ini` DevX generates for every pool.
 ///
-/// Deliberately minimal: extensions ship in `ext/` and stay opt-in once Task 9
-/// adds per-site overrides. Error and session paths point into the DevX tree
-/// so the Services page shows PHP diagnostics next to the pool log, and mail
-/// defaults to Mailpit's SMTP port so `mail()` lands in the local inbox.
+/// Deliberately minimal: extensions ship in `ext/` and are enabled per version
+/// from the UI (see [`render_extension_lines`]). Error and session paths point
+/// into the DevX tree so the Services page shows PHP diagnostics next to the
+/// pool log, and mail defaults to Mailpit's SMTP port so `mail()` lands in the
+/// local inbox.
 const PHP_INI_TEMPLATE: &str = r#"; Generated by DevX for the PHP {{ workers }}-worker FastCGI pool.
 ; Hand edits are overwritten on the next start; customise via DevX instead.
 
@@ -295,6 +389,8 @@ upload_max_filesize = 64M
 max_file_uploads = 20
 allow_url_fopen = On
 allow_url_include = Off
+extension_dir = {{ install_dir }}/ext
+{{ extensions }}
 
 [Date]
 ; No hard-coded timezone: PHP falls back to UTC, and per-site overrides come
@@ -559,5 +655,79 @@ mod tests {
         assert_ne!(older.id, newer.id);
         assert_ne!(older.args[1], newer.args[1], "pools must not share a port");
         assert_ne!(older.args[3], newer.args[3], "pools must not share an ini");
+    }
+
+    #[test]
+    fn zend_extensions_load_through_the_zend_directive() {
+        assert!(is_zend_extension("php_opcache.dll"));
+        assert!(is_zend_extension("php_xdebug.dll"));
+        assert!(is_zend_extension("opcache"));
+        assert!(!is_zend_extension("php_gd.dll"));
+        assert!(!is_zend_extension("php_intl.dll"));
+    }
+
+    #[test]
+    fn extension_lines_classify_and_render_each_dll() {
+        let lines =
+            render_extension_lines(&["php_gd.dll".to_owned(), "php_opcache.dll".to_owned()]);
+
+        assert!(lines.contains("extension = php_gd.dll"), "{lines}");
+        assert!(
+            lines.contains("zend_extension = php_opcache.dll"),
+            "{lines}"
+        );
+        assert_eq!(render_extension_lines(&[]), "");
+    }
+
+    #[test]
+    fn enabled_extensions_are_rendered_into_the_ini() {
+        let plan = plan_at(
+            Path::new("C:/devx/data"),
+            &PoolPlanOptions::new(9100)
+                .with_extensions(vec!["php_gd.dll".to_owned(), "php_opcache.dll".to_owned()]),
+        );
+
+        assert!(
+            plan.php_ini
+                .contains("extension_dir = C:/devx/data/runtimes/php/8.4.25/ext"),
+            "{}",
+            plan.php_ini
+        );
+        assert!(
+            plan.php_ini.contains("extension = php_gd.dll"),
+            "{}",
+            plan.php_ini
+        );
+        assert!(
+            plan.php_ini.contains("zend_extension = php_opcache.dll"),
+            "{}",
+            plan.php_ini
+        );
+        assert_eq!(plan.extensions, ["php_gd.dll", "php_opcache.dll"]);
+    }
+
+    #[test]
+    fn lists_php_extension_dlls_from_the_ext_directory() {
+        let dir = tempfile::tempdir().expect("temp");
+        let ext = dir.path().join("ext");
+        std::fs::create_dir(&ext).expect("ext dir");
+        for name in [
+            "php_intl.dll",
+            "php_gd2.DLL",
+            "php_xdebug.dll",
+            "readme.txt",
+        ] {
+            std::fs::write(ext.join(name), b"").expect("file");
+        }
+
+        let names = list_php_extensions(dir.path()).expect("list");
+        assert_eq!(names, ["php_gd2.DLL", "php_intl.dll", "php_xdebug.dll"]);
+    }
+
+    #[test]
+    fn a_version_without_an_ext_directory_has_no_extensions() {
+        let dir = tempfile::tempdir().expect("temp");
+        let names = list_php_extensions(dir.path()).expect("list");
+        assert!(names.is_empty());
     }
 }

@@ -123,6 +123,32 @@ pub fn config_reset(state: State<'_, AppState>) -> Result<Config, Error> {
     Ok(stored)
 }
 
+/// Exports the current configuration as TOML text.
+///
+/// The text round-trips: `config_import` accepts it verbatim, and so does a
+/// fresh DevX via the same parse-and-validate path a config file receives.
+#[tauri::command]
+#[specta::specta]
+pub fn config_export(state: State<'_, AppState>) -> Result<String, Error> {
+    let config = state.with_config(|store| store.config().clone());
+    devx_core::serialize_config(&config)
+}
+
+/// Imports a configuration from TOML text, validating before it persists.
+///
+/// Missing sections fall back to defaults, so a partial export still imports;
+/// anything invalid is refused and leaves the running configuration alone.
+#[tauri::command]
+#[specta::specta]
+pub fn config_import(state: State<'_, AppState>, body: String) -> Result<Config, Error> {
+    let imported = devx_core::parse_config(&body)?;
+
+    state.with_config_mut(|store| store.replace(imported))?;
+    state.mark_config_healthy();
+
+    Ok(state.with_config(|store| store.config().clone()))
+}
+
 /// Runs environment diagnostics against the live system.
 #[tauri::command]
 #[specta::specta]
@@ -341,6 +367,165 @@ pub fn service_logs(
         .collect())
 }
 
+/// Samples the CPU and memory use of every supervised service.
+///
+/// CPU percent is relative to the previous sample this process took, so the
+/// first call after launch reports 0. Stopped services report zero usage but
+/// are still listed, letting the dashboard zip this against the service list.
+#[tauri::command]
+#[specta::specta]
+pub fn service_metrics(
+    state: State<'_, AppState>,
+) -> Result<Vec<devx_proc::ServiceMetrics>, Error> {
+    Ok(state.services.metrics())
+}
+
+/// One log file in the DevX logs directory, for the log viewer.
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
+pub struct LogFileInfo {
+    /// File name inside the logs directory, e.g. `nginx.log.1`.
+    pub file_name: String,
+    /// Service the log belongs to (`nginx`, `php-pool-8.4.25`, …).
+    pub service_id: String,
+    /// Whether this is a rotated (previous-generation) file.
+    pub rotated: bool,
+    /// Size on disk, in bytes.
+    #[specta(type = specta_typescript::Number)]
+    pub size_bytes: u64,
+    /// Last modification as Unix seconds; `null` when unavailable.
+    #[specta(type = Option<specta_typescript::Number>)]
+    pub modified_unix: Option<u64>,
+}
+
+/// Lists every log file DevX has written, newest first.
+#[tauri::command]
+#[specta::specta]
+pub fn logs_list(state: State<'_, AppState>) -> Result<Vec<LogFileInfo>, Error> {
+    let dir = state.paths.logs_dir();
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Ok(Vec::new());
+    };
+
+    let mut files = Vec::new();
+    for entry in entries.flatten() {
+        if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
+            continue;
+        }
+        let file_name = entry.file_name().to_string_lossy().into_owned();
+        let Some((service_id, rotated)) = parse_log_file_name(&file_name) else {
+            continue;
+        };
+
+        let metadata = entry.metadata().ok();
+        let size_bytes = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+        let modified_unix = metadata.and_then(|m| m.modified().ok()).and_then(|t| {
+            t.duration_since(std::time::UNIX_EPOCH)
+                .ok()
+                .map(|d| d.as_secs())
+        });
+
+        files.push(LogFileInfo {
+            file_name,
+            service_id,
+            rotated,
+            size_bytes,
+            modified_unix,
+        });
+    }
+
+    files.sort_by(|a, b| {
+        b.modified_unix
+            .cmp(&a.modified_unix)
+            .then_with(|| a.file_name.cmp(&b.file_name))
+    });
+    Ok(files)
+}
+
+/// The tail of one log file, for the log viewer.
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
+pub struct LogFileContent {
+    /// The file that was read.
+    pub file_name: String,
+    /// Last `tail` lines, in file order.
+    pub lines: Vec<String>,
+    /// Whether the file has more lines than were returned.
+    pub truncated: bool,
+}
+
+/// Reads the last `tail` lines of one DevX log file.
+///
+/// The file name is validated against the logs directory so the viewer can
+/// never be coaxed into reading anything else on the machine.
+#[tauri::command]
+#[specta::specta]
+pub fn logs_read(
+    state: State<'_, AppState>,
+    file_name: String,
+    tail: u32,
+) -> Result<LogFileContent, Error> {
+    let path = log_file_path(&state.paths, &file_name)?;
+
+    let body = std::fs::read_to_string(&path).map_err(|err| {
+        Error::new(
+            devx_core::ErrorCode::Io,
+            format!("failed to read {}: {err}", path.display()),
+        )
+    })?;
+
+    let tail = tail.clamp(1, 5_000) as usize;
+    let lines: Vec<&str> = body.lines().collect();
+    let truncated = lines.len() > tail;
+    let start = lines.len().saturating_sub(tail);
+
+    Ok(LogFileContent {
+        file_name,
+        lines: lines[start..].iter().map(|line| line.to_string()).collect(),
+        truncated,
+    })
+}
+
+/// Resolves a validated log file name to its path under the logs directory.
+fn log_file_path(paths: &AppPaths, file_name: &str) -> Result<std::path::PathBuf, Error> {
+    let Some((_, _)) = parse_log_file_name(file_name) else {
+        return Err(Error::invalid_input(format!(
+            "`{file_name}` is not a DevX log file name"
+        )));
+    };
+
+    let path = paths.logs_dir().join(file_name);
+    if !path.starts_with(paths.logs_dir()) {
+        return Err(Error::invalid_input(format!(
+            "`{file_name}` escapes the logs directory"
+        )));
+    }
+    Ok(path)
+}
+
+/// Splits `nginx.log.1` into its service id and rotated flag.
+fn parse_log_file_name(file_name: &str) -> Option<(String, bool)> {
+    if let Some(service_id) = file_name.strip_suffix(".log.1") {
+        validate_log_component(service_id)?;
+        return Some((service_id.to_owned(), true));
+    }
+    if let Some(service_id) = file_name.strip_suffix(".log") {
+        validate_log_component(service_id)?;
+        return Some((service_id.to_owned(), false));
+    }
+    None
+}
+
+/// Log file name components are supervisor ids: filename-safe, no traversal.
+fn validate_log_component(component: &str) -> Option<()> {
+    if component.is_empty()
+        || !component
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+    {
+        return None;
+    }
+    Some(())
+}
+
 /// A summary of one PHP FastCGI pool, including its live state.
 #[derive(Debug, Clone, serde::Serialize, specta::Type)]
 pub struct PhpPoolStatus {
@@ -411,7 +596,8 @@ pub async fn php_pool_start(
     }
 
     let port = pool_port(&state, &version)?;
-    let plan = crate::services::plan_php_pool(&state.paths, &version, port, workers)?;
+    let extensions = pool_extensions(&state, &version);
+    let plan = crate::services::plan_php_pool(&state.paths, &version, port, workers, &extensions)?;
     let id = plan.id.clone();
 
     let supervisor = match state.services.get(&id) {
@@ -487,6 +673,101 @@ pub fn php_pool_logs(
     after: u32,
 ) -> Result<Vec<LogEntry>, Error> {
     service_logs(state, devx_provision::pool_id(&version), after)
+}
+
+/// The PHP extensions a version ships and which are enabled, for the UI.
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
+pub struct PhpExtensionInfo {
+    /// PHP version these extensions belong to.
+    pub version: String,
+    /// Every extension DLL the installed version ships, sorted.
+    pub installed: Vec<String>,
+    /// Extension DLLs currently enabled for the version.
+    pub enabled: Vec<String>,
+}
+
+/// Lists the extensions of one installed PHP version and which are enabled.
+#[tauri::command]
+#[specta::specta]
+pub fn php_ext_list(
+    state: State<'_, AppState>,
+    version: String,
+) -> Result<PhpExtensionInfo, Error> {
+    let install_dir = state.paths.runtimes_dir().join("php").join(&version);
+    if !install_dir.join(".devx-ok").is_file() {
+        return Err(Error::not_found(format!("php {version} is not installed"))
+            .with_hint("install the PHP version first"));
+    }
+
+    let installed = devx_provision::list_php_extensions(&install_dir)?;
+    let enabled = state.with_config(|store| store.config().php_extensions.get(&version).to_vec());
+
+    Ok(PhpExtensionInfo {
+        version,
+        installed,
+        enabled,
+    })
+}
+
+/// Enables or disables one extension of a PHP version.
+///
+/// The setting is persisted first; a running pool is then restarted with a
+/// re-rendered `php.ini`, so the change applies immediately. A failed restart
+/// does not roll back the setting — the next manual start picks it up.
+#[tauri::command]
+#[specta::specta]
+pub async fn php_ext_set(
+    state: State<'_, AppState>,
+    version: String,
+    extension: String,
+    enabled: bool,
+) -> Result<PhpExtensionInfo, Error> {
+    // The extension must be one the installed version actually ships, so a
+    // typo can never render an ini PHP refuses to start with.
+    let install_dir = state.paths.runtimes_dir().join("php").join(&version);
+    let installed = devx_provision::list_php_extensions(&install_dir)?;
+    if enabled && !installed.contains(&extension) {
+        return Err(Error::not_found(format!(
+            "php {version} does not ship {extension}"
+        )));
+    }
+
+    state.with_config_mut(|store| {
+        store.update(|config| {
+            if enabled {
+                config.php_extensions.enable(&version, extension.clone());
+            } else {
+                config.php_extensions.disable(&version, &extension);
+            }
+        })
+    })?;
+
+    // A running pool must restart to load (or unload) the extension: re-render
+    // its ini with the new set, keeping its claimed port, then bounce it.
+    let id = devx_provision::pool_id(&version);
+    if let Some(supervisor) = state.services.get(&id) {
+        if supervisor.state().is_active() {
+            let workers = pool_workers(&state, &version);
+            let port = pool_port(&state, &version)?;
+            let extensions = pool_extensions(&state, &version);
+            let plan =
+                crate::services::plan_php_pool(&state.paths, &version, port, workers, &extensions)?;
+
+            // Stop before re-registering: the registry refuses to replace an
+            // active supervisor, and the stop is harmless for a stale one.
+            supervisor.stop().await;
+            let spec = crate::services::pool_spec(&state.paths, &plan)?;
+            let replacement = state.services.register(spec)?;
+            replacement.start().await?;
+        }
+    }
+
+    php_ext_list(state, version)
+}
+
+/// The enabled extensions for `version`, from the stored configuration.
+fn pool_extensions(state: &AppState, version: &str) -> Vec<String> {
+    state.with_config(|store| store.config().php_extensions.get(version).to_vec())
 }
 
 /// The configured worker count for `version`, or the default.
@@ -607,6 +888,10 @@ pub struct SiteStatus {
     pub php_endpoint: Option<String>,
     /// Whether the site is served over HTTPS with the local CA certificate.
     pub https: bool,
+    /// Environment variables exposed to the site's PHP requests.
+    pub env: std::collections::BTreeMap<String, String>,
+    /// Additional host names the site answers to.
+    pub aliases: Vec<String>,
 }
 
 /// The local CA's trust status, for the UI.
@@ -639,6 +924,8 @@ pub fn site_list(state: State<'_, AppState>) -> Result<Vec<SiteStatus>, Error> {
             php_version: site.php_version.clone(),
             php_endpoint,
             https: site.https,
+            env: site.env.clone(),
+            aliases: site.aliases.clone(),
         });
     }
 
@@ -663,6 +950,8 @@ pub async fn site_add(
         } else {
             Some(php_version)
         },
+        env: Vec::new(),
+        aliases: Vec::new(),
     };
 
     // Validate everything up front: hostname shape, docroot absoluteness,
@@ -676,6 +965,8 @@ pub async fn site_add(
         docroot: docroot.clone(),
         php_version: spec.php_version.clone().unwrap_or_default(),
         https,
+        env: Default::default(),
+        aliases: Vec::new(),
     };
     state.with_config_mut(|store| {
         store.update(|config| {
@@ -713,6 +1004,199 @@ pub async fn site_remove(
     site_list(state)
 }
 
+/// Sets one environment variable on a site, syncs its nginx block, and
+/// restarts nginx when it is running so the change applies immediately.
+#[tauri::command]
+#[specta::specta]
+pub async fn site_env_set(
+    state: State<'_, AppState>,
+    hostname: String,
+    key: String,
+    value: String,
+) -> Result<Vec<SiteStatus>, Error> {
+    devx_provision::sites::validate_hostname(&hostname)?;
+
+    // Validation (key shape, value metacharacters) happens inside
+    // `store.update` via `Config::validate`, so a rejected pair never lands.
+    let known = state.with_config(|store| {
+        store
+            .config()
+            .sites
+            .iter()
+            .any(|s| s.hostname.eq_ignore_ascii_case(&hostname))
+    });
+    if !known {
+        return Err(Error::not_found(format!(
+            "site `{hostname}` is not configured"
+        )));
+    }
+
+    state.with_config_mut(|store| {
+        store.update(|config| {
+            let Some(site) = config
+                .sites
+                .iter_mut()
+                .find(|s| s.hostname.eq_ignore_ascii_case(&hostname))
+            else {
+                return;
+            };
+            site.env.insert(key, value);
+        })
+    })?;
+
+    sync_site_blocks(&state)?;
+    restart_nginx_if_running(&state).await?;
+
+    site_list(state)
+}
+
+/// Removes one environment variable from a site, syncing as
+/// [`site_env_set`] does.
+#[tauri::command]
+#[specta::specta]
+pub async fn site_env_delete(
+    state: State<'_, AppState>,
+    hostname: String,
+    key: String,
+) -> Result<Vec<SiteStatus>, Error> {
+    devx_provision::sites::validate_hostname(&hostname)?;
+
+    state.with_config_mut(|store| {
+        store.update(|config| {
+            let Some(site) = config
+                .sites
+                .iter_mut()
+                .find(|s| s.hostname.eq_ignore_ascii_case(&hostname))
+            else {
+                return;
+            };
+            site.env.remove(&key);
+        })
+    })?;
+
+    sync_site_blocks(&state)?;
+    restart_nginx_if_running(&state).await?;
+
+    site_list(state)
+}
+
+/// Adds an alias host name to a site, syncs, and restarts nginx when running.
+#[tauri::command]
+#[specta::specta]
+pub async fn site_alias_add(
+    state: State<'_, AppState>,
+    hostname: String,
+    alias: String,
+) -> Result<Vec<SiteStatus>, Error> {
+    mutate_site_aliases(state, hostname, |aliases| {
+        let alias = alias.to_ascii_lowercase();
+        if !aliases.iter().any(|a| a.eq_ignore_ascii_case(&alias)) {
+            aliases.push(alias);
+        }
+    })
+    .await
+}
+
+/// Removes an alias host name from a site, syncing as [`site_alias_add`].
+#[tauri::command]
+#[specta::specta]
+pub async fn site_alias_delete(
+    state: State<'_, AppState>,
+    hostname: String,
+    alias: String,
+) -> Result<Vec<SiteStatus>, Error> {
+    mutate_site_aliases(state, hostname, |aliases| {
+        aliases.retain(|a| !a.eq_ignore_ascii_case(&alias));
+    })
+    .await
+}
+
+/// Applies an alias mutation, validating through `Config::validate` (shape
+/// plus cross-site uniqueness), then syncing blocks and restarting nginx.
+async fn mutate_site_aliases(
+    state: State<'_, AppState>,
+    hostname: String,
+    edit: impl FnOnce(&mut Vec<String>),
+) -> Result<Vec<SiteStatus>, Error> {
+    devx_provision::sites::validate_hostname(&hostname)?;
+
+    let known = state.with_config(|store| {
+        store
+            .config()
+            .sites
+            .iter()
+            .any(|s| s.hostname.eq_ignore_ascii_case(&hostname))
+    });
+    if !known {
+        return Err(Error::not_found(format!(
+            "site `{hostname}` is not configured"
+        )));
+    }
+
+    state.with_config_mut(|store| {
+        store.update(|config| {
+            let Some(site) = config
+                .sites
+                .iter_mut()
+                .find(|s| s.hostname.eq_ignore_ascii_case(&hostname))
+            else {
+                return;
+            };
+            edit(&mut site.aliases);
+        })
+    })?;
+
+    sync_site_blocks(&state)?;
+    restart_nginx_if_running(&state).await?;
+
+    site_list(state)
+}
+
+/// Restarts nginx when it is running, re-planning its spec first so the new
+/// process loads freshly rendered configuration.
+///
+/// A stopped nginx simply picks the new config up on its next start, so in
+/// that case there is nothing to do. The restart follows the same
+/// stop-then-re-register order as `php_ext_set`: the registry refuses to
+/// replace an active supervisor.
+async fn restart_nginx_if_running(state: &State<'_, AppState>) -> Result<(), Error> {
+    let Some(supervisor) = state.services.get("nginx") else {
+        return Ok(());
+    };
+    if !supervisor.state().is_active() {
+        return Ok(());
+    }
+
+    supervisor.stop().await;
+
+    // Re-plan with the newest installed version resolved from disk, so the
+    // restarted nginx matches what is on disk.
+    let newest = newest_installed_component(&state.paths, "nginx")?;
+    let plan = crate::services::plan_service(&state.paths, "nginx", &newest, &[])?;
+    let replacement = state.services.register(plan.spec)?;
+    replacement.start().await?;
+    Ok(())
+}
+
+/// The newest installed version of a component, from the runtimes directory.
+fn newest_installed_component(paths: &AppPaths, component_id: &str) -> Result<String, Error> {
+    let runtimes = paths.runtimes_dir().join(component_id);
+    let mut versions: Vec<String> = std::fs::read_dir(&runtimes)
+        .map_err(|_| {
+            Error::not_found(format!("{component_id} is not installed"))
+                .with_hint("install the component from the Components page first")
+        })?
+        .flatten()
+        .filter(|entry| entry.file_type().map(|t| t.is_dir()).unwrap_or(false))
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| runtimes.join(name).join(".devx-ok").is_file())
+        .collect();
+    versions.sort();
+    versions
+        .pop()
+        .ok_or_else(|| Error::not_found(format!("{component_id} is not installed")))
+}
+
 /// (Re)writes every site's nginx block and prunes stale ones.
 ///
 /// One sync per mutation keeps the include directory exactly equal to the
@@ -726,6 +1210,8 @@ fn sync_site_blocks(state: &State<'_, AppState>) -> Result<(), Error> {
             hostname: site.hostname.clone(),
             docroot: std::path::PathBuf::from(&site.docroot),
             php_version: site.php().map(str::to_owned),
+            env: site.env.clone().into_iter().collect(),
+            aliases: site.aliases.clone(),
         };
         let endpoint = match spec.php_version.clone() {
             Some(version) => Some(devx_provision::pool_endpoint_for(
@@ -850,6 +1336,301 @@ pub async fn db_list_databases(
 #[specta::specta]
 pub async fn db_list_tables(params: devx_db::ConnectionParams) -> Result<devx_db::DbResult, Error> {
     devx_db::list_tables(&params).await
+}
+
+/// One database backup file, for the UI.
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
+pub struct BackupEntry {
+    /// Service the backup belongs to (`mariadb`, `postgresql`, `redis`).
+    pub service_id: String,
+    /// File name inside the service's backups directory.
+    pub file_name: String,
+    /// Size on disk, in bytes.
+    #[specta(type = specta_typescript::Number)]
+    pub size_bytes: u64,
+    /// Creation time as Unix seconds.
+    #[specta(type = specta_typescript::Number)]
+    pub created_unix: u64,
+}
+
+/// How many backups to keep per service; older ones are pruned on create.
+const MAX_BACKUPS_PER_SERVICE: usize = 10;
+
+/// The backups directory for one database service.
+fn backup_dir(paths: &AppPaths, service_id: &str) -> std::path::PathBuf {
+    paths.data_dir.join("backups").join(service_id)
+}
+
+/// The [`devx_db::Engine`] a database service id maps to.
+fn engine_of(service_id: &str) -> Result<devx_db::Engine, Error> {
+    match service_id {
+        "mariadb" => Ok(devx_db::Engine::MariaDb),
+        "postgresql" => Ok(devx_db::Engine::PostgreSql),
+        "redis" => Ok(devx_db::Engine::Redis),
+        other => Err(Error::invalid_input(format!(
+            "`{other}` has no backups; only mariadb, postgresql and redis do"
+        ))),
+    }
+}
+
+/// The connection params the dump tools and snapshots use for `service_id`.
+fn db_params(state: &AppState, service_id: &str) -> Result<devx_db::ConnectionParams, Error> {
+    let engine = engine_of(service_id)?;
+    let default_port = match engine {
+        devx_db::Engine::MariaDb => 3306,
+        devx_db::Engine::PostgreSql => 5432,
+        devx_db::Engine::Redis => 6379,
+    };
+    Ok(devx_db::ConnectionParams {
+        engine,
+        host: "127.0.0.1".into(),
+        port: state.services.port_of(service_id).unwrap_or(default_port),
+        username: None,
+        password: None,
+        database: None,
+    })
+}
+
+/// Validates a backup file name: a safe stem plus a known extension.
+fn validate_backup_file_name(file_name: &str) -> Result<(), Error> {
+    let valid = !file_name.is_empty()
+        && (file_name.ends_with(".sql") || file_name.ends_with(".rdb"))
+        && file_name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+        && !file_name.contains("..");
+    if valid {
+        Ok(())
+    } else {
+        Err(Error::invalid_input(format!(
+            "`{file_name}` is not a DevX backup file name"
+        )))
+    }
+}
+
+/// Lists the backups of one database service, newest first.
+#[tauri::command]
+#[specta::specta]
+pub fn backup_list(
+    state: State<'_, AppState>,
+    service_id: String,
+) -> Result<Vec<BackupEntry>, Error> {
+    engine_of(&service_id)?;
+    let dir = backup_dir(&state.paths, &service_id);
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Ok(Vec::new());
+    };
+
+    let mut backups = Vec::new();
+    for entry in entries.flatten() {
+        if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
+            continue;
+        }
+        let file_name = entry.file_name().to_string_lossy().into_owned();
+        if validate_backup_file_name(&file_name).is_err() {
+            continue;
+        }
+        let metadata = entry.metadata().ok();
+        let size_bytes = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+        let created_unix = metadata
+            .and_then(|m| m.created().or_else(|_| m.modified()).ok())
+            .and_then(|t| {
+                t.duration_since(std::time::UNIX_EPOCH)
+                    .ok()
+                    .map(|d| d.as_secs())
+            })
+            .unwrap_or(0);
+        backups.push(BackupEntry {
+            service_id: service_id.clone(),
+            file_name,
+            size_bytes,
+            created_unix,
+        });
+    }
+    backups.sort_by_key(|entry| std::cmp::Reverse(entry.created_unix));
+    Ok(backups)
+}
+
+/// Creates a backup of one database service and prunes old ones.
+///
+/// MariaDB and PostgreSQL are dumped through their own tools into plain SQL;
+/// Redis is snapshotted with a blocking `SAVE` and the RDB file copied. The
+/// service must be running: the tools connect over TCP like any client.
+#[tauri::command]
+#[specta::specta]
+pub async fn backup_create(
+    state: State<'_, AppState>,
+    service_id: String,
+) -> Result<BackupEntry, Error> {
+    let engine = engine_of(&service_id)?;
+    let params = db_params(&state, &service_id)?;
+    if !devx_db::is_reachable(&params) {
+        return Err(Error::conflict(format!(
+            "{service_id} is not running; start it before taking a backup"
+        )));
+    }
+
+    let dir = backup_dir(&state.paths, &service_id);
+    std::fs::create_dir_all(&dir).map_err(|err| {
+        Error::new(
+            devx_core::ErrorCode::Io,
+            format!("failed to create {}: {err}", dir.display()),
+        )
+    })?;
+
+    let created_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let file_name = match engine {
+        devx_db::Engine::Redis => format!("snapshot-{created_unix}.rdb"),
+        _ => format!("dump-{created_unix}.sql"),
+    };
+    let out_path = dir.join(&file_name);
+
+    match engine {
+        devx_db::Engine::Redis => {
+            devx_db::redis_snapshot(params.port).await?;
+            let rdb = state
+                .paths
+                .service_data_dir()
+                .join("redis")
+                .join("dump.rdb");
+            std::fs::copy(&rdb, &out_path).map_err(|err| {
+                Error::new(
+                    devx_core::ErrorCode::Io,
+                    format!("failed to copy {}: {err}", rdb.display()),
+                )
+                .with_hint("the snapshot file was not found next to the redis service data")
+            })?;
+        }
+        _ => {
+            let version = newest_installed_component(&state.paths, &service_id)?;
+            let install_dir = state.paths.runtimes_dir().join(&service_id).join(version);
+            let plan = devx_db::plan_dump(engine, &install_dir, params.port, &out_path)?;
+            devx_db::run_tool(&plan).await?;
+        }
+    }
+
+    prune_backups(&dir, MAX_BACKUPS_PER_SERVICE)?;
+
+    let size_bytes = std::fs::metadata(&out_path).map(|m| m.len()).unwrap_or(0);
+    Ok(BackupEntry {
+        service_id,
+        file_name,
+        size_bytes,
+        created_unix,
+    })
+}
+
+/// Deletes all but the newest `keep` backups in `dir`.
+fn prune_backups(dir: &std::path::Path, keep: usize) -> Result<(), Error> {
+    let mut files: Vec<(std::time::SystemTime, std::path::PathBuf)> = std::fs::read_dir(dir)
+        .map_err(|err| {
+            Error::new(
+                devx_core::ErrorCode::Io,
+                format!("failed to read {}: {err}", dir.display()),
+            )
+        })?
+        .flatten()
+        .filter(|entry| entry.file_type().map(|t| t.is_file()).unwrap_or(false))
+        .filter_map(|entry| {
+            let metadata = entry.metadata().ok()?;
+            let modified = metadata.modified().ok()?;
+            Some((modified, entry.path()))
+        })
+        .collect();
+    files.sort_by_key(|(time, _)| std::cmp::Reverse(*time));
+
+    for (_, path) in files.into_iter().skip(keep) {
+        if let Err(err) = std::fs::remove_file(&path) {
+            tracing::warn!(path = %path.display(), error = %err, "could not prune an old backup");
+        }
+    }
+    Ok(())
+}
+
+/// Restores a database service from one of its backups.
+///
+/// SQL dumps are replayed through the engine's client against the running
+/// server; a Redis snapshot is copied back into the service data directory,
+/// which requires the server to be stopped first.
+#[tauri::command]
+#[specta::specta]
+pub async fn backup_restore(
+    state: State<'_, AppState>,
+    service_id: String,
+    file_name: String,
+) -> Result<(), Error> {
+    let engine = engine_of(&service_id)?;
+    validate_backup_file_name(&file_name)?;
+
+    let dir = backup_dir(&state.paths, &service_id);
+    let backup_path = dir.join(&file_name);
+    if !backup_path.is_file() {
+        return Err(Error::not_found(format!(
+            "backup `{file_name}` does not exist"
+        )));
+    }
+
+    match engine {
+        devx_db::Engine::Redis => {
+            let running = state
+                .services
+                .get(&service_id)
+                .is_some_and(|supervisor| supervisor.state().is_active());
+            if running {
+                return Err(Error::conflict(
+                    "redis must be stopped to restore a snapshot",
+                ));
+            }
+            let rdb = state
+                .paths
+                .service_data_dir()
+                .join("redis")
+                .join("dump.rdb");
+            std::fs::copy(&backup_path, &rdb).map_err(|err| {
+                Error::new(
+                    devx_core::ErrorCode::Io,
+                    format!("failed to restore {}: {err}", rdb.display()),
+                )
+            })?;
+        }
+        _ => {
+            let params = db_params(&state, &service_id)?;
+            if !devx_db::is_reachable(&params) {
+                return Err(Error::conflict(format!(
+                    "{service_id} is not running; start it before restoring"
+                )));
+            }
+            let version = newest_installed_component(&state.paths, &service_id)?;
+            let install_dir = state.paths.runtimes_dir().join(&service_id).join(version);
+            let plan = devx_db::plan_restore(engine, &install_dir, params.port, &backup_path)?;
+            devx_db::run_tool(&plan).await?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Deletes one backup of a database service.
+#[tauri::command]
+#[specta::specta]
+pub fn backup_delete(
+    state: State<'_, AppState>,
+    service_id: String,
+    file_name: String,
+) -> Result<(), Error> {
+    engine_of(&service_id)?;
+    validate_backup_file_name(&file_name)?;
+
+    let path = backup_dir(&state.paths, &service_id).join(&file_name);
+    std::fs::remove_file(&path).map_err(|err| {
+        Error::new(
+            devx_core::ErrorCode::Io,
+            format!("failed to delete {}: {err}", path.display()),
+        )
+    })
 }
 
 /// Status of the Mailpit service, as the Mail page needs it.
@@ -1111,6 +1892,196 @@ pub async fn tunnel_status(
         running,
         url,
     })
+}
+
+/// One supervised worker instance, as the UI shows it.
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
+pub struct WorkerInstanceStatus {
+    /// Supervisor id: `worker-<name>-<instance>`.
+    pub id: String,
+    /// Current lifecycle state.
+    pub state: devx_proc::ServiceState,
+}
+
+/// One configured worker with the live state of its instances.
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
+pub struct WorkerStatus {
+    /// The user-chosen worker name.
+    pub name: String,
+    /// Program to run; a relative name runs off `PATH`.
+    pub program: Option<String>,
+    /// PHP version running the worker, when DevX supplies the interpreter.
+    pub php_version: Option<String>,
+    /// Arguments passed to the program.
+    pub args: Vec<String>,
+    /// Directory the process runs in.
+    pub working_dir: String,
+    /// How many instances are configured.
+    pub instances: u32,
+    /// Live state of each instance that has been started.
+    pub live: Vec<WorkerInstanceStatus>,
+}
+
+/// Builds a [`WorkerStatus`] for one configured worker.
+fn worker_status(state: &AppState, worker: &devx_core::Worker) -> WorkerStatus {
+    let live = (1..=worker.instances)
+        .filter_map(|instance| {
+            let id = devx_provision::worker_id(&worker.name, instance);
+            state
+                .services
+                .get(&id)
+                .map(|supervisor| WorkerInstanceStatus {
+                    id,
+                    state: supervisor.state(),
+                })
+        })
+        .collect();
+
+    WorkerStatus {
+        name: worker.name.clone(),
+        program: worker.program.clone(),
+        php_version: worker.php_version.clone(),
+        args: worker.args.clone(),
+        working_dir: worker.working_dir.clone(),
+        instances: worker.instances,
+        live,
+    }
+}
+
+/// Lists every configured worker with its live instance states.
+#[tauri::command]
+#[specta::specta]
+pub fn worker_list(state: State<'_, AppState>) -> Result<Vec<WorkerStatus>, Error> {
+    let workers = state.with_config(|store| store.config().workers.clone());
+    Ok(workers
+        .iter()
+        .map(|worker| worker_status(&state, worker))
+        .collect())
+}
+
+/// Adds (or replaces) a configured worker.
+#[tauri::command]
+#[specta::specta]
+pub async fn worker_add(
+    state: State<'_, AppState>,
+    name: String,
+    program: Option<String>,
+    php_version: Option<String>,
+    args: Vec<String>,
+    working_dir: String,
+    instances: u32,
+) -> Result<Vec<WorkerStatus>, Error> {
+    let worker = devx_core::Worker {
+        name,
+        program,
+        php_version,
+        args,
+        working_dir,
+        instances,
+    };
+
+    // `update` validates the whole config, so the name, instance bounds and
+    // program/php_version exclusivity are checked before anything persists.
+    // Persist first, exactly like `site_add`: a failed save aborts the change.
+    state.with_config_mut(|store| {
+        store.update(|config| {
+            config.workers.retain(|w| w.name != worker.name);
+            config.workers.push(worker.clone());
+        })
+    })?;
+
+    worker_list(state)
+}
+
+/// Removes a worker, stopping any running instances first.
+#[tauri::command]
+#[specta::specta]
+pub async fn worker_remove(
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<Vec<WorkerStatus>, Error> {
+    let worker = state.with_config(|store| {
+        store
+            .config()
+            .workers
+            .iter()
+            .find(|w| w.name == name)
+            .cloned()
+    });
+    if let Some(worker) = worker {
+        for instance in 1..=worker.instances {
+            let id = devx_provision::worker_id(&worker.name, instance);
+            if let Some(supervisor) = state.services.get(&id) {
+                supervisor.stop().await;
+            }
+        }
+    }
+
+    state.with_config_mut(|store| {
+        store.update(|config| config.workers.retain(|w| w.name != name))
+    })?;
+
+    worker_list(state)
+}
+
+/// Starts every instance of a worker. Idempotent for running instances.
+#[tauri::command]
+#[specta::specta]
+pub async fn worker_start(
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<Vec<WorkerStatus>, Error> {
+    let worker = state
+        .with_config(|store| {
+            store
+                .config()
+                .workers
+                .iter()
+                .find(|w| w.name == name)
+                .cloned()
+        })
+        .ok_or_else(|| Error::not_found(format!("worker `{name}` is not configured")))?;
+
+    let plans = devx_provision::plan_worker_instances(&worker, &state.paths.runtimes_dir())?;
+    for plan in plans {
+        let supervisor = match state.services.get(&plan.id) {
+            Some(existing) if existing.state().is_active() => existing,
+            _ => state
+                .services
+                .register(crate::services::worker_spec(&state.paths, &plan))?,
+        };
+        supervisor.start().await?;
+    }
+
+    worker_list(state)
+}
+
+/// Stops every instance of a worker.
+#[tauri::command]
+#[specta::specta]
+pub async fn worker_stop(
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<Vec<WorkerStatus>, Error> {
+    let worker = state
+        .with_config(|store| {
+            store
+                .config()
+                .workers
+                .iter()
+                .find(|w| w.name == name)
+                .cloned()
+        })
+        .ok_or_else(|| Error::not_found(format!("worker `{name}` is not configured")))?;
+
+    for instance in 1..=worker.instances {
+        let id = devx_provision::worker_id(&worker.name, instance);
+        if let Some(supervisor) = state.services.get(&id) {
+            supervisor.stop().await;
+        }
+    }
+
+    worker_list(state)
 }
 
 /// Reports the bundled resolver's status and whether the NRPT rule is active.
@@ -1424,4 +2395,516 @@ fn parse_latest_release(body: &str) -> Option<String> {
 
     let release: Release = serde_json::from_str(body).ok()?;
     (!release.draft && !release.prerelease).then_some(release.tag_name)
+}
+
+// --- Terminal -------------------------------------------------------------
+
+/// The exit of one terminal command run.
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
+pub struct TerminalExit {
+    /// Which run this belongs to, matching the streamed `TerminalOutput`s.
+    pub run_id: u32,
+    /// Exit code, when the process ended normally.
+    pub code: Option<i32>,
+}
+
+/// Monotonic run counter for terminal output routing.
+static TERMINAL_RUN_ID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+
+/// Runtime directories worth having on the terminal's `PATH`.
+///
+/// Every installed runtime's directory is prepended (php, node, cloudflared
+/// and friends keep their executables at the root; the databases nest them
+/// in `bin`), so `php`, `composer` and `psql` resolve without the user
+/// editing their system PATH — the whole point of the in-app terminal.
+fn devx_path_entries(paths: &AppPaths) -> Vec<std::path::PathBuf> {
+    let mut entries = Vec::new();
+    let Ok(components) = std::fs::read_dir(paths.runtimes_dir()) else {
+        return entries;
+    };
+    for component in components.flatten() {
+        if !component.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            continue;
+        }
+        let Ok(versions) = std::fs::read_dir(component.path()) else {
+            continue;
+        };
+        for version in versions.flatten() {
+            if !version.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                continue;
+            }
+            let dir = version.path();
+            entries.push(dir.clone());
+            let bin = dir.join("bin");
+            if bin.is_dir() {
+                entries.push(bin);
+            }
+        }
+    }
+    entries
+}
+
+/// The `PATH` string the terminal runs with: DevX runtimes first, then the
+/// system's own `PATH` untouched.
+#[tauri::command]
+#[specta::specta]
+pub fn terminal_path(state: State<'_, AppState>) -> Result<String, Error> {
+    let mut dirs = devx_path_entries(&state.paths);
+    if let Some(system) = std::env::var_os("PATH") {
+        dirs.extend(std::env::split_paths(&system));
+    }
+    Ok(std::env::join_paths(dirs)
+        .map_err(|err| Error::internal(format!("failed to build PATH: {err}")))?
+        .to_string_lossy()
+        .into_owned())
+}
+
+/// Runs one command through `cmd /c` in `cwd`, streaming its output.
+///
+/// Streams `TerminalOutput` events as lines arrive and resolves once the
+/// process exits. This is a command runner, not a pty: interactive prompts
+/// are not supported, which keeps the surface honest and typed. The child
+/// gets the DevX runtimes on its `PATH` plus the usual working directory.
+#[tauri::command]
+#[specta::specta]
+pub async fn terminal_run(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    cwd: String,
+    command: String,
+) -> Result<TerminalExit, Error> {
+    use tauri_specta::Event as _;
+    use tokio::io::{AsyncBufReadExt, BufReader};
+
+    let trimmed = command.trim();
+    if trimmed.is_empty() {
+        return Err(Error::invalid_input("the command must not be empty"));
+    }
+    let working_dir = std::path::PathBuf::from(&cwd);
+    if !working_dir.is_absolute() || !working_dir.is_dir() {
+        return Err(Error::invalid_input(format!(
+            "`{cwd}` is not an existing directory"
+        )));
+    }
+
+    let run_id = TERMINAL_RUN_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let mut path = devx_path_entries(&state.paths);
+    if let Some(system) = std::env::var_os("PATH") {
+        path.extend(std::env::split_paths(&system));
+    }
+    let path = std::env::join_paths(path)
+        .map_err(|err| Error::internal(format!("failed to build PATH: {err}")))?;
+
+    let mut child = tokio::process::Command::new("cmd")
+        .args(["/c", trimmed])
+        .current_dir(&working_dir)
+        .env("PATH", path)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|err| {
+            Error::new(
+                devx_core::ErrorCode::Process,
+                format!("failed to run the command: {err}"),
+            )
+        })?;
+
+    let mut streams: Vec<(String, Box<dyn tokio::io::AsyncRead + Unpin + Send>)> = Vec::new();
+    if let Some(stdout) = child.stdout.take() {
+        streams.push(("out".to_owned(), Box::new(stdout)));
+    }
+    if let Some(stderr) = child.stderr.take() {
+        streams.push(("err".to_owned(), Box::new(stderr)));
+    }
+
+    let mut pump_tasks = Vec::new();
+    for (stream, reader) in streams {
+        let app = app.clone();
+        pump_tasks.push(tokio::spawn(async move {
+            let mut lines = BufReader::new(reader).lines();
+            while let Ok(Some(text)) = lines.next_line().await {
+                let _ = crate::events::TerminalOutput {
+                    run_id,
+                    stream: stream.clone(),
+                    text,
+                }
+                .emit(&app);
+            }
+        }));
+    }
+
+    let output = child.wait().await.map_err(|err| {
+        Error::new(
+            devx_core::ErrorCode::Process,
+            format!("failed to await the command: {err}"),
+        )
+    })?;
+    for task in pump_tasks {
+        task.abort();
+    }
+
+    Ok(TerminalExit {
+        run_id,
+        code: output.code(),
+    })
+}
+
+// --- Templates -------------------------------------------------------------
+
+/// One scaffoldable site template, for the UI.
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
+pub struct TemplateInfo {
+    /// Template identifier.
+    pub id: String,
+    /// Display name.
+    pub name: String,
+    /// What the template sets up.
+    pub description: String,
+    /// Whether the files are generated locally, without downloading.
+    pub local: bool,
+}
+
+/// Lists the site templates DevX can scaffold.
+///
+/// Templates follow the catalog's integrity policy: anything needing a
+/// download without an obtainable checksum (WordPress publishes none for its
+/// zip; Laravel scaffolds through composer) is not offered as a download —
+/// the template only carries the suggested terminal command.
+#[tauri::command]
+#[specta::specta]
+pub fn template_list() -> Result<Vec<TemplateInfo>, Error> {
+    Ok(vec![
+        TemplateInfo {
+            id: "static".into(),
+            name: "Static site".into(),
+            description: "A single index.html page served as-is.".into(),
+            local: true,
+        },
+        TemplateInfo {
+            id: "php".into(),
+            name: "PHP site".into(),
+            description: "An index.php stub so the FastCGI pool has something to serve.".into(),
+            local: true,
+        },
+        TemplateInfo {
+            id: "wordpress".into(),
+            name: "WordPress".into(),
+            description: "Suggested terminal command; the upstream zip has no verifiable checksum, so DevX does not download it.".into(),
+            local: false,
+        },
+        TemplateInfo {
+            id: "laravel".into(),
+            name: "Laravel".into(),
+            description: "Suggested terminal command; scaffolding runs through composer and the PHP pool.".into(),
+            local: false,
+        },
+    ])
+}
+
+/// The suggested terminal command for templates DevX will not download.
+fn template_command(template_id: &str) -> Option<String> {
+    match template_id {
+        "wordpress" => Some(
+            "curl -L -o wordpress.zip https://wordpress.org/latest.zip && tar -xf wordpress.zip && move wordpress\\* . && del wordpress.zip"
+                .to_owned(),
+        ),
+        "laravel" => Some("composer create-project laravel/laravel .".to_owned()),
+        _ => None,
+    }
+}
+
+/// The result of scaffolding a site from a template.
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
+pub struct TemplateCreateResult {
+    /// The site that was created.
+    pub hostname: String,
+    /// The suggested terminal command, when the template delegates to one.
+    pub follow_up_command: Option<String>,
+}
+
+/// Scaffolds `template_id` into `docroot` and creates the site.
+///
+/// Local templates write their files into the (created) docroot and never
+/// overwrite existing content; download-based templates only create the
+/// folder and return their suggested command, to be run in the Terminal.
+#[tauri::command]
+#[specta::specta]
+pub async fn template_create(
+    state: State<'_, AppState>,
+    template_id: String,
+    hostname: String,
+    docroot: String,
+    php_version: String,
+    https: bool,
+) -> Result<TemplateCreateResult, Error> {
+    let docroot_path = std::path::PathBuf::from(&docroot);
+    if !docroot_path.is_absolute() {
+        return Err(Error::invalid_input(format!(
+            "`{docroot}` must be an absolute path"
+        )));
+    }
+    if docroot_path.is_file() {
+        return Err(Error::invalid_input(format!(
+            "`{docroot}` is a file, not a directory"
+        )));
+    }
+
+    let not_empty = docroot_path
+        .is_dir()
+        .then(|| std::fs::read_dir(&docroot_path).ok())
+        .flatten()
+        .and_then(|mut entries| entries.next().map(|_| ()))
+        .is_some();
+    if not_empty {
+        return Err(Error::conflict(format!(
+            "`{docroot}` already exists and is not empty"
+        )));
+    }
+
+    let follow_up_command = template_command(&template_id);
+    match template_id.as_str() {
+        "static" | "php" | "wordpress" | "laravel" => {
+            std::fs::create_dir_all(&docroot_path).map_err(|err| {
+                Error::new(
+                    devx_core::ErrorCode::Io,
+                    format!("failed to create {}: {err}", docroot_path.display()),
+                )
+            })?;
+        }
+        other => {
+            return Err(Error::invalid_input(format!("unknown template `{other}`")));
+        }
+    }
+
+    match template_id.as_str() {
+        "static" => {
+            let body = concat!(
+                "<!doctype html>\n<html lang=\"en\">\n<head>\n  <meta charset=\"utf-8\">\n",
+                "  <title>New site</title>\n</head>\n<body>\n  <h1>New site</h1>\n",
+                "  <p>Scaffolded by DevX. Replace this page with your own.</p>\n",
+                "</body>\n</html>\n"
+            );
+            devx_core::fsx::write_atomic(docroot_path.join("index.html"), body)?;
+        }
+        "php" => {
+            let body = concat!(
+                "<?php\ndeclare(strict_types=1);\n\n",
+                "echo 'New PHP site scaffolded by DevX.';\n"
+            );
+            devx_core::fsx::write_atomic(docroot_path.join("index.php"), body)?;
+        }
+        _ => {
+            // Download-based templates leave the folder to the suggested command.
+        }
+    }
+
+    // Reuse the site_add machinery: validate, persist, sync the block.
+    let statuses = site_add(state, hostname.clone(), docroot, php_version, https).await?;
+
+    let Some(created) = statuses
+        .iter()
+        .find(|site| site.hostname.eq_ignore_ascii_case(&hostname))
+    else {
+        return Err(Error::internal("the site was not created"));
+    };
+    tracing::info!(
+        hostname = %created.hostname,
+        template = %template_id,
+        "site scaffolded from template"
+    );
+
+    Ok(TemplateCreateResult {
+        hostname: created.hostname.clone(),
+        follow_up_command,
+    })
+}
+
+// --- Scheduler -------------------------------------------------------------
+
+/// One scheduled task, as the UI shows it.
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
+pub struct CronStatus {
+    /// The user-chosen task name (Windows task: `DevX <name>`).
+    pub name: String,
+    /// Program to run; a relative name runs off `PATH`.
+    pub program: Option<String>,
+    /// PHP version running the task, when DevX supplies the interpreter.
+    pub php_version: Option<String>,
+    /// Arguments passed to the program.
+    pub args: Vec<String>,
+    /// Directory the task runs in.
+    pub working_dir: String,
+    /// The interval in minutes.
+    pub every_minutes: u32,
+    /// Whether the Windows scheduled task exists right now.
+    pub registered: bool,
+}
+
+/// Prefix of every Windows task name DevX creates.
+const CRON_TASK_PREFIX: &str = "DevX ";
+
+/// Lists the configured scheduled tasks with their Windows registration.
+#[tauri::command]
+#[specta::specta]
+pub fn cron_list(state: State<'_, AppState>) -> Result<Vec<CronStatus>, Error> {
+    let jobs = state.with_config(|store| store.config().cron.clone());
+    Ok(jobs
+        .iter()
+        .map(|job| CronStatus {
+            name: job.name.clone(),
+            program: job.program.clone(),
+            php_version: job.php_version.clone(),
+            args: job.args.clone(),
+            working_dir: job.working_dir.clone(),
+            every_minutes: job.every_minutes,
+            registered: cron_task_exists(&job.name),
+        })
+        .collect())
+}
+
+/// Creates or updates a scheduled task: persist the definition, then
+/// reconcile the Windows task with it.
+#[tauri::command]
+#[specta::specta]
+pub async fn cron_set(
+    state: State<'_, AppState>,
+    name: String,
+    program: Option<String>,
+    php_version: Option<String>,
+    args: Vec<String>,
+    working_dir: String,
+    every_minutes: u32,
+) -> Result<Vec<CronStatus>, Error> {
+    let job = devx_core::CronJob {
+        name,
+        program,
+        php_version,
+        args,
+        working_dir,
+        every_minutes,
+    };
+
+    // `update` validates the whole config: name shape, program/php_version
+    // exclusivity, interval bounds — all before anything persists.
+    state.with_config_mut(|store| {
+        store.update(|config| {
+            config.cron.retain(|c| c.name != job.name);
+            config.cron.push(job.clone());
+        })
+    })?;
+
+    // Reconcile the OS task: config is the intent, schtasks the mechanism.
+    cron_task_create(&job).await?;
+
+    cron_list(state)
+}
+
+/// Deletes a scheduled task from the config and from Windows.
+#[tauri::command]
+#[specta::specta]
+pub async fn cron_delete(
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<Vec<CronStatus>, Error> {
+    state.with_config_mut(|store| store.update(|config| config.cron.retain(|c| c.name != name)))?;
+
+    cron_task_delete(&name).await;
+
+    cron_list(state)
+}
+
+/// The Windows task name for a DevX cron job.
+fn cron_task_name(name: &str) -> String {
+    format!("{CRON_TASK_PREFIX}{name}")
+}
+
+/// Whether the Windows scheduled task for `name` exists.
+fn cron_task_exists(name: &str) -> bool {
+    use std::os::windows::process::CommandExt as _;
+
+    std::process::Command::new("schtasks")
+        .args(["/Query", "/TN", &cron_task_name(name)])
+        .creation_flags(0x0800_0000)
+        .output()
+        .map(|out| out.status.success())
+        .unwrap_or(false)
+}
+
+/// The full command line a task runs, resolving a DevX PHP version when set.
+///
+/// `schtasks` has no start-in-directory flag, so the working directory is
+/// part of the command: the payload changes into it before running.
+fn cron_command_line(job: &devx_core::CronJob) -> Result<String, Error> {
+    let program = match (&job.program, &job.php_version) {
+        (Some(program), None) => program.clone(),
+        (None, Some(version)) => format!("runtimes/php/{version}/php.exe"),
+        _ => {
+            return Err(Error::invalid_input(format!(
+                "cron job `{}` must set exactly one of program or php_version",
+                job.name
+            )))
+        }
+    };
+
+    let mut line = format!("cmd /c cd /d \"{}\"", job.working_dir);
+    line.push_str(" && \"");
+    line.push_str(&program);
+    line.push('"');
+    for arg in &job.args {
+        line.push(' ');
+        line.push_str(arg);
+    }
+    Ok(line)
+}
+
+/// Creates (or overwrites) the Windows scheduled task for `job`.
+///
+/// Runs per-user and unelevated: `schtasks /Create` for the current user
+/// needs no admin, which keeps the helper out of scheduling entirely.
+async fn cron_task_create(job: &devx_core::CronJob) -> Result<(), Error> {
+    let line = cron_command_line(job)?;
+
+    // /TR is stored verbatim, quotes and all:
+    let output = tokio::process::Command::new("schtasks")
+        .args([
+            "/Create",
+            "/TN",
+            &cron_task_name(&job.name),
+            "/TR",
+            &line,
+            "/SC",
+            "MINUTE",
+            "/MO",
+            &job.every_minutes.to_string(),
+            "/F",
+        ])
+        .creation_flags(0x0800_0000)
+        .output()
+        .await
+        .map_err(|err| {
+            Error::new(
+                devx_core::ErrorCode::Process,
+                format!("failed to run schtasks: {err}"),
+            )
+        })?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(Error::new(
+            devx_core::ErrorCode::Process,
+            format!("schtasks failed for `{}`: {}", job.name, stderr.trim()),
+        ));
+    }
+
+    Ok(())
+}
+
+/// Deletes the Windows scheduled task for `name`, tolerating absence.
+async fn cron_task_delete(name: &str) {
+    let _ = tokio::process::Command::new("schtasks")
+        .args(["/Delete", "/TN", &cron_task_name(name), "/F"])
+        .creation_flags(0x0800_0000)
+        .output()
+        .await;
 }

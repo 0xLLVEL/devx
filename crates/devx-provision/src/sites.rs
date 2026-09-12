@@ -35,6 +35,12 @@ pub struct SiteSpec {
     /// PHP version whose FastCGI pool serves this site, e.g. `8.4.25`.
     /// `None` for a purely static site.
     pub php_version: Option<String>,
+    /// Environment variables exposed to the site's PHP requests, rendered as
+    /// `fastcgi_param` lines. Ignored for static sites. Pre-sorted by the
+    /// caller so blocks render deterministically.
+    pub env: Vec<(String, String)>,
+    /// Additional host names the site answers to, appended to `server_name`.
+    pub aliases: Vec<String>,
 }
 
 /// What sync produced, for the UI.
@@ -121,12 +127,14 @@ pub fn render_server_block(
 ) -> String {
     let docroot = slash(&spec.docroot);
 
+    let env_lines = render_env_params(&spec.env);
+
     let php_location = match php_endpoint {
         Some(endpoint) => format!(
             r#"    location ~ \.php$ {{
         fastcgi_pass   {endpoint};
         fastcgi_index  index.php;
-        include        fastcgi_params;
+        include        fastcgi_params;{env_lines}
         fastcgi_param  SCRIPT_FILENAME  $document_root$fastcgi_script_name;
         fastcgi_param  PATH_INFO        $fastcgi_path_info;
     }}
@@ -158,12 +166,37 @@ server {{
     }}
 }}
 "#,
-        hostname = spec.hostname,
+        hostname = spec_hostname(spec),
         docroot = docroot,
         index = index,
         php_location = php_location,
         tls = tls.unwrap_or_default(),
     )
+}
+
+/// The full `server_name` value: the primary host name plus its aliases.
+fn spec_hostname(spec: &SiteSpec) -> String {
+    let mut names = vec![spec.hostname.clone()];
+    names.extend(spec.aliases.iter().cloned());
+    names.join(" ")
+}
+
+/// Renders the site's environment variables as `fastcgi_param` lines.
+///
+/// Each line is prefixed with a newline-and-indent so the empty case leaves
+/// the block layout untouched. Key shapes and value metacharacters are
+/// rejected at config-validation time (`devx_core::config`), so the values
+/// here are always safe to quote verbatim.
+fn render_env_params(env: &[(String, String)]) -> String {
+    let mut lines = String::new();
+    for (key, value) in env {
+        lines.push_str("\n        fastcgi_param  ");
+        lines.push_str(key);
+        lines.push_str("  \"");
+        lines.push_str(value);
+        lines.push_str("\";");
+    }
+    lines
 }
 
 /// The file name of one site's block under the include directory.
@@ -277,6 +310,8 @@ mod tests {
             hostname: hostname.to_owned(),
             docroot: PathBuf::from("C:/projects/myapp/public"),
             php_version: php.map(str::to_owned),
+            env: Vec::new(),
+            aliases: Vec::new(),
         }
     }
 
@@ -316,6 +351,46 @@ mod tests {
         assert!(block.contains("SCRIPT_FILENAME  $document_root$fastcgi_script_name;"));
         assert!(block.contains("index.php"), "{block}");
         assert!(block.contains("try_files $uri $uri/ /index.php?$query_string;"));
+    }
+
+    #[test]
+    fn site_env_renders_as_fastcgi_params() {
+        let mut site = spec("app.test", Some("8.4.25"));
+        site.env = vec![
+            ("APP_ENV".to_owned(), "local".to_owned()),
+            ("DB_HOST".to_owned(), "127.0.0.1".to_owned()),
+        ];
+
+        let block = render_server_block(&site, Some("127.0.0.1:9100"), None);
+        assert!(
+            block.contains("fastcgi_param  APP_ENV  \"local\";"),
+            "{block}"
+        );
+        assert!(
+            block.contains("fastcgi_param  DB_HOST  \"127.0.0.1\";"),
+            "{block}"
+        );
+    }
+
+    #[test]
+    fn aliases_extend_the_server_name_list() {
+        let mut site = spec("app.test", None);
+        site.aliases = vec!["app.dev.test".to_owned(), "legacy.test".to_owned()];
+
+        let block = render_server_block(&site, None, None);
+        assert!(
+            block.contains("server_name  app.test app.dev.test legacy.test;"),
+            "{block}"
+        );
+    }
+
+    #[test]
+    fn static_sites_never_render_env_params() {
+        let mut site = spec("static.test", None);
+        site.env = vec![("APP_ENV".to_owned(), "local".to_owned())];
+
+        let block = render_server_block(&site, None, None);
+        assert!(!block.contains("fastcgi_param  APP_ENV"), "{block}");
     }
 
     #[test]

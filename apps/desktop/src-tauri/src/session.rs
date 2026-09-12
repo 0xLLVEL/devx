@@ -109,11 +109,23 @@ pub fn restore(app: tauri::AppHandle) {
 
     tauri::async_runtime::spawn(async move {
         let state = app.state::<AppState>();
+        // Workers record one session id per instance; restore each named
+        // worker once, starting all its instances (idempotent for the ones
+        // already covered by another recorded instance id).
+        let mut restored_workers: std::collections::BTreeSet<String> =
+            std::collections::BTreeSet::new();
+
         for id in &session.services {
             // Pools are their own ids (`php-pool-8.4.25`); services carry the
-            // plain component id. Both are stored side by side.
+            // plain component id. All three are stored side by side.
             let result = if let Some(version) = id.strip_prefix("php-pool-") {
                 start_pool(&state, version).await
+            } else if let Some(name) = worker_name_of(id) {
+                if restored_workers.insert(name.to_owned()) {
+                    start_worker(&state, name).await
+                } else {
+                    Ok(())
+                }
             } else {
                 start_service(&state, id).await
             };
@@ -125,6 +137,50 @@ pub fn restore(app: tauri::AppHandle) {
             }
         }
     });
+}
+
+/// The worker name behind a supervised id like `worker-queue-3`, if it is one.
+///
+/// Worker names are validated to lowercase DNS labels, so the final `-<n>`
+/// segment is always the instance number.
+fn worker_name_of(id: &str) -> Option<&str> {
+    let rest = id.strip_prefix("worker-")?;
+    let (name, tail) = rest.rsplit_once('-')?;
+    if tail.is_empty() || !tail.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    if name.is_empty() {
+        return None;
+    }
+    Some(name)
+}
+
+/// Starts every instance of a configured worker, mirroring `worker_start`.
+async fn start_worker(state: &AppState, name: &str) -> Result<()> {
+    let worker = state
+        .with_config(|store| {
+            store
+                .config()
+                .workers
+                .iter()
+                .find(|w| w.name == name)
+                .cloned()
+        })
+        .ok_or_else(|| {
+            Error::not_found(format!("worker `{name}` is not configured; cannot restore"))
+        })?;
+
+    let plans = devx_provision::plan_worker_instances(&worker, &state.paths.runtimes_dir())?;
+    for plan in plans {
+        let supervisor = match state.services.get(&plan.id) {
+            Some(existing) if existing.state().is_active() => existing,
+            _ => state
+                .services
+                .register(crate::services::worker_spec(&state.paths, &plan))?,
+        };
+        supervisor.start().await?;
+    }
+    Ok(())
 }
 
 /// Starts a plain service by component id, resolving the newest installed
@@ -168,7 +224,13 @@ async fn start_pool(state: &AppState, version: &str) -> Result<()> {
         Err(_) => next_pool_port(state),
     };
 
-    let plan = crate::services::plan_php_pool(&state.paths, version, port, workers)?;
+    let plan = crate::services::plan_php_pool(
+        &state.paths,
+        version,
+        port,
+        workers,
+        &state.with_config(|store| store.config().php_extensions.get(version).to_vec()),
+    )?;
     let supervisor = match state.services.get(&plan.id) {
         Some(existing) if existing.state().is_active() => existing,
         _ => {

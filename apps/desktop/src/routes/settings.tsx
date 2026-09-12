@@ -6,8 +6,9 @@ import {
   FolderOpen,
   Loader2,
   RefreshCw,
+  Upload,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
@@ -315,6 +316,19 @@ export function SettingsPage() {
                 })
               }
             />
+
+            <ToggleRow
+              id="notify-on-failure"
+              label="Notify me when a service fails"
+              description="Shows a Windows notification when a service crashes or cannot start."
+              checked={draft.general.notify_on_failure}
+              onChange={(checked) =>
+                patch((config) => {
+                  config.general.notify_on_failure = checked;
+                  return config;
+                })
+              }
+            />
           </CardContent>
         </Card>
 
@@ -421,9 +435,146 @@ export function SettingsPage() {
           </CardContent>
         </Card>
 
+        <TransferCard />
+
         <UpdatesCard appInfo={appInfoQuery.data ?? null} />
       </div>
     </>
+  );
+}
+
+/**
+ * Export and import of the whole configuration.
+ *
+ * Export downloads the validated TOML as a file; import takes one back —
+ * through the same parse-migrate-validate path a config file on disk uses,
+ * so a partial export still imports and anything invalid is refused.
+ */
+function TransferCard() {
+  const queryClient = useQueryClient();
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [pendingImport, setPendingImport] = useState<string | null>(null);
+
+  const download = (body: string) => {
+    const blob = new Blob([body], { type: "application/toml" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "devx-config.toml";
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportConfig = useMutation({
+    mutationFn: ipc.configExport,
+    onSuccess: download,
+  });
+  const importConfig = useMutation({
+    mutationFn: ipc.configImport,
+    onSuccess: (saved) => {
+      queryClient.setQueryData(["config"], saved);
+      setPendingImport(null);
+    },
+  });
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Import / export</CardTitle>
+        <CardDescription>
+          Move your sites, workers and settings between machines. Exported TOML
+          imports into any DevX of the same or a newer release.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => exportConfig.mutate()}
+            disabled={exportConfig.isPending}
+          >
+            {exportConfig.isPending ? <Loader2 className="animate-spin" /> : <Download />}
+            Export configuration
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => fileInput.current?.click()}
+            disabled={importConfig.isPending}
+          >
+            <Upload />
+            Choose a file to import…
+          </Button>
+          {pendingImport ? (
+            <Button
+              size="sm"
+              onClick={() => pendingImport && importConfig.mutate(pendingImport)}
+              disabled={importConfig.isPending}
+            >
+              {importConfig.isPending ? <Loader2 className="animate-spin" /> : null}
+              Import selected file
+            </Button>
+          ) : null}
+        </div>
+
+        <input
+          ref={fileInput}
+          type="file"
+          accept=".toml,text/plain"
+          className="hidden"
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            event.target.value = "";
+            if (!file) {
+              return;
+            }
+            void file.text().then(setPendingImport);
+          }}
+        />
+
+        {exportConfig.isSuccess && exportConfig.data ? (
+          <p className="text-xs text-muted-foreground" role="status">
+            Export ready — {exportConfig.data.length} bytes of TOML downloaded.
+          </p>
+        ) : null}
+        {pendingImport ? (
+          <p className="text-xs text-muted-foreground" role="status">
+            File selected; importing replaces the current configuration after
+            validation.
+          </p>
+        ) : null}
+        {importConfig.isSuccess ? (
+          <div
+            role="status"
+            className="flex items-center gap-2 rounded-md border border-success/40 bg-success/10 p-3 text-sm text-success"
+          >
+            <CircleCheck className="size-4" />
+            Configuration imported.
+          </div>
+        ) : null}
+        {exportConfig.error instanceof Error ? (
+          <p className="flex items-center gap-2 text-sm text-destructive" role="alert">
+            <CircleAlert className="size-4" />
+            {exportConfig.error.message}
+          </p>
+        ) : null}
+        {importConfig.error instanceof Error ? (
+          <div
+            role="alert"
+            className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive"
+          >
+            <CircleAlert className="mt-0.5 size-4 shrink-0" />
+            <div>
+              <p>{importConfig.error.message}</p>
+              {importConfig.error instanceof IpcError && importConfig.error.hint ? (
+                <p className="mt-1 text-destructive/80">{importConfig.error.hint}</p>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+      </CardContent>
+    </Card>
   );
 }
 

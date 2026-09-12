@@ -169,12 +169,14 @@ pub async fn run_init_steps(steps: &[ResolvedInitStep]) -> Result<()> {
 ///
 /// Unlike [`plan_service`], a pool has no init steps and always knows its
 /// port: callers pass the port they want, having already resolved collisions
-/// across pools with [`existing_pool_ports`].
+/// across pools with [`existing_pool_ports`]. `extensions` are the enabled
+/// extension DLL names for this version, rendered into the pool's `php.ini`.
 pub fn plan_php_pool(
     paths: &AppPaths,
     version: &str,
     port: u16,
     workers: u32,
+    extensions: &[String],
 ) -> Result<PhpPoolPlan> {
     validate_workers(workers)?;
 
@@ -191,7 +193,9 @@ pub fn plan_php_pool(
         &paths.service_config_dir().join(&id),
         &paths.service_data_dir().join(&id),
         &paths.logs_dir(),
-        &PoolPlanOptions::new(port).with_workers(workers),
+        &PoolPlanOptions::new(port)
+            .with_workers(workers)
+            .with_extensions(extensions.to_vec()),
     )
 }
 
@@ -266,6 +270,21 @@ pub fn pool_spec(paths: &AppPaths, plan: &PhpPoolPlan) -> Result<ProcessSpec> {
     spec.health_timeout = Duration::from_secs(15);
     spec.restart = RestartPolicy::OnFailure { max_retries: 3 };
     Ok(spec)
+}
+
+/// Turns a worker plan into a supervised [`ProcessSpec`].
+///
+/// Like pools, a worker's readiness is a short uptime: queue workers produce
+/// output, not listening ports, and a `LogContains` rule would depend on the
+/// command's logging habits rather than DevX's contract.
+pub fn worker_spec(paths: &AppPaths, plan: &devx_provision::WorkerPlan) -> ProcessSpec {
+    let mut spec = ProcessSpec::new(plan.id.clone(), plan.program.clone(), paths.logs_dir());
+    spec.args = plan.args.clone();
+    spec.working_dir = Some(plan.working_dir.clone());
+    spec.health = HealthCheck::Uptime(Duration::from_millis(500));
+    spec.health_timeout = Duration::from_secs(15);
+    spec.restart = RestartPolicy::OnFailure { max_retries: 3 };
+    spec
 }
 
 /// A short label for a port's holder.
@@ -351,7 +370,7 @@ mod tests {
         let paths = AppPaths::rooted_at(dir.path());
         paths.ensure_dirs().expect("dirs");
 
-        let err = plan_php_pool(&paths, "8.4.25", 9100, 4).expect_err("not installed");
+        let err = plan_php_pool(&paths, "8.4.25", 9100, 4, &[]).expect_err("not installed");
         assert_eq!(err.code, devx_core::ErrorCode::NotFound);
     }
 
@@ -362,7 +381,7 @@ mod tests {
         paths.ensure_dirs().expect("dirs");
         fake_php_install(&paths);
 
-        let plan = plan_php_pool(&paths, "8.4.25", 9100, 4).expect("plan");
+        let plan = plan_php_pool(&paths, "8.4.25", 9100, 4, &[]).expect("plan");
         assert_eq!(plan.id, "php-pool-8.4.25");
 
         let spec = pool_spec(&paths, &plan).expect("spec");
@@ -404,7 +423,7 @@ mod tests {
         // the next port is chosen past the claim.
         fake_php_install(&paths);
         let plan =
-            plan_php_pool(&paths, "8.4.25", devx_provision::FIRST_POOL_PORT, 4).expect("plan");
+            plan_php_pool(&paths, "8.4.25", devx_provision::FIRST_POOL_PORT, 4, &[]).expect("plan");
         pool_spec(&paths, &plan).expect("spec");
 
         assert_eq!(

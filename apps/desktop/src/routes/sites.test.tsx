@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   dnsStatus: vi.fn(),
   dnsStart: vi.fn(),
   dnsStop: vi.fn(),
+  templateList: vi.fn(),
 }));
 
 vi.mock("@/lib/ipc", async () => {
@@ -28,6 +29,7 @@ describe("SitesPage", () => {
       mock.mockReset();
     }
     mocks.siteList.mockResolvedValue([]);
+    mocks.templateList.mockResolvedValue([]);
     mocks.phpPoolList.mockResolvedValue([
       { id: "php-pool-8.4.25", version: "8.4.25", workers: 4, port: 9100, state: "running" },
     ]);
@@ -58,6 +60,8 @@ describe("SitesPage", () => {
         php_version: "8.4.25",
         php_endpoint: "127.0.0.1:9100",
         https: false,
+        env: {},
+        aliases: [],
       },
       {
         hostname: "static.test",
@@ -65,6 +69,8 @@ describe("SitesPage", () => {
         php_version: "",
         php_endpoint: null,
         https: false,
+        env: {},
+        aliases: [],
       },
     ]);
 
@@ -85,6 +91,8 @@ describe("SitesPage", () => {
         php_version: "",
         php_endpoint: null,
         https: true,
+        env: {},
+        aliases: [],
       },
     ]);
 
@@ -106,6 +114,8 @@ describe("SitesPage", () => {
         php_version: "8.4.25",
         php_endpoint: "127.0.0.1:9100",
         https: false,
+        env: {},
+        aliases: [],
       },
     ]);
     mocks.siteAdd.mockResolvedValue([
@@ -115,6 +125,8 @@ describe("SitesPage", () => {
         php_version: "8.4.25",
         php_endpoint: "127.0.0.1:9100",
         https: false,
+        env: {},
+        aliases: [],
       },
     ]);
 
@@ -181,6 +193,8 @@ describe("SitesPage", () => {
         php_version: "8.4.25",
         php_endpoint: "127.0.0.1:9100",
         https: false,
+        env: {},
+        aliases: [],
       },
     ]);
     mocks.siteRemove.mockResolvedValue([]);

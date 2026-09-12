@@ -104,6 +104,8 @@ async fn nginx_serves_a_php_site_through_its_pool() {
         hostname: "myapp.test".to_owned(),
         docroot: docroot.clone(),
         php_version: Some(php_version.clone()),
+        env: Vec::new(),
+        aliases: Vec::new(),
     };
     write_site_block(
         &sites_dir,
@@ -176,6 +178,8 @@ async fn nginx_serves_a_php_site_through_its_pool() {
             hostname: "plain.test".to_owned(),
             docroot: static_docroot.clone(),
             php_version: None,
+            env: Vec::new(),
+            aliases: Vec::new(),
         },
         None,
         None,

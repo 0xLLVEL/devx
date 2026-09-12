@@ -18,7 +18,10 @@ pub mod fsx;
 pub mod meta;
 pub mod paths;
 
-pub use config::{Config, ConfigStore, DnsMode, PhpPools, Site, Theme, CURRENT_SCHEMA_VERSION};
+pub use config::{
+    parse_config, serialize_config, Config, ConfigStore, CronJob, DnsMode, PhpExtensions, PhpPools,
+    Site, Theme, Worker, CURRENT_SCHEMA_VERSION,
+};
 pub use doctor::{Check, CheckStatus, ConfigHealth, DoctorReport, SystemProbe};
 pub use error::{Error, ErrorCode, Result};
 pub use meta::AppInfo;

@@ -91,6 +91,17 @@ listen address for downstream consumers. Worker counts are remembered in
 `config.toml` under `php_pools`. The `live_php` test installs a real PHP
 build, starts its pool, and proves the FastCGI socket accepts connections.
 
+#### PHP extension manager
+
+Extensions ship unenabled in every PHP build's `ext/` directory; the Services
+page enumerates them (`list_php_extensions` scans `ext/php_*.dll`) and turns
+them on or off per version. Enabled extensions are recorded in `config.toml`
+under `php_extensions` (DLL file names, keyed by PHP version) and rendered
+into the pool's generated `php.ini` — ordinary `extension =` lines, except
+`opcache` and `xdebug`, which must load through `zend_extension` or PHP
+refuses to start. Saving while the pool is running re-renders the ini and
+restarts the pool, so the change applies immediately.
+
 ### Sites and nginx routing
 
 A *site* (`devx-provision::sites`) is a host name, a document root and the PHP
@@ -112,6 +123,105 @@ Sites require the pool of their PHP version to have been started once (its
 resolvable, not guessed. The `live_site` test proves the full chain end to
 end: nginx serves a real PHP page through the pool of the site's version,
 and a second static site routes independently.
+
+### Queue workers
+
+Anything that should keep running alongside the services — a Laravel
+`queue:work`, a Node consumer, a watcher — is a *worker*: a user-defined
+supervised process, configured on the Services page and stored in
+`config.toml` under `[[workers]]`. A worker names either a program (path or
+`PATH` name) or a DevX-managed PHP version, its arguments, an absolute
+working directory, and an instance count (1–8); each instance is its own
+supervised process with a job object, a log file and the standard
+restart-with-backoff policy. Running instances are captured in
+`session.json` and restored on the next start, one broken instance never
+blocking the rest.
+
+### Site environment variables
+
+PHP sites take environment variables straight from DevX: each site's `env`
+map in `config.toml` (edited from the Sites page) is rendered into the
+site's nginx block as `fastcgi_param` lines, so `getenv` and frameworks like
+Laravel see them without a committed `.env`. Validation keeps the blocks
+unbreakable — variable-name shapes, no newlines, and no nginx
+metacharacters — and saving while nginx is running restarts it, so changes
+apply immediately.
+
+### Backups
+
+Each of the three database services gets a Backups card on the Databases
+page. MariaDB and PostgreSQL are dumped through their own bundled tools
+(`mariadb-dump`, `pg_dumpall`) into plain SQL under
+`data/backups/<service>/`; Redis issues a blocking `SAVE` and copies the RDB
+file. Restore replays a dump through the engine's client (`mariadb`,
+`psql`) against the running server, or swaps a Redis RDB back with the
+server stopped. The ten newest backups are kept per service; older ones are
+pruned automatically.
+
+### Log viewer and configuration transfer
+
+The Logs page lists every file in the DevX logs directory — services,
+pools, workers, rotated generations — with a 500-line tail, refresh and an
+auto-refresh toggle. File names are validated against the logs directory so
+the viewer reads DevX output and nothing else.
+
+Settings gains configuration transfer: export downloads the current
+`config.toml` contents as TOML (sites, workers, pools, extensions and
+settings), and import reads a file back through the same
+migrate-merge-validate path a config on disk uses, so partial exports still
+import and anything invalid leaves the running configuration untouched.
+
+### Site aliases
+
+A site answers to more than its primary host name: `[[sites]]` carries an
+`aliases` list, rendered into the nginx `server_name` line alongside the
+primary name and validated for shape plus uniqueness across every site and
+alias. The bundled resolver covers alias lookups like any other `.test`
+name. Aliases are edited per site on the Sites page, and saving restarts
+nginx when it is running.
+
+### Terminal
+
+The Terminal page runs one command at a time through `cmd /c` with the
+DevX runtimes prepended to `PATH` — every installed runtime directory
+(plus its `bin`), then the system `PATH` untouched — so `php`, `composer`,
+`node` and `psql` resolve without touching the user's environment. Output
+streams to the frontend as typed events, with per-run exit codes and a
+command history. It is a command runner rather than a pty: interactive
+prompts are not supported, by design.
+
+### Scheduled tasks
+
+`[[cron]]` config entries become real Windows scheduled tasks: `cron_set`
+persists the definition (a program or DevX PHP version, args, an absolute
+working directory, an interval of 1–10080 minutes) and creates a per-user
+task named `DevX <name>` through `schtasks` — unelevated, so the privileged
+helper stays out of it. Since `schtasks` has no start-in flag, the working
+directory travels inside the command line (`cmd /c cd /d … && …`). Tasks
+are managed from the Services page, which also shows whether the Windows
+task still exists.
+
+### Site templates
+
+The Sites page scaffolds a new site in one step: pick a template, give a
+host name and document root, and DevX creates the folder, writes the
+starter files and registers the site through the normal add flow. Templates
+follow the catalog's integrity policy — static and PHP starters are
+generated locally, while WordPress and Laravel publish no verifiable zip
+checksum, so those templates create the folder and surface the suggested
+terminal command instead of downloading anything unverified.
+
+### Failure notifications and resource metrics
+
+Every supervised service publishes its state transitions on a registry-wide
+broadcast bus (`devx_proc::ServiceEvent`). The desktop shell relays each
+transition to the frontend as a typed event — status badges update the
+moment something happens instead of at the next poll — and, for
+non-requested failures, raises a Windows notification (toggle in Settings).
+On top of the same supervision sits a resource view: `service_metrics`
+samples CPU time (`GetProcessTimes`) and resident memory
+(`GetProcessMemoryInfo`) of every live process in each job object, and the
+Dashboard plus per-service badges render the result.
 
 ### Privileged helper and hardened IPC
 
@@ -495,6 +605,18 @@ npm run tauri icon ../../assets/app-icon.png
 | 15 | `devx.exe` CLI companion | Done |
 | 16 | Tray, autostart, diagnostics, updater | Done |
 | 17 | NSIS installer and release hardening | Done |
+| 18 | Service events, failure notifications | Done |
+| 19 | Resource metrics (CPU/RAM) dashboard | Done |
+| 20 | PHP extension manager | Done |
+| 21 | Queue workers | Done |
+| 22 | Central log viewer | Done |
+| 23 | Site environment variables | Done |
+| 24 | Database backups and restore | Done |
+| 25 | Configuration import/export | Done |
+| 26 | Site aliases (multi-domain) | Done |
+| 27 | In-app terminal | Done |
+| 28 | Scheduled tasks UI | Done |
+| 29 | Site templates | Done |
 
 ## License
 
