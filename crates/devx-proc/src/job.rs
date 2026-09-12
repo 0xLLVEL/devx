@@ -33,6 +33,11 @@ unsafe impl Send for JobObject {}
 unsafe impl Sync for JobObject {}
 
 impl JobObject {
+    /// The raw job handle, for queries such as metrics sampling.
+    pub fn handle(&self) -> HANDLE {
+        self.handle
+    }
+
     /// Creates a job configured to kill its processes when the handle closes.
     pub fn new() -> Result<Self> {
         // SAFETY: creating an anonymous job object with no security attributes

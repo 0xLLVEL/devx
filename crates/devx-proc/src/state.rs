@@ -5,10 +5,10 @@
 //! tested without spawning anything: the interesting logic (what a crash means,
 //! when a restart is allowed) is decided here.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Where a supervised service is in its lifecycle.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, specta::Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
 pub enum ServiceState {
     /// Not running, and not trying to.
@@ -38,7 +38,7 @@ impl ServiceState {
 }
 
 /// Why a service left the `Running` or `Starting` state.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ExitReason {
     /// A stop was requested and the process exited.
@@ -66,9 +66,40 @@ impl ExitReason {
     }
 }
 
+/// Point-in-time resource use of one supervised service.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
+pub struct ServiceMetrics {
+    /// Id of the supervised service.
+    pub id: String,
+    /// Current lifecycle state.
+    pub state: ServiceState,
+    /// CPU use since the previous sample, normalised to one core (0–100).
+    pub cpu_percent: f64,
+    /// Resident memory of every process in the service's job, in bytes.
+    #[specta(type = specta_typescript::Number)]
+    pub memory_bytes: u64,
+    /// How many live processes the job contains.
+    pub processes: u32,
+}
+
+/// A state transition announced by a supervisor.
+///
+/// Published on a registry-wide broadcast channel so a single subscriber can
+/// observe every service at once; `exit` carries why the service left the
+/// running state, when it did.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct ServiceEvent {
+    /// Id of the supervised service.
+    pub id: String,
+    /// The state it moved to.
+    pub state: ServiceState,
+    /// Why it left the running state, if it did.
+    pub exit: Option<ExitReason>,
+}
+
 /// Decides whether a failed service should be restarted, given its policy and
 /// how many times it has already failed in the current window.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, specta::Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
 pub enum RestartPolicy {
     /// Never restart automatically.

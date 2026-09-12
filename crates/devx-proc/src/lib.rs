@@ -19,6 +19,8 @@
 pub mod health;
 pub mod logbuf;
 pub mod logfile;
+#[cfg(windows)]
+pub mod metrics;
 pub mod registry;
 pub mod state;
 pub mod supervisor;
@@ -29,5 +31,5 @@ pub mod job;
 pub use health::HealthCheck;
 pub use logbuf::{LogLine, LogRing, LogStream};
 pub use registry::ServiceRegistry;
-pub use state::{ExitReason, RestartPolicy, ServiceState};
+pub use state::{ExitReason, RestartPolicy, ServiceEvent, ServiceMetrics, ServiceState};
 pub use supervisor::{ProcessSpec, Supervisor};

@@ -17,12 +17,12 @@ use devx_core::{Error, ErrorCode, Result};
 use parking_lot::Mutex;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
-use tokio::sync::watch;
+use tokio::sync::{broadcast, watch};
 
 use crate::health::HealthCheck;
 use crate::logbuf::{LogLine, LogRing, LogStream};
 use crate::logfile::RotatingLog;
-use crate::state::{ExitReason, RestartPolicy, ServiceState};
+use crate::state::{ExitReason, RestartPolicy, ServiceEvent, ServiceState};
 
 /// How to launch and supervise a process.
 #[derive(Debug, Clone)]
@@ -80,6 +80,15 @@ struct Shared {
     state: watch::Sender<ServiceState>,
     logs: Mutex<LogRing>,
     last_exit: Mutex<Option<ExitReason>>,
+    /// Registry-wide event bus; `None` when the supervisor is standalone.
+    events: Option<broadcast::Sender<ServiceEvent>>,
+    /// Job object of the current child, kept alive while it runs so metrics
+    /// can enumerate its processes.
+    #[cfg(windows)]
+    job: Mutex<Option<Arc<crate::job::JobObject>>>,
+    /// Previous CPU reading, for the next metrics delta.
+    #[cfg(windows)]
+    last_sample: Mutex<Option<crate::metrics::Sample>>,
 }
 
 /// Supervises one process across its lifecycle.
@@ -100,11 +109,22 @@ struct StopHandle {
 impl Supervisor {
     /// Creates a supervisor for `spec` in the `Stopped` state.
     pub fn new(spec: ProcessSpec) -> Self {
+        Self::with_events(spec, None)
+    }
+
+    /// Creates a supervisor that publishes transitions on the registry's event
+    /// bus. Standalone supervisors (tests, the CLI) pass `None`.
+    pub fn with_events(spec: ProcessSpec, events: Option<broadcast::Sender<ServiceEvent>>) -> Self {
         let (state_tx, state_rx) = watch::channel(ServiceState::Stopped);
         let shared = Arc::new(Shared {
             state: state_tx,
             logs: Mutex::new(LogRing::new(spec.log_ring_capacity)),
             last_exit: Mutex::new(None),
+            events,
+            #[cfg(windows)]
+            job: Mutex::new(None),
+            #[cfg(windows)]
+            last_sample: Mutex::new(None),
         });
 
         Self {
@@ -118,6 +138,27 @@ impl Supervisor {
     /// Current state.
     pub fn state(&self) -> ServiceState {
         *self.state_rx.borrow()
+    }
+
+    /// The service's id.
+    pub fn id(&self) -> &str {
+        &self.spec.id
+    }
+
+    /// Samples the CPU and memory use of the supervised job, when one is live.
+    ///
+    /// Returns `None` when the service has never spawned, has already exited,
+    /// or the OS query failed; metrics are best-effort.
+    #[cfg(windows)]
+    pub fn metrics(&self) -> Option<crate::metrics::RawMetrics> {
+        let job = self.shared.job.lock().clone()?;
+        crate::metrics::sample_job(&job, &mut self.shared.last_sample.lock())
+    }
+
+    /// Non-Windows stub: no job objects to sample.
+    #[cfg(not(windows))]
+    pub fn metrics(&self) -> Option<crate::metrics::RawMetrics> {
+        None
     }
 
     /// The TCP port the health check probes, when the check is a port.
@@ -227,6 +268,23 @@ impl Drop for Supervisor {
     }
 }
 
+/// Clears the shared job-object slot when the run cycle ends.
+///
+/// The job's `KILL_ON_JOB_CLOSE` semantics are the orphan-proofing, so the
+/// handle must close when the child's run does — not when the supervisor is
+/// eventually dropped.
+#[cfg(windows)]
+struct JobSlotGuard<'a> {
+    slot: &'a Mutex<Option<Arc<crate::job::JobObject>>>,
+}
+
+#[cfg(windows)]
+impl Drop for JobSlotGuard<'_> {
+    fn drop(&mut self) {
+        *self.slot.lock() = None;
+    }
+}
+
 /// Builds an error describing why a start failed.
 fn spawn_error(id: &str, reason: Option<ExitReason>) -> Error {
     match reason {
@@ -247,9 +305,16 @@ fn spawn_error(id: &str, reason: Option<ExitReason>) -> Error {
     }
 }
 
-/// Sets the observable state.
-fn set_state(shared: &Shared, state: ServiceState) {
+/// Sets the observable state and announces the transition on the event bus.
+fn set_state(shared: &Shared, id: &str, state: ServiceState, exit: Option<ExitReason>) {
     let _ = shared.state.send(state);
+    if let Some(events) = &shared.events {
+        let _ = events.send(ServiceEvent {
+            id: id.to_owned(),
+            state,
+            exit,
+        });
+    }
 }
 
 /// The background loop: spawn, supervise, restart within budget.
@@ -261,20 +326,30 @@ async fn control_loop(spec: ProcessSpec, shared: Arc<Shared>, mut stop: watch::R
             break;
         }
 
-        set_state(&shared, ServiceState::Starting);
+        set_state(&shared, &spec.id, ServiceState::Starting, None);
         let outcome = run_once(&spec, &shared, &mut stop).await;
 
         *shared.last_exit.lock() = Some(outcome.clone());
 
         match &outcome {
             ExitReason::Requested => {
-                set_state(&shared, ServiceState::Stopped);
+                set_state(
+                    &shared,
+                    &spec.id,
+                    ServiceState::Stopped,
+                    Some(outcome.clone()),
+                );
                 break;
             }
             reason if reason.is_failure() => {
                 failures += 1;
                 if *stop.borrow() {
-                    set_state(&shared, ServiceState::Stopped);
+                    set_state(
+                        &shared,
+                        &spec.id,
+                        ServiceState::Stopped,
+                        Some(outcome.clone()),
+                    );
                     break;
                 }
                 if spec.restart.allows_restart(failures) {
@@ -282,19 +357,39 @@ async fn control_loop(spec: ProcessSpec, shared: Arc<Shared>, mut stop: watch::R
                     // permanently broken service does not wait minutes.
                     let backoff = restart_backoff(failures);
                     tracing::warn!(id = %spec.id, failures, ?backoff, "restarting after failure");
-                    set_state(&shared, ServiceState::Failed);
+                    set_state(
+                        &shared,
+                        &spec.id,
+                        ServiceState::Failed,
+                        Some(outcome.clone()),
+                    );
                     if wait_or_stop(&mut stop, backoff).await {
-                        set_state(&shared, ServiceState::Stopped);
+                        set_state(
+                            &shared,
+                            &spec.id,
+                            ServiceState::Stopped,
+                            Some(outcome.clone()),
+                        );
                         break;
                     }
                 } else {
                     tracing::error!(id = %spec.id, failures, "giving up after repeated failures");
-                    set_state(&shared, ServiceState::Failed);
+                    set_state(
+                        &shared,
+                        &spec.id,
+                        ServiceState::Failed,
+                        Some(outcome.clone()),
+                    );
                     break;
                 }
             }
             _ => {
-                set_state(&shared, ServiceState::Stopped);
+                set_state(
+                    &shared,
+                    &spec.id,
+                    ServiceState::Stopped,
+                    Some(outcome.clone()),
+                );
                 break;
             }
         }
@@ -346,10 +441,16 @@ async fn run_once(
         }
     };
 
-    // Assign to a job object so the child cannot outlive this supervisor.
+    // Assign to a job object so the child cannot outlive this supervisor. The
+    // handle is parked in `shared` so metrics can enumerate its processes
+    // while it runs; the guard below closes it on every exit path, which is
+    // what kills any descendants a stop request did not reach directly.
     #[cfg(windows)]
-    let _job = match assign_to_job(&child) {
-        Ok(job) => Some(job),
+    let _job_guard = match assign_to_job(&child) {
+        Ok(job) => {
+            *shared.job.lock() = Some(Arc::new(job));
+            Some(JobSlotGuard { slot: &shared.job })
+        }
         Err(err) => {
             tracing::error!(id = %spec.id, error = %err, "failed to jail process; killing it");
             let _ = child.start_kill();
@@ -412,7 +513,7 @@ async fn run_once(
 
     tokio::select! {
         _ = become_ready => {
-            set_state(shared, ServiceState::Running);
+            set_state(shared, &spec.id, ServiceState::Running, None);
         }
         status = child.wait() => {
             // Exited before ever becoming healthy.

@@ -9,13 +9,28 @@ use std::sync::Arc;
 
 use devx_core::{Error, Result};
 use parking_lot::Mutex;
+use tokio::sync::broadcast;
 
+use crate::state::ServiceEvent;
 use crate::supervisor::{ProcessSpec, Supervisor};
 
+/// Capacity of the registry-wide event bus.
+const EVENT_BUS_CAPACITY: usize = 64;
+
 /// Owns the supervisors for every registered service.
-#[derive(Default)]
 pub struct ServiceRegistry {
     services: Mutex<HashMap<String, Arc<Supervisor>>>,
+    events: broadcast::Sender<ServiceEvent>,
+}
+
+impl Default for ServiceRegistry {
+    fn default() -> Self {
+        let (events, _) = broadcast::channel(EVENT_BUS_CAPACITY);
+        Self {
+            services: Mutex::default(),
+            events,
+        }
+    }
 }
 
 impl ServiceRegistry {
@@ -40,9 +55,21 @@ impl ServiceRegistry {
             }
         }
 
-        let supervisor = Arc::new(Supervisor::new(spec.clone()));
+        let supervisor = Arc::new(Supervisor::with_events(
+            spec.clone(),
+            Some(self.events.clone()),
+        ));
         services.insert(spec.id, supervisor.clone());
         Ok(supervisor)
+    }
+
+    /// Subscribes to state transitions of every registered service.
+    ///
+    /// The returned receiver lags (not errors) if it falls behind the bus
+    /// capacity; callers should treat `RecvError::Lagged` as "resync by
+    /// polling", not as a failure.
+    pub fn events(&self) -> broadcast::Receiver<ServiceEvent> {
+        self.events.subscribe()
     }
 
     /// Returns the supervisor for `id`, if registered.
@@ -76,12 +103,37 @@ impl ServiceRegistry {
     pub fn port_of(&self, id: &str) -> Option<u16> {
         self.get(id).and_then(|supervisor| supervisor.health_port())
     }
+
+    /// Point-in-time CPU and memory use of every registered service.
+    ///
+    /// Services without a live job (stopped, failed to spawn) report zero
+    /// usage; the entry is still present so callers can zip it against the
+    /// service list.
+    pub fn metrics(&self) -> Vec<crate::state::ServiceMetrics> {
+        self.services
+            .lock()
+            .values()
+            .map(|supervisor| {
+                let raw = supervisor.metrics();
+                crate::state::ServiceMetrics {
+                    id: supervisor.id().to_owned(),
+                    state: supervisor.state(),
+                    cpu_percent: raw.map(|m| m.cpu_percent).unwrap_or(0.0),
+                    memory_bytes: raw.map(|m| m.memory_bytes).unwrap_or(0),
+                    processes: raw.map(|m| m.processes).unwrap_or(0),
+                }
+            })
+            .collect()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::ServiceState;
+    use crate::{ExitReason, HealthCheck, RestartPolicy};
     use devx_core::ErrorCode;
+    use std::time::Duration;
 
     fn spec(id: &str) -> ProcessSpec {
         ProcessSpec::new(id, "cmd", std::env::temp_dir())
@@ -111,5 +163,41 @@ mod tests {
         // Not started, so replacing is allowed.
         registry.register(spec("redis")).expect("replace");
         assert_eq!(registry.ids().len(), 1);
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn publishes_state_transitions_on_the_event_bus() {
+        let registry = ServiceRegistry::new();
+        let mut events = registry.events();
+
+        let mut crashing = spec("crasher");
+        crashing.args = vec!["/c".into(), "exit 1".into()];
+        // Long enough that the child exits before the check passes.
+        crashing.health = HealthCheck::Uptime(Duration::from_secs(10));
+        crashing.restart = RestartPolicy::Never;
+        let supervisor = registry.register(crashing).expect("register");
+        supervisor.start().await.expect_err("exit 1 must fail");
+
+        let mut saw_failed = None;
+        while saw_failed.is_none() {
+            match events.try_recv() {
+                Ok(event) if event.state == ServiceState::Failed => {
+                    saw_failed = Some(event);
+                }
+                Ok(_) => continue,
+                // Skip lagged ticks; nothing else is being published here.
+                Err(broadcast::error::TryRecvError::Lagged(_)) => continue,
+                Err(_) => break,
+            }
+        }
+
+        let event = saw_failed.expect("a Failed event must have been published");
+        assert_eq!(event.id, "crasher");
+        assert!(
+            matches!(event.exit, Some(ExitReason::Crashed { .. })),
+            "the crash reason must travel with the event, got {:?}",
+            event.exit
+        );
     }
 }
