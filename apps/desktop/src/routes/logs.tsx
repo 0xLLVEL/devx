@@ -2,8 +2,9 @@ import { useQuery } from "@tanstack/react-query";
 import { CircleAlert, Loader2, RefreshCw } from "lucide-react";
 import { useState } from "react";
 
-import { PageHeader } from "@/components/page-header";
+import { HeroBand } from "@/components/hero-band";
 import { Badge } from "@/components/ui/badge";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
@@ -24,12 +25,17 @@ export function LogsPage() {
 
   return (
     <>
-      <PageHeader
-        title="Logs"
-        description="Rotated output of every supervised service, pool and worker."
-      />
+      <div className="space-y-4 p-6">
+        {entries.length > 0 ? (
+          <HeroBand
+            title={`${entries.length} log file${entries.length === 1 ? "" : "s"} · ${formatBytes(
+              entries.reduce((sum, f) => sum + f.size_bytes, 0),
+            )}`}
+            description="Everything DevX and its supervised services have written, including rotated generations."
+          />
+        ) : null}
 
-      <div className="grid gap-4 p-6 lg:grid-cols-[280px_1fr]">
+        <div className="grid gap-4 lg:grid-cols-[280px_1fr]">
         <Card className="h-fit">
           <CardHeader>
             <CardTitle className="text-base">Log files</CardTitle>
@@ -49,9 +55,7 @@ export function LogsPage() {
                 {files.error.message}
               </p>
             ) : entries.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                No logs yet. Start a service to produce output.
-              </p>
+              <EmptyState title="No logs yet." description="Start a service to produce output." />
             ) : (
               <ul className="space-y-1">
                 {entries.map((entry) => (
@@ -79,6 +83,7 @@ export function LogsPage() {
             </CardContent>
           </Card>
         )}
+        </div>
       </div>
     </>
   );

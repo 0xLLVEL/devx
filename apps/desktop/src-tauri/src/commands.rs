@@ -87,11 +87,12 @@ pub fn config_get(state: State<'_, AppState>) -> Result<Config, Error> {
 /// DevX normalises values such as `schema_version`.
 #[tauri::command]
 #[specta::specta]
-pub fn config_set(
+pub async fn config_set(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     config: Config,
 ) -> Result<Config, Error> {
+    let previous_mode = state.with_config(|store| store.config().network.dns_mode);
     let stored = state.with_config_mut(|store| {
         store.replace(config)?;
         Ok::<_, Error>(store.config().clone())
@@ -99,6 +100,13 @@ pub fn config_set(
 
     // A successful write means whatever was wrong with the file is now fixed.
     state.mark_config_healthy();
+
+    // Switching the resolution strategy must reconcile the hosts file: the
+    // hosts-first strategies write every configured name, resolver-only
+    // clears DevX-owned entries so nothing stale keeps resolving.
+    if stored.network.dns_mode != previous_mode {
+        reconcile_hosts_entries(&state, stored.network.dns_mode).await;
+    }
 
     // The OS autostart entry must follow the setting immediately; a failure
     // is reported but does not roll back the save.
@@ -932,6 +940,98 @@ pub fn site_list(state: State<'_, AppState>) -> Result<Vec<SiteStatus>, Error> {
     Ok(statuses)
 }
 
+/// Writes or removes the hosts-file entries for one site's names
+/// (host name plus aliases), used when the resolution strategy is the
+/// hosts file. Silent no-op in resolver mode, where NRPT covers the
+/// suffix and the hosts file is deliberately left alone.
+/// Rewrites the hosts file to match the configured sites after a strategy
+/// switch.
+///
+/// Hosts-first strategies add an entry per site name and alias; resolver
+/// mode removes every DevX-owned entry so nothing keeps resolving once
+/// NRPT takes over. Best-effort: an unreachable helper is reported but
+/// never blocks the settings save.
+async fn reconcile_hosts_entries(state: &State<'_, AppState>, mode: devx_core::DnsMode) {
+    let names: Vec<String> = state.with_config(|store| {
+        store
+            .config()
+            .sites
+            .iter()
+            .flat_map(|site| {
+                let mut names = vec![site.hostname.clone()];
+                names.extend(site.aliases.clone());
+                names
+            })
+            .collect()
+    });
+
+    let result = if mode == devx_core::DnsMode::Resolver {
+        clear_hosts_entries().await
+    } else {
+        sync_hosts_entries(state, &names, true).await
+    };
+
+    if let Err(err) = result {
+        tracing::warn!(error = %err, ?mode, "hosts reconciliation after a strategy switch failed");
+    }
+}
+
+/// Removes every DevX-managed hosts entry.
+async fn clear_hosts_entries() -> Result<(), Error> {
+    if !PipeClient::is_available() {
+        return Err(Error::privileged(
+            "the privileged helper is unavailable, so the hosts file cannot be updated",
+        ));
+    }
+
+    let mut client = PipeClient::connect()?;
+    client.hello().await?;
+    for entry in client.list_hosts_entries().await? {
+        client.remove_hosts_entry(&entry.hostname).await?;
+    }
+    Ok(())
+}
+
+async fn sync_hosts_entries(
+    state: &State<'_, AppState>,
+    names: &[String],
+    add: bool,
+) -> Result<(), Error> {
+    let mode = state.with_config(|store| store.config().network.dns_mode);
+    // Hosts-file (and automatic, which is hosts-first) mode routes sites
+    // through the hosts file; resolver mode covers everything via NRPT.
+    if mode == devx_core::DnsMode::Resolver || names.is_empty() {
+        return Ok(());
+    }
+
+    crate::helper::ensure_helper_running().await?;
+
+    if !PipeClient::is_available() {
+        return Err(Error::privileged(
+            "the privileged helper is unavailable, so the hosts file cannot be updated"
+        )
+        .with_hint(
+            "install and start the DevXHelper service (the installer does this), or switch the resolution strategy back to the bundled resolver"
+        ));
+    }
+
+    let mut client = PipeClient::connect()?;
+    client.hello().await?;
+    for name in names {
+        if add {
+            client
+                .add_hosts_entry(devx_ipc::HostsEntry {
+                    hostname: name.clone(),
+                    ip: "127.0.0.1".into(),
+                })
+                .await?;
+        } else {
+            client.remove_hosts_entry(name).await?;
+        }
+    }
+    Ok(())
+}
+
 /// Adds (or replaces) a site, renders its nginx block, and syncs the set.
 #[tauri::command]
 #[specta::specta]
@@ -959,14 +1059,25 @@ pub async fn site_add(
     devx_provision::validate_spec(&spec, &state.paths.service_config_dir())?;
 
     // Persist to config first: a failed save must abort the mutation before
-    // any nginx block is written.
+    // any nginx block is written. Re-adding an existing hostname is the edit
+    // path (the editor updates docroot/PHP/HTTPS through this command), so
+    // the previous site's env vars and aliases are carried over instead of
+    // being silently wiped.
+    let previous = state.with_config(|store| {
+        store
+            .config()
+            .sites
+            .iter()
+            .find(|s| s.hostname.eq_ignore_ascii_case(&spec.hostname))
+            .cloned()
+    });
     let site = ConfigSite {
         hostname: spec.hostname.clone(),
         docroot: docroot.clone(),
         php_version: spec.php_version.clone().unwrap_or_default(),
         https,
-        env: Default::default(),
-        aliases: Vec::new(),
+        env: previous.as_ref().map(|s| s.env.clone()).unwrap_or_default(),
+        aliases: previous.map(|s| s.aliases).unwrap_or_default(),
     };
     state.with_config_mut(|store| {
         store.update(|config| {
@@ -978,6 +1089,9 @@ pub async fn site_add(
     })?;
 
     sync_site_blocks(&state)?;
+    let mut names = vec![spec.hostname.clone()];
+    names.extend(spec.aliases.clone());
+    sync_hosts_entries(&state, &names, true).await?;
 
     site_list(state)
 }
@@ -991,6 +1105,21 @@ pub async fn site_remove(
 ) -> Result<Vec<SiteStatus>, Error> {
     devx_provision::sites::validate_hostname(&hostname)?;
 
+    let removed = state
+        .with_config(|store| {
+            store
+                .config()
+                .sites
+                .iter()
+                .find(|s| s.hostname.eq_ignore_ascii_case(&hostname))
+                .map(|s| {
+                    let mut names = vec![s.hostname.clone()];
+                    names.extend(s.aliases.clone());
+                    names
+                })
+        })
+        .unwrap_or_default();
+
     state.with_config_mut(|store| {
         store.update(|config| {
             config
@@ -1000,6 +1129,7 @@ pub async fn site_remove(
     })?;
 
     sync_site_blocks(&state)?;
+    sync_hosts_entries(&state, &removed, false).await?;
 
     site_list(state)
 }
@@ -1133,6 +1263,16 @@ async fn mutate_site_aliases(
         )));
     }
 
+    let before = state.with_config(|store| {
+        store
+            .config()
+            .sites
+            .iter()
+            .find(|s| s.hostname.eq_ignore_ascii_case(&hostname))
+            .map(|s| s.aliases.clone())
+            .unwrap_or_default()
+    });
+
     state.with_config_mut(|store| {
         store.update(|config| {
             let Some(site) = config
@@ -1146,7 +1286,29 @@ async fn mutate_site_aliases(
         })
     })?;
 
+    let after = state.with_config(|store| {
+        store
+            .config()
+            .sites
+            .iter()
+            .find(|s| s.hostname.eq_ignore_ascii_case(&hostname))
+            .map(|s| s.aliases.clone())
+            .unwrap_or_default()
+    });
+    let added: Vec<String> = after
+        .iter()
+        .filter(|a| !before.contains(a))
+        .cloned()
+        .collect();
+    let removed: Vec<String> = before
+        .iter()
+        .filter(|a| !after.contains(a))
+        .cloned()
+        .collect();
+
     sync_site_blocks(&state)?;
+    sync_hosts_entries(&state, &added, true).await?;
+    sync_hosts_entries(&state, &removed, false).await?;
     restart_nginx_if_running(&state).await?;
 
     site_list(state)
@@ -1201,7 +1363,7 @@ fn newest_installed_component(paths: &AppPaths, component_id: &str) -> Result<St
 ///
 /// One sync per mutation keeps the include directory exactly equal to the
 /// configured set, which is what makes nginx restarts deterministic.
-fn sync_site_blocks(state: &State<'_, AppState>) -> Result<(), Error> {
+pub(crate) fn sync_site_blocks(state: &State<'_, AppState>) -> Result<(), Error> {
     let sites = state.with_config(|store| store.config().sites.clone());
     let sites_dir = state.paths.service_config_dir().join("nginx").join("sites");
 
@@ -1229,6 +1391,7 @@ fn sync_site_blocks(state: &State<'_, AppState>) -> Result<(), Error> {
             Some(devx_provision::tls_listen_snippet(
                 &site.hostname,
                 https_port,
+                &state.paths.certs_dir(),
             ))
         } else {
             None
@@ -2131,17 +2294,22 @@ pub async fn dns_start(state: State<'_, AppState>) -> Result<DnsStatus, Error> {
     // then store the handle in a separate, await-free block.
     let already_running = state.dns_running();
     if !already_running {
-        // Port 53 binds fail without elevation; fall back to an ephemeral
-        // port, which works just as well because the NRPT rule names the
-        // resolver's actual port.
-        let port = if dns_port == 53 { 0 } else { dns_port };
-        let handle = devx_dns::serve(port, devx_dns::ResolverConfig::default_for(&suffix))
+        // Try the configured port (53 on a stock Windows box binds fine
+        // unelevated — there is no low-port privilege) and fall back to an
+        // ephemeral one only when it is genuinely taken. The NRPT rule names
+        // the resolver's actual port either way.
+        let handle = match devx_dns::serve(dns_port, devx_dns::ResolverConfig::default_for(&suffix))
             .await
-            .map_err(|err| {
-                Error::conflict(format!("could not start the DNS resolver: {err}")).with_hint(
-                    "another resolver may own the port; stop it or change dns_port in Settings",
-                )
-            })?;
+        {
+            Ok(handle) => handle,
+            Err(_) => devx_dns::serve(0, devx_dns::ResolverConfig::default_for(&suffix))
+                .await
+                .map_err(|err| {
+                    Error::conflict(format!("could not start the DNS resolver: {err}")).with_hint(
+                        "another resolver may own the port; stop it or change dns_port in Settings",
+                    )
+                })?,
+        };
         tracing::info!(port = handle.local_addr().port(), "DNS resolver started");
         let mut guard = state
             .dns
@@ -2160,12 +2328,59 @@ pub async fn dns_start(state: State<'_, AppState>) -> Result<DnsStatus, Error> {
         guard.as_ref().map(|h| h.local_addr().port())
     };
     if let Some(resolver_port) = resolver_port {
+        // The helper is auto-elevated on demand: the first start raises one
+        // UAC prompt, after which the pipe stays up for every later flow.
+        if let Err(err) = crate::helper::ensure_helper_running().await {
+            tracing::warn!(error = %err, "helper elevation skipped; NRPT cannot be installed");
+        }
         if PipeClient::is_available() {
             let mut client = PipeClient::connect()?;
             client.hello().await?;
             client.set_nrpt_rule(&suffix, resolver_port).await?;
             tracing::info!(%suffix, resolver_port, "NRPT rule installed");
+        } else {
+            // Without the helper the rule cannot be written and every *.test
+            // lookup fails with ERR_NAME_NOT_RESOLVED — say so loudly.
+            tracing::warn!(
+                %suffix,
+                resolver_port,
+                "privileged helper unavailable: the NRPT rule was NOT installed, so *.test names will not resolve. Install the DevXHelper service (the installer does this) to route .test through DevX."
+            );
         }
+    }
+
+    dns_status(state).await
+}
+
+/// Re-installs the NRPT rule for the running resolver, prompting for
+/// helper elevation when needed.
+///
+/// The one-click remedy for "resolver running but names not resolving":
+/// it starts the resolver when stopped, then makes sure the helper is up
+/// (one UAC prompt the first time) and points the rule at the resolver's
+/// actual port.
+#[tauri::command]
+#[specta::specta]
+pub async fn dns_repair(state: State<'_, AppState>) -> Result<DnsStatus, Error> {
+    if !state.dns_running() {
+        // Starting the resolver also installs the rule via the helper.
+        return dns_start(state).await;
+    }
+
+    let suffix = state.with_config(|store| store.config().network.domain_suffix.clone());
+    let resolver_port = state
+        .dns
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .as_ref()
+        .map(|handle| handle.local_addr().port());
+
+    if let Some(resolver_port) = resolver_port {
+        crate::helper::ensure_helper_running().await?;
+        let mut client = PipeClient::connect()?;
+        client.hello().await?;
+        client.set_nrpt_rule(&suffix, resolver_port).await?;
+        tracing::info!(%suffix, resolver_port, "NRPT rule re-installed");
     }
 
     dns_status(state).await
@@ -2235,6 +2450,8 @@ pub async fn ca_status() -> Result<CaStatus, Error> {
 pub async fn ca_install() -> Result<CaStatus, Error> {
     let paths = devx_core::AppPaths::discover()?;
     let ca = devx_provision::pki::ensure_ca(&paths.certs_dir())?;
+
+    crate::helper::ensure_helper_running().await?;
 
     let mut client = PipeClient::connect()?;
     client.hello().await?;

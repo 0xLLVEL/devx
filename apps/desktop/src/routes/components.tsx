@@ -11,10 +11,13 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 
-import { PageHeader } from "@/components/page-header";
+import { HeroBand } from "@/components/hero-band";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import {
+  Callout,
+} from "@/components/ui/callout";
+import { Progress } from "@/components/ui/progress";
 import {
   ipc,
   type ComponentKind,
@@ -33,6 +36,7 @@ const KIND_LABELS: Record<ComponentKind, string> = {
   web_server: "Web servers",
   database: "Databases",
   cache: "Cache",
+  message_queue: "Queues",
   mail: "Mail",
   storage: "Storage",
   search: "Search",
@@ -45,6 +49,7 @@ const KIND_ORDER: ComponentKind[] = [
   "web_server",
   "database",
   "cache",
+  "message_queue",
   "mail",
   "storage",
   "search",
@@ -55,19 +60,17 @@ const KIND_ORDER: ComponentKind[] = [
 /** Components page: what can be installed, and which versions are available. */
 export function ComponentsPage() {
   const catalog = useQuery({ queryKey: ["catalog"], queryFn: ipc.catalogList });
+  const install = useInstall();
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const selected =
     catalog.data?.find((component) => component.id === selectedId) ??
     catalog.data?.[0] ??
     null;
+  const installedVersions = (install.installed.data ?? []).length;
 
   return (
     <>
-      <PageHeader
-        title="Components"
-        description="Runtimes and services DevX can install, with versions resolved from each upstream."
-      />
 
       {catalog.isPending ? (
         <div className="p-6">
@@ -84,59 +87,92 @@ export function ComponentsPage() {
           </p>
         </div>
       ) : (
-        <div className="grid gap-6 p-6 lg:grid-cols-[18rem_1fr]">
-          <nav aria-label="Components" className="space-y-4">
-            {KIND_ORDER.filter((kind) =>
-              catalog.data.some((component) => component.kind === kind),
-            ).map((kind) => (
-              <div key={kind} className="space-y-1">
-                <h2 className="px-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  {KIND_LABELS[kind]}
-                </h2>
-                {catalog.data
-                  .filter((component) => component.kind === kind)
-                  .map((component) => (
-                    <button
-                      key={component.id}
-                      type="button"
-                      onClick={() => setSelectedId(component.id)}
-                      aria-current={selected?.id === component.id}
-                      className={cn(
-                        "flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-2 text-left text-sm transition-colors",
-                        selected?.id === component.id
-                          ? "bg-accent text-accent-foreground"
-                          : "hover:bg-accent/50",
-                      )}
-                    >
-                      <span>{component.name}</span>
-                      {component.caveat ? (
-                        <TriangleAlert
-                          aria-label="Has a caveat"
-                          className="size-3.5 shrink-0 text-warning"
-                        />
-                      ) : null}
-                    </button>
-                  ))}
-              </div>
-            ))}
-          </nav>
+        <div className="space-y-4 p-6">
+          <HeroBand
+            title="Component catalog"
+            description={`${catalog.data.length} components · ${installedVersions} version${installedVersions === 1 ? "" : "s"} installed on this machine.`}
+            right={
+              <span className="text-xs text-muted-foreground">
+                Every download is checksum-verified before it lands.
+              </span>
+            }
+          />
 
-          {selected ? <ComponentDetail component={selected} /> : null}
+          <div className="grid gap-6 lg:grid-cols-[18rem_1fr]">
+            <nav aria-label="Components" className="space-y-4">
+              {KIND_ORDER.filter((kind) =>
+                catalog.data.some((component) => component.kind === kind),
+              ).map((kind) => (
+                <div key={kind} className="space-y-1">
+                  <h2 className="px-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    {KIND_LABELS[kind]}
+                  </h2>
+                  {catalog.data
+                    .filter((component) => component.kind === kind)
+                    .map((component) => {
+                      const kindInstalled = install.installed.data?.filter(
+                        (entry) => entry.component_id === component.id,
+                      ).length ?? 0;
+                      return (
+                        <button
+                          key={component.id}
+                          type="button"
+                          onClick={() => setSelectedId(component.id)}
+                          aria-current={selected?.id === component.id}
+                          className={cn(
+                            "flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-2 text-left text-sm transition-colors",
+                            selected?.id === component.id
+                              ? "bg-accent text-accent-foreground"
+                              : "hover:bg-accent/50",
+                          )}
+                        >
+                          <span className="min-w-0 truncate">{component.name}</span>
+                          <span className="flex shrink-0 items-center gap-1.5">
+                            {kindInstalled > 0 ? (
+                              <Badge variant="success">{kindInstalled}</Badge>
+                            ) : null}
+                            {component.caveat ? (
+                              <TriangleAlert
+                                aria-label="Has a caveat"
+                                className="size-3.5 shrink-0 text-warning"
+                              />
+                            ) : null}
+                          </span>
+                        </button>
+                      );
+                    })}
+                </div>
+              ))}
+            </nav>
+
+            {selected ? <ComponentDetail component={selected} install={install} /> : null}
+          </div>
         </div>
       )}
     </>
   );
 }
 
-function ComponentDetail({ component }: { component: ComponentSummary }) {
+function ComponentDetail({
+  component,
+  install,
+}: {
+  component: ComponentSummary;
+  install: ReturnType<typeof useInstall>;
+}) {
   const versions = useQuery({
     queryKey: ["component-versions", component.id],
     queryFn: () => ipc.componentVersions(component.id),
   });
-  const install = useInstall();
+
+  const installable = versions.data?.versions.length ?? 0;
+  const hidden = versions.data?.unverifiable.length ?? 0;
 
   return (
-    <section className="space-y-4">
+    <section
+      className="animate-in fade-in slide-in-from-bottom-2 flex flex-col space-y-4 duration-300 lg:h-0 lg:min-h-full"
+      aria-label={component.name}
+    >
       <div className="space-y-2">
         <div className="flex flex-wrap items-center gap-2">
           <h2 className="text-base font-semibold">{component.name}</h2>
@@ -155,15 +191,20 @@ function ComponentDetail({ component }: { component: ComponentSummary }) {
       </div>
 
       {component.caveat ? (
-        <div className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 p-3 text-xs text-warning">
-          <TriangleAlert className="mt-0.5 size-4 shrink-0" />
-          <p>{component.caveat}</p>
-        </div>
+        <Callout variant="warning" title="Heads up">
+          {component.caveat}
+        </Callout>
       ) : null}
 
-      <div className="space-y-2">
-        <div className="flex items-center gap-2">
+      <div className="flex min-h-0 flex-1 flex-col gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <h3 className="text-sm font-medium">Available versions</h3>
+          {versions.data ? (
+            <Badge variant="outline">
+              {installable} installable
+              {hidden > 0 ? ` · ${hidden} hidden` : ""}
+            </Badge>
+          ) : null}
           {versions.isFetching ? (
             <Loader2 aria-label="Refreshing" className="size-3.5 animate-spin text-muted-foreground" />
           ) : null}
@@ -180,15 +221,10 @@ function ComponentDetail({ component }: { component: ComponentSummary }) {
             Resolving versions…
           </p>
         ) : versions.isError ? (
-          <div
-            role="alert"
-            className="space-y-1 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive"
-          >
-            <p>{versions.error.message}</p>
-          </div>
+          <Callout variant="destructive">{versions.error.message}</Callout>
         ) : (
           <>
-            <ul className="divide-y divide-border overflow-hidden rounded-md border border-border">
+            <ul className="max-h-96 divide-y divide-border overflow-y-auto rounded-md border border-border lg:max-h-none lg:min-h-0 lg:flex-1">
               {versions.data.versions.map((version) => (
                 <VersionRow
                   key={version.version}
@@ -199,20 +235,14 @@ function ComponentDetail({ component }: { component: ComponentSummary }) {
               ))}
             </ul>
 
-            {versions.data.unverifiable.length > 0 ? (
-              <Card>
-                <CardContent className="flex items-start gap-2 p-3 text-xs text-muted-foreground">
-                  <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-warning" />
-                  <p>
-                    {versions.data.unverifiable.length} release
-                    {versions.data.unverifiable.length === 1 ? "" : "s"} hidden
-                    because the upstream publishes no checksum for them:{" "}
-                    <span className="font-mono">
-                      {versions.data.unverifiable.join(", ")}
-                    </span>
-                  </p>
-                </CardContent>
-              </Card>
+            {hidden > 0 ? (
+              <Callout variant="warning">
+                {hidden} release{hidden === 1 ? "" : "s"} hidden because the
+                upstream publishes no checksum for them:{" "}
+                <span className="font-mono">
+                  {versions.data.unverifiable.join(", ")}
+                </span>
+              </Callout>
             ) : null}
           </>
         )}
@@ -303,17 +333,8 @@ function VersionRow({
       </div>
 
       {busy && fraction !== null ? (
-        <div
-          className="mt-2 h-1 w-full overflow-hidden rounded-full bg-secondary"
-          role="progressbar"
-          aria-valuenow={Math.round(fraction * 100)}
-          aria-valuemin={0}
-          aria-valuemax={100}
-        >
-          <div
-            className="h-full bg-primary transition-[width]"
-            style={{ width: `${Math.round(fraction * 100)}%` }}
-          />
+        <div className="mt-2">
+          <Progress value={fraction} label={`Installing ${componentId} ${version.version}`} />
         </div>
       ) : null}
 

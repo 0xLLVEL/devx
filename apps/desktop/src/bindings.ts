@@ -165,6 +165,16 @@ export const commands = {
 	 *  rule at it. Idempotent: starting twice keeps the running instance.
 	 */
 	dnsStart: () => typedError<DnsStatus, DevxError>(__TAURI_INVOKE("dns_start")),
+	/**
+	 *  Re-installs the NRPT rule for the running resolver, prompting for
+	 *  helper elevation when needed.
+	 * 
+	 *  The one-click remedy for "resolver running but names not resolving":
+	 *  it starts the resolver when stopped, then makes sure the helper is up
+	 *  (one UAC prompt the first time) and points the rule at the resolver's
+	 *  actual port.
+	 */
+	dnsRepair: () => typedError<DnsStatus, DevxError>(__TAURI_INVOKE("dns_repair")),
 	/**  Stops the bundled resolver and removes the NRPT rule. */
 	dnsStop: () => typedError<DnsStatus, DevxError>(__TAURI_INVOKE("dns_stop")),
 	/**
@@ -469,6 +479,8 @@ export type ComponentKind =
 "database" | 
 /**  Key-value cache. */
 "cache" | 
+/**  Message queue server such as NATS. */
+"message_queue" | 
 /**  Mail catcher. */
 "mail" | 
 /**  Object storage. */

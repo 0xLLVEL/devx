@@ -167,6 +167,16 @@ impl PipeClient {
         }
     }
 
+    /// Asks the helper to exit gracefully.
+    ///
+    /// Used when the desktop app closes completely, so a helper it launched
+    /// does not outlive it. Best-effort by nature: the connection drops
+    /// right after the answer.
+    pub async fn shutdown(&mut self) -> Result<()> {
+        self.request(PrivilegedRequest::Shutdown).await?;
+        Ok(())
+    }
+
     /// Lists the marked hosts entries through the helper.
     pub async fn list_hosts_entries(&mut self) -> Result<Vec<HostsEntry>> {
         self.hello().await?;
@@ -309,26 +319,53 @@ fn open_pipe(path: &str) -> Result<tokio::io::BufStream<tokio::fs::File>> {
     use windows::Win32::Storage::FileSystem::OPEN_EXISTING;
     use windows::Win32::Storage::FileSystem::SECURITY_IDENTIFICATION;
     use windows::Win32::Storage::FileSystem::SECURITY_SQOS_PRESENT;
+    use windows::Win32::System::Pipes::WaitNamedPipeW;
 
     let wide: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
+    let name = windows::core::PCWSTR(wide.as_ptr());
+
+    // All instances can momentarily be busy while the app runs concurrent
+    // probes; wait for a free instance instead of failing the caller.
+    const BUSY_RETRIES: u32 = 20;
 
     // SAFETY: `wide` is a NUL-terminated UTF-16 buffer; the returned handle is
     // immediately owned by a File which closes it on drop.
-    let handle = unsafe {
-        CreateFileW(
-            windows::core::PCWSTR(wide.as_ptr()),
-            GENERIC_READ.0 | GENERIC_WRITE.0,
-            FILE_SHARE_MODE(0),
-            None,
-            OPEN_EXISTING,
-            SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION,
-            None,
-        )
-    }
-    .map_err(|err| {
-        Error::new(ErrorCode::Privileged, format!("cannot open {path}: {err}"))
-            .with_hint("the DevX helper service may not be running; restart DevX or reinstall")
-    })?;
+    let handle = {
+        let mut attempts = 0u32;
+        loop {
+            let opened = unsafe {
+                CreateFileW(
+                    name,
+                    GENERIC_READ.0 | GENERIC_WRITE.0,
+                    FILE_SHARE_MODE(0),
+                    None,
+                    OPEN_EXISTING,
+                    SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION,
+                    None,
+                )
+            };
+
+            match opened {
+                Ok(handle) => break handle,
+                Err(err) if is_pipe_busy(&err) && attempts < BUSY_RETRIES => {
+                    attempts += 1;
+                    // Wait for the next free instance, then try again.
+                    unsafe {
+                        let _ = WaitNamedPipeW(name, 250);
+                    }
+                }
+                Err(err) => {
+                    return Err(Error::new(
+                        ErrorCode::Privileged,
+                        format!("cannot open {path}: {err}"),
+                    )
+                    .with_hint(
+                        "the DevX helper service may not be running; restart DevX or reinstall",
+                    ));
+                }
+            }
+        }
+    };
 
     // `windows::Win32::Foundation::HANDLE` and `std::fs::File` share a raw
     // handle representation; `OwnedHandle` is the safe bridge.
@@ -351,6 +388,18 @@ fn is_pipe_available(path: &str) -> bool {
     open_pipe(path).is_ok()
 }
 
+/// Whether a failed `CreateFileW` means "every instance is in use" — the
+/// win32 code arrives packed into an HRESULT
+/// (`HRESULT_FROM_WIN32(ERROR_PIPE_BUSY)` = 0x8007_00E7), so the raw
+/// `ERROR_PIPE_BUSY` value must be compared after unpacking. Pure and
+/// unit-testable: driving a real busy pipe needs a server holding its only
+/// instance, which is a live-server test.
+fn is_pipe_busy(err: &windows::core::Error) -> bool {
+    let code = err.code().0 as u32;
+    (code & 0xFFFF_0000) == 0x8007_0000
+        && (code & 0xFFFF) == windows::Win32::Foundation::ERROR_PIPE_BUSY.0
+}
+
 #[cfg(not(windows))]
 fn is_pipe_available(_path: &str) -> bool {
     false
@@ -363,6 +412,25 @@ mod tests {
     #[test]
     fn pipe_names_are_the_documented_ones() {
         assert_eq!(pipe_name::HELPER, r"\\.\pipe\devx-helper");
+    }
+
+    #[test]
+    fn pipe_busy_errors_are_recognised_through_the_hresult_packing() {
+        use windows::Win32::Foundation::ERROR_PIPE_BUSY;
+
+        // HRESULT_FROM_WIN32(ERROR_PIPE_BUSY): what CreateFileW reports.
+        let busy = windows::core::Error::from(windows::core::HRESULT(
+            (0x8007_0000u32 | ERROR_PIPE_BUSY.0) as i32,
+        ));
+        assert!(is_pipe_busy(&busy));
+
+        // A raw (unpacked) 231 is NOT what the OS hands out and must not match.
+        let raw = windows::core::Error::from(windows::core::HRESULT(ERROR_PIPE_BUSY.0 as i32));
+        assert!(!is_pipe_busy(&raw));
+
+        // Anything else is not busy.
+        let other = windows::core::Error::from(windows::core::HRESULT(2));
+        assert!(!is_pipe_busy(&other));
     }
 
     #[test]

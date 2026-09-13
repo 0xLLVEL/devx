@@ -1,20 +1,20 @@
 //! The named-pipe server loop.
 //!
-//! One pipe instance handles one client connection at a time: create with the
-//! hardened DACL, connect, serve requests until EOF, repeat. Requests arrive
-//! through [`devx_ipc`]'s framing and are dispatched by
-//! [`crate::handle`]; the loop itself holds no state, so a restart can never
-//! observe a half-applied mutation (the hosts backend is atomic).
+//! Create with the hardened DACL, connect, serve requests until EOF, and
+//! immediately create the next listening instance on a fresh thread. Requests
+//! arrive through [`devx_ipc`]'s framing and are dispatched by
+//! [`crate::handle`]; the loop holds no state, so a restart can never observe
+//! a half-applied mutation (the hosts backend is atomic).
 //!
-//! The server blocks on `ConnectNamedPipe` on a dedicated thread rather than
-//! wiring overlapped IO into tokio: the helper serves one connection at a
-//! time and has nothing else to do while waiting, so a blocking thread per
-//! connection is the simpler, obviously-correct shape.
+//! A thread is spawned per connection and the listening instance is recreated
+//! right away, so the desktop app's concurrent status probes never collide
+//! with a session in progress (`ERROR_PIPE_BUSY`). Sessions are short and
+//! strictly request/response, so thread spawns stay at a handful per minute.
 
 use std::sync::Arc;
 
 use devx_core::Result;
-use devx_ipc::PrivilegedRequest;
+use devx_ipc::{PrivilegedRequest, PrivilegedResponse};
 
 use crate::{handle, Backends};
 
@@ -26,8 +26,14 @@ use crate::{handle, Backends};
 pub fn serve_blocking(backends: Arc<Backends>) -> Result<()> {
     let sddl = devx_privileged::descriptor::helper_pipe_sddl();
     tracing::info!(pipe = %devx_privileged::pipe_name::HELPER, %sddl, "helper listening");
+    let shutdown = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
     loop {
+        if shutdown.load(std::sync::atomic::Ordering::Relaxed) {
+            tracing::info!("shutdown requested; helper exiting");
+            return Ok(());
+        }
+
         let mut server = match create_pipe(&sddl) {
             Ok(server) => server,
             Err(err) => {
@@ -50,7 +56,11 @@ pub fn serve_blocking(backends: Arc<Backends>) -> Result<()> {
             }
         }
 
-        // The handle is ours alone now; serve one client to EOF.
+        // The connected handle is served on its own thread while the loop
+        // immediately creates the next listening instance, so concurrent
+        // client sessions never see ERROR_PIPE_BUSY.
+        let backends = backends.clone();
+        let shutdown = shutdown.clone();
         let mut reader = server;
         let mut writer = reader.try_clone().map_err(|err| {
             devx_core::Error::new(
@@ -58,7 +68,9 @@ pub fn serve_blocking(backends: Arc<Backends>) -> Result<()> {
                 format!("failed to clone the pipe handle: {err}"),
             )
         })?;
-        serve_client(backends.as_ref(), &mut reader, &mut writer);
+        std::thread::spawn(move || {
+            serve_client(backends.as_ref(), &shutdown, &mut reader, &mut writer);
+        });
     }
 }
 
@@ -75,8 +87,12 @@ pub fn serve_blocking(_backends: Arc<Backends>) -> Result<()> {
 /// Split from the connection setup so the protocol half can be exercised by
 /// tests with plain duplex streams.
 #[cfg(windows)]
-fn serve_client<R, W>(backends: &Backends, reader: &mut R, writer: &mut W)
-where
+fn serve_client<R, W>(
+    backends: &Backends,
+    shutdown: &std::sync::atomic::AtomicBool,
+    reader: &mut R,
+    writer: &mut W,
+) where
     R: std::io::Read,
     W: std::io::Write,
 {
@@ -94,6 +110,13 @@ where
         };
 
         tracing::debug!(?request, "helper received a request");
+        if matches!(request, PrivilegedRequest::Shutdown) {
+            // Answer first so the client sees the Applied, then flip the
+            // flag the outer loop polls between connections.
+            let _ = devx_ipc::write_frame_sync(writer, &PrivilegedResponse::Applied);
+            shutdown.store(true, std::sync::atomic::Ordering::Relaxed);
+            break;
+        }
         let response = handle(backends, &request);
 
         if let Err(err) = devx_ipc::write_frame_sync(writer, &response) {

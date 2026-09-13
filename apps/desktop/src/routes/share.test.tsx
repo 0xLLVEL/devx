@@ -68,7 +68,7 @@ describe("SharePage", () => {
 
     expect(await screen.findByText("myapp.test")).toBeInTheDocument();
     expect(screen.getByText("api.test")).toBeInTheDocument();
-    expect(screen.getAllByText(/local only/i).length).toBe(2);
+    expect(screen.getAllByText("local only").length).toBe(2);
   });
 
   it("starts a tunnel and shows the assigned URL once it appears", async () => {

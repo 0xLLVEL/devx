@@ -31,6 +31,8 @@ fn resolver_for(server: &MockServer, cache: &tempfile::TempDir) -> Resolver {
             node_index_url: format!("{}/dist/index.json", server.uri()),
             node_dist_base_url: format!("{}/dist", server.uri()),
             github_api_base_url: server.uri(),
+            go_dl_url: format!("{}/go/dl.json", server.uri()),
+            go_dist_base_url: format!("{}/go", server.uri()),
         })
         // Tests must not depend on the developer's ambient token.
         .with_github_token(None)

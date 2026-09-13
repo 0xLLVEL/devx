@@ -199,6 +199,49 @@ fn render_env_params(env: &[(String, String)]) -> String {
     lines
 }
 
+/// Writes a canonical `fastcgi_params` file into `config_dir`.
+///
+/// Site blocks include it by bare file name (`include fastcgi_params;`),
+/// which nginx resolves against the *config directory* — not the install
+/// prefix — so DevX ships its own copy there instead of relying on the
+/// per-version file inside the nginx install.
+///
+/// # Errors
+///
+/// Fails when the file cannot be written.
+pub fn write_fastcgi_params(config_dir: &Path) -> Result<()> {
+    std::fs::create_dir_all(config_dir).map_err(|err| {
+        Error::new(
+            ErrorCode::Io,
+            format!("failed to create {}: {err}", config_dir.display()),
+        )
+    })?;
+
+    devx_core::fsx::write_atomic(config_dir.join("fastcgi_params"), FASTCGI_PARAMS)
+}
+
+/// The standard FastCGI parameter set a PHP location needs.
+const FASTCGI_PARAMS: &str = r#"fastcgi_param  QUERY_STRING       $query_string;
+fastcgi_param  REQUEST_METHOD     $request_method;
+fastcgi_param  CONTENT_TYPE       $content_type;
+fastcgi_param  CONTENT_LENGTH     $content_length;
+fastcgi_param  SCRIPT_NAME        $fastcgi_script_name;
+fastcgi_param  REQUEST_URI        $request_uri;
+fastcgi_param  DOCUMENT_URI       $document_uri;
+fastcgi_param  DOCUMENT_ROOT      $document_root;
+fastcgi_param  SERVER_PROTOCOL    $server_protocol;
+fastcgi_param  REQUEST_SCHEME     $scheme;
+fastcgi_param  HTTPS              $https if_not_empty;
+fastcgi_param  GATEWAY_INTERFACE  CGI/1.1;
+fastcgi_param  SERVER_SOFTWARE    nginx/$nginx_version;
+fastcgi_param  REMOTE_ADDR        $remote_addr;
+fastcgi_param  REMOTE_PORT        $remote_port;
+fastcgi_param  SERVER_ADDR        $server_addr;
+fastcgi_param  SERVER_PORT        $server_port;
+fastcgi_param  SERVER_NAME        $server_name;
+fastcgi_param  REDIRECT_STATUS    200;
+"#;
+
 /// The file name of one site's block under the include directory.
 fn block_file_name(hostname: &str) -> String {
     format!("{}.conf", hostname.to_ascii_lowercase())
@@ -331,12 +374,15 @@ mod tests {
 
     #[test]
     fn tls_directives_land_in_the_listen_block() {
-        let tls = crate::tls_listen_snippet("app.test", 443);
+        let tls = crate::tls_listen_snippet("app.test", 443, std::path::Path::new("C:/devx/certs"));
         let block = render_server_block(&spec("app.test", None), None, Some(&tls));
 
         assert!(block.contains("listen       443 ssl;"), "{block}");
         assert!(block.contains("listen       80;"), "{block}");
-        assert!(block.contains("ssl_certificate     certs/sites/app.test/cert.pem;"));
+        assert!(
+            block.contains("ssl_certificate     C:/devx/certs/sites/app.test/cert.pem;"),
+            "{block}"
+        );
     }
 
     #[test]

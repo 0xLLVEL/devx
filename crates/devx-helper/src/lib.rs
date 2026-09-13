@@ -248,6 +248,11 @@ pub fn handle(backends: &Backends, request: &PrivilegedRequest) -> PrivilegedRes
                 Err(err) => rejected(err),
             }
         }
+        PrivilegedRequest::Shutdown => {
+            // The server loop watches the flag this sets and exits after the
+            // answer reaches the client.
+            PrivilegedResponse::Applied
+        }
         PrivilegedRequest::RemoveNrptRule { namespace } => {
             if let Err(err) = devx_ipc::validate_namespace(namespace) {
                 return rejected(err);

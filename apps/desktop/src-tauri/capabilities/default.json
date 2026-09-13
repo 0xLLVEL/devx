@@ -1,11 +1,14 @@
 {
   "identifier": "default",
   "description": "Capabilities granted to the DevX main window.",
-  "windows": ["main"],
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
     "opener:allow-open-url",
     "opener:allow-open-path",
-    "notification:default"
+    "notification:default",
+    "dialog:default"
   ]
 }

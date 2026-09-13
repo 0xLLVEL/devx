@@ -63,13 +63,28 @@ pub fn plan_service(
     }
 
     // nginx includes per-site server blocks from a sibling `sites` directory;
-    // create it up front so the include never matches nothing at all.
+    // create it up front so the include never matches nothing at all. Site
+    // blocks also include `fastcgi_params` by bare name, resolved against the
+    // config directory, so a canonical copy ships next to them.
     if component_id == "nginx" {
-        let sites_dir = paths.service_config_dir().join("nginx").join("sites");
+        let nginx_config_dir = paths.service_config_dir().join("nginx");
+        let sites_dir = nginx_config_dir.join("sites");
         std::fs::create_dir_all(&sites_dir).map_err(|err| {
             Error::new(
                 devx_core::ErrorCode::Io,
                 format!("failed to create {}: {err}", sites_dir.display()),
+            )
+        })?;
+        devx_provision::write_fastcgi_params(&nginx_config_dir)?;
+    }
+
+    // Apache's DocumentRoot must exist or httpd refuses to start.
+    if component_id == "apache" {
+        let www = paths.service_data_dir().join(component_id).join("www");
+        std::fs::create_dir_all(&www).map_err(|err| {
+            Error::new(
+                devx_core::ErrorCode::Io,
+                format!("failed to create {}: {err}", www.display()),
             )
         })?;
     }
@@ -237,9 +252,19 @@ pub fn existing_pool_ports(paths: &AppPaths) -> Vec<u16> {
 /// an installed pool or held on the machine is skipped, plus anything in
 /// `reserved` so pools planned in one pass cannot collide.
 pub fn next_pool_port(paths: &AppPaths, reserved: &[u16]) -> u16 {
+    next_pool_port_with_probe(paths, reserved, |p| owner_of(p).map(describe_owner))
+}
+
+/// [`next_pool_port`] with the live-port probe injectable, so tests can
+/// run hermetically even while a real DevX instance holds pool ports.
+pub fn next_pool_port_with_probe(
+    paths: &AppPaths,
+    reserved: &[u16],
+    probe: impl Fn(u16) -> Option<String>,
+) -> u16 {
     let mut port = devx_provision::FIRST_POOL_PORT;
     let claimed = existing_pool_ports(paths);
-    let allocator = PortAllocator::new(|p| owner_of(p).map(describe_owner));
+    let allocator = PortAllocator::new(probe);
 
     loop {
         if !claimed.contains(&port) && !reserved.contains(&port) {
@@ -341,6 +366,25 @@ mod tests {
     }
 
     #[test]
+    fn planning_nginx_ships_fastcgi_params_next_to_the_config() {
+        let dir = tempfile::tempdir().expect("temp");
+        let paths = AppPaths::rooted_at(dir.path());
+        paths.ensure_dirs().expect("dirs");
+
+        plan_service(&paths, "nginx", "1.31.5", &[]).expect("plan");
+
+        let file = paths
+            .service_config_dir()
+            .join("nginx")
+            .join("fastcgi_params");
+        let body = std::fs::read_to_string(file).expect("fastcgi_params written");
+        assert!(
+            body.contains("fastcgi_param  QUERY_STRING"),
+            "unexpected content: {body}"
+        );
+    }
+
+    #[test]
     fn planning_renders_a_config_file_for_nginx() {
         let dir = tempfile::tempdir().expect("temp");
         let paths = AppPaths::rooted_at(dir.path());
@@ -410,12 +454,16 @@ mod tests {
         let paths = AppPaths::rooted_at(dir.path());
         paths.ensure_dirs().expect("dirs");
 
+        // The live system port probe is injected as always-free so this
+        // test stays hermetic while the real DevX instance runs.
+        let next = |reserved: &[u16]| next_pool_port_with_probe(&paths, reserved, |_| None);
+
         // A fresh tree has no claims, so the first port is the base port.
-        assert_eq!(next_pool_port(&paths, &[]), devx_provision::FIRST_POOL_PORT);
+        assert_eq!(next(&[]), devx_provision::FIRST_POOL_PORT);
 
         // A second pool planned in the same pass must skip it.
         assert_eq!(
-            next_pool_port(&paths, &[devx_provision::FIRST_POOL_PORT]),
+            next(&[devx_provision::FIRST_POOL_PORT]),
             devx_provision::FIRST_POOL_PORT + 1
         );
 
@@ -426,9 +474,6 @@ mod tests {
             plan_php_pool(&paths, "8.4.25", devx_provision::FIRST_POOL_PORT, 4, &[]).expect("plan");
         pool_spec(&paths, &plan).expect("spec");
 
-        assert_eq!(
-            next_pool_port(&paths, &[]),
-            devx_provision::FIRST_POOL_PORT + 1
-        );
+        assert_eq!(next(&[]), devx_provision::FIRST_POOL_PORT + 1);
     }
 }

@@ -59,6 +59,7 @@ pub fn builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::ca_remove,
             commands::dns_status,
             commands::dns_start,
+            commands::dns_repair,
             commands::dns_stop,
             commands::db_list_servers,
             commands::db_query,

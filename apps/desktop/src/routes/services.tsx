@@ -11,7 +11,6 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -24,6 +23,9 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
+import { HeroBand } from "@/components/hero-band";
+import { EmptyState } from "@/components/ui/empty-state";
+import { StatTile } from "@/components/ui/stat-tile";
 import { Switch } from "@/components/ui/switch";
 import {
   ipc,
@@ -111,6 +113,9 @@ export function ServicesPage() {
   });
   // Live CPU/RAM for every supervised process, shared by all cards below.
   const metrics = useMetrics();
+  // Section data also feeds the summary tiles; same cache keys, one fetch.
+  const workers = useQuery({ queryKey: ["worker-list"], queryFn: ipc.workerList });
+  const cron = useQuery({ queryKey: ["cron-list"], queryFn: ipc.cronList });
 
   const supervisable = new Set(serviceIds.data ?? []);
   const startable = (installed.data ?? []).filter((entry) =>
@@ -120,25 +125,80 @@ export function ServicesPage() {
   const pending = installed.isPending || serviceIds.isPending || phpPools.isPending;
   const empty =
     startable.length === 0 && (phpPools.data ?? []).length === 0;
+  const runningCount = (metrics.data ?? []).filter(
+    (entry) => entry.state === "running" || entry.state === "starting",
+  ).length;
+  const supervisedCount = (metrics.data ?? []).length;
+  const poolCount = (phpPools.data ?? []).length;
+  const workerCount = (workers.data ?? []).length;
+  const workerRunning = (workers.data ?? []).reduce(
+    (sum, worker) =>
+      sum + worker.live.filter((entry) => entry.state === "running").length,
+    0,
+  );
+  const cronCount = (cron.data ?? []).length;
+  const allUp = !pending && supervisedCount > 0 && runningCount === supervisedCount;
 
   return (
     <>
-      <PageHeader
-        title="Services"
-        description="Background services supervised by DevX. Start, stop and watch their output."
-      />
-
       <div className="space-y-4 p-6">
+        {!pending && !empty ? (
+          <>
+            <HeroBand
+              title={
+                allUp
+                  ? "Everything is running."
+                  : runningCount > 0
+                    ? `${runningCount} of ${supervisedCount} services running.`
+                    : "No services are running."
+              }
+              description="Supervised background services, PHP pools, workers and scheduled tasks — all in one place."
+            />
+
+            <div className="animate-in fade-in slide-in-from-bottom-2 grid gap-4 duration-300 sm:grid-cols-2 xl:grid-cols-4">
+              <StatTile
+                icon={<Puzzle className="size-4" />}
+                label="Services"
+                value={`${runningCount}/${supervisedCount}`}
+                sub={
+                  runningCount === supervisedCount && supervisedCount > 0
+                    ? "all running"
+                    : "running"
+                }
+                tone={allUp ? "success" : "neutral"}
+              />
+              <StatTile
+                icon={<Square className="size-4" />}
+                label="PHP pools"
+                value={String(poolCount)}
+                sub="installed versions"
+              />
+              <StatTile
+                icon={<Play className="size-4" />}
+                label="Workers"
+                value={String(workerCount)}
+                sub={`${workerRunning} instance${workerRunning === 1 ? "" : "s"} running`}
+              />
+              <StatTile
+                icon={<CalendarClock className="size-4" />}
+                label="Scheduled tasks"
+                value={String(cronCount)}
+                sub="registered with Windows"
+              />
+            </div>
+          </>
+        ) : null}
+
         {pending ? (
           <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
             <Loader2 className="size-4 animate-spin" />
             Loading installed components…
           </p>
         ) : empty ? (
-          <div className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
-            No supervisable service is installed yet. Install Mailpit or PHP
-            from the Components page to start one here.
-          </div>
+          <EmptyState
+            title="No supervisable service is installed yet."
+            description="Install Mailpit or PHP from the Components page to start one here."
+          />
         ) : (
           <>
             {(phpPools.data ?? []).map((pool) => (

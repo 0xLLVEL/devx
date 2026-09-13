@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Loader2, Play, Square, TerminalSquare } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-import { PageHeader } from "@/components/page-header";
+import { HeroBand } from "@/components/hero-band";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -31,6 +31,7 @@ type OutputLine = {
  */
 export function TerminalPage() {
   const sites = useQuery({ queryKey: ["sites"], queryFn: ipc.siteList });
+  const pathDirs = useQuery({ queryKey: ["terminal-path"], queryFn: ipc.terminalPath });
 
   const [cwd, setCwd] = useState("");
   const [command, setCommand] = useState("");
@@ -114,12 +115,19 @@ export function TerminalPage() {
 
   return (
     <>
-      <PageHeader
-        title="Terminal"
-        description="Run commands with the DevX runtimes (php, composer, node, psql…) already on PATH."
-      />
 
       <div className="mx-auto w-full max-w-4xl space-y-4 p-6">
+        <HeroBand
+          title="Run anything."
+          description="One command at a time, with the DevX runtimes (php, composer, node, psql…) already on PATH."
+          right={
+            pathDirs.data ? (
+              <span className="text-xs text-muted-foreground" data-selectable>
+                {pathDirs.data.split(";").length} directories on PATH
+              </span>
+            ) : null
+          }
+        />
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="flex items-center gap-2 text-base">

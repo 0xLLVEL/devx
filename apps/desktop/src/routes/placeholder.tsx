@@ -1,4 +1,4 @@
-import { PageHeader } from "@/components/page-header";
+import { EmptyState } from "@/components/ui/empty-state";
 
 /**
  * Route stub for capabilities that land in later tasks.
@@ -16,15 +16,11 @@ export function PlaceholderPage({
   plannedIn: string;
 }) {
   return (
-    <>
-      <PageHeader title={title} description={description} />
-      <div className="p-6">
-        <div className="rounded-lg border border-dashed border-border p-8 text-center">
-          <p className="text-sm text-muted-foreground">
-            Not implemented yet — arrives in {plannedIn}.
-          </p>
-        </div>
-      </div>
-    </>
+    <div className="p-6">
+      <EmptyState
+        title={title}
+        description={`${description} Not implemented yet — arrives in ${plannedIn}.`}
+      />
+    </div>
   );
 }

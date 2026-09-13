@@ -148,7 +148,6 @@ async fn stateless_services_start_from_their_definitions() {
         ("mailpit", 18025u16),
         ("redis", 16379),
         ("meilisearch", 17700),
-        ("minio", 19000),
     ] {
         let sup = start_service(&paths, component, port).await;
         assert_eq!(

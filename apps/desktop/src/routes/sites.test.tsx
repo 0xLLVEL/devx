@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SitesPage } from "@/routes/sites";
 import { renderWithProviders } from "@/test/render";
+import { configFixture } from "@/test/fixtures";
 
 const mocks = vi.hoisted(() => ({
   siteList: vi.fn(),
@@ -15,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   dnsStatus: vi.fn(),
   dnsStart: vi.fn(),
   dnsStop: vi.fn(),
+  configGet: vi.fn(),
   templateList: vi.fn(),
 }));
 
@@ -29,6 +31,7 @@ describe("SitesPage", () => {
       mock.mockReset();
     }
     mocks.siteList.mockResolvedValue([]);
+    mocks.configGet.mockResolvedValue(configFixture());
     mocks.templateList.mockResolvedValue([]);
     mocks.phpPoolList.mockResolvedValue([
       { id: "php-pool-8.4.25", version: "8.4.25", workers: 4, port: 9100, state: "running" },
@@ -132,10 +135,11 @@ describe("SitesPage", () => {
 
     renderWithProviders(<SitesPage />);
 
+    await user.click(await screen.findByRole("button", { name: /add site/i }));
     await user.type(await screen.findByLabelText("Host name"), "myapp.test");
     await user.type(screen.getByLabelText("Document root"), "C:\\dev\\myapp\\public");
     await user.selectOptions(screen.getByLabelText("PHP"), "8.4.25");
-    await user.click(screen.getByRole("button", { name: /add site/i }));
+    await user.click(screen.getByRole("button", { name: /^add site$/i }));
 
     await waitFor(() => expect(mocks.siteAdd).toHaveBeenCalledTimes(1));
     expect(mocks.siteAdd).toHaveBeenCalledWith(
@@ -153,10 +157,11 @@ describe("SitesPage", () => {
 
     renderWithProviders(<SitesPage />);
 
+    await user.click(await screen.findByRole("button", { name: /add site/i }));
     await user.type(await screen.findByLabelText("Host name"), "secure.test");
     await user.type(screen.getByLabelText("Document root"), "C:\\dev\\secure");
     await user.selectOptions(screen.getByLabelText("HTTPS"), "on");
-    await user.click(screen.getByRole("button", { name: /add site/i }));
+    await user.click(screen.getByRole("button", { name: /^add site$/i }));
 
     await waitFor(() => expect(mocks.siteAdd).toHaveBeenCalledTimes(1));
     expect(mocks.siteAdd).toHaveBeenCalledWith(
@@ -175,9 +180,10 @@ describe("SitesPage", () => {
 
     renderWithProviders(<SitesPage />);
 
+    await user.click(await screen.findByRole("button", { name: /add site/i }));
     await user.type(await screen.findByLabelText("Host name"), "not-a-domain");
     await user.type(screen.getByLabelText("Document root"), "C:\\dev\\x");
-    await user.click(screen.getByRole("button", { name: /add site/i }));
+    await user.click(screen.getByRole("button", { name: /^add site$/i }));
 
     expect(
       await screen.findByRole("alert"),
@@ -207,8 +213,47 @@ describe("SitesPage", () => {
     await waitFor(() => expect(mocks.siteRemove).toHaveBeenCalledWith("myapp.test"));
   });
 
+  it("opens the behavior editor on click and saves through site_add", async () => {
+    const user = userEvent.setup();
+    mocks.siteAdd.mockResolvedValue([]);
+    mocks.siteList.mockResolvedValue([
+      {
+        hostname: "myapp.test",
+        docroot: "C:\\dev\\myapp\\public",
+        php_version: "8.4.25",
+        php_endpoint: "127.0.0.1:9100",
+        https: false,
+        env: {},
+        aliases: [],
+      },
+    ]);
+
+    renderWithProviders(<SitesPage />);
+
+    await user.click(await screen.findByRole("button", { name: /edit myapp.test/i }));
+
+    expect(await screen.findByText("Behavior")).toBeInTheDocument();
+    const docroot = screen.getByLabelText("Document root");
+    expect(docroot).toHaveValue("C:\\dev\\myapp\\public");
+
+    await user.click(screen.getByRole("button", { name: /save changes/i }));
+
+    await waitFor(() => {
+      expect(mocks.siteAdd).toHaveBeenCalledWith(
+        "myapp.test",
+        "C:\\dev\\myapp\\public",
+        "8.4.25",
+        false,
+      );
+    });
+  });
+
   it("starts the DNS resolver from the card when it is stopped", async () => {
     const user = userEvent.setup();
+    mocks.configGet.mockResolvedValue({
+      ...configFixture(),
+      network: { ...configFixture().network, dns_mode: "resolver" },
+    });
     mocks.dnsStart.mockResolvedValue({
       running: true,
       port: 9353,
@@ -225,6 +270,10 @@ describe("SitesPage", () => {
 
   it("stops the resolver when it is running", async () => {
     const user = userEvent.setup();
+    mocks.configGet.mockResolvedValue({
+      ...configFixture(),
+      network: { ...configFixture().network, dns_mode: "resolver" },
+    });
     mocks.dnsStatus.mockResolvedValue({
       running: true,
       port: 9353,

@@ -12,7 +12,6 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 
-import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -24,12 +23,34 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Select } from "@/components/ui/select";
+import { HeroBand } from "@/components/hero-band";
+import { StatTile } from "@/components/ui/stat-tile";
 import { ipc, type DbResult, type DbServer, type DbValue } from "@/lib/ipc";
 
 /** Databases page: browse schemas and run read-only queries. */
 export function DatabasesPage() {
   const servers = useQuery({ queryKey: ["db-servers"], queryFn: ipc.dbListServers });
+
+  // Total backups across the three services; the per-service cards reuse
+  // the same cache keys, so this is one fetch per service at most.
+  const mariadbBackups = useQuery({
+    queryKey: ["backups", "mariadb"],
+    queryFn: () => ipc.backupList("mariadb"),
+  });
+  const postgresBackups = useQuery({
+    queryKey: ["backups", "postgresql"],
+    queryFn: () => ipc.backupList("postgresql"),
+  });
+  const redisBackups = useQuery({
+    queryKey: ["backups", "redis"],
+    queryFn: () => ipc.backupList("redis"),
+  });
+  const backupCount =
+    (mariadbBackups.data?.length ?? 0) +
+    (postgresBackups.data?.length ?? 0) +
+    (redisBackups.data?.length ?? 0);
 
   const [selected, setSelected] = useState("");
   const [database, setDatabase] = useState("");
@@ -76,22 +97,52 @@ export function DatabasesPage() {
 
   return (
     <>
-      <PageHeader
-        title="Databases"
-        description="Browse the schemas of the database servers DevX supervises and run read-only queries."
-      />
 
       <div className="mx-auto w-full max-w-4xl space-y-4 p-6">
+        {servers.data && servers.data.length > 0 ? (
+          <>
+            <HeroBand
+              title={
+                servers.data.every((server) => !server.reachable)
+                  ? "No database engines are running."
+                  : `${servers.data.filter((server) => server.reachable).length} of ${servers.data.length} engines reachable.`
+              }
+              description="DevX targets the running service's actual port; reachability is checked live."
+            />
+            <div className="animate-in fade-in slide-in-from-bottom-2 grid gap-4 duration-300 sm:grid-cols-3">
+              <StatTile
+                icon={<Database className="size-4" />}
+                label="Engines"
+                value={`${servers.data.filter((server) => server.reachable).length}/${servers.data.length}`}
+                sub="reachable right now"
+              />
+              <StatTile
+                icon={<HardDrive className="size-4" />}
+                label="Backups"
+                value={String(backupCount)}
+                sub="across all services"
+              />
+              <StatTile
+                icon={<Play className="size-4" />}
+                label="Queries"
+                value="read-only"
+                sub="the browser never writes"
+              />
+            </div>
+          </>
+        ) : null}
+
         {servers.isPending ? (
           <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
             <Loader2 className="size-4 animate-spin" />
             Detecting database servers…
           </p>
         ) : (servers.data ?? []).length === 0 ? (
-          <div className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
-            No database servers registered yet. Install MariaDB, PostgreSQL or
-            Redis from the Components page.
-          </div>
+          <EmptyState
+            icon={<Database />}
+            title="No database servers registered yet."
+            description="Install MariaDB, PostgreSQL or Redis from the Components page."
+          />
         ) : (
           <>
             <Card>
@@ -119,6 +170,7 @@ export function DatabasesPage() {
                   >
                     {(servers.data ?? []).map((server) => (
                       <option key={server.service_id} value={server.service_id}>
+                        {server.reachable ? "● " : "○ "}
                         {engineLabel(server.engine)} — 127.0.0.1:{server.port}
                         {server.reachable ? "" : " (unreachable)"}
                       </option>

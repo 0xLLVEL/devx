@@ -188,6 +188,7 @@ export const ipc = {
   caRemove: () => unwrap(commands.caRemove()),
   dnsStatus: () => unwrap(commands.dnsStatus()),
   dnsStart: () => unwrap(commands.dnsStart()),
+  dnsRepair: () => unwrap(commands.dnsRepair()),
   dnsStop: () => unwrap(commands.dnsStop()),
   dbListServers: () => unwrap(commands.dbListServers()),
   dbQuery: (params: ConnectionParams, statement: string) =>

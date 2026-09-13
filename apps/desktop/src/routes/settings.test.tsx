@@ -50,7 +50,7 @@ describe("SettingsPage", () => {
 
     expect(await screen.findByLabelText("Domain suffix")).toHaveValue("test");
     expect(screen.getByLabelText("HTTP port")).toHaveValue(80);
-    expect(screen.getByLabelText("Resolution strategy")).toHaveValue("auto");
+    expect(screen.getByLabelText("Resolution strategy")).toHaveValue("hosts_file");
     expect(
       screen.getByText("C:\\Users\\dev\\AppData\\Local\\DevX"),
     ).toBeInTheDocument();

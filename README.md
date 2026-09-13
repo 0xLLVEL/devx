@@ -56,7 +56,10 @@ XAMPP and Laragon.
 
 ### Service definitions
 
-Each supervisable component has a declarative `ServiceDefinition`
+Thirteen supervisable components (Nginx, Caddy, Traefik, FrankenPHP,
+Apache, MariaDB, PostgreSQL, MongoDB, Redis, NATS, etcd, Mailpit and
+Meilisearch)
+each have a declarative `ServiceDefinition`
 (`devx-provision`): its default port, config files rendered from templates, any
 one-time init step (`initdb`, `mariadb-install-db`), the launch command, and how
 readiness is observed. Rendering and init are pure/idempotent — an init step
@@ -67,9 +70,10 @@ Ports are allocated with conflict detection: DevX enumerates listening ports and
 their owning processes (`GetExtendedTcpTable`), and if a preferred port is taken
 it either reassigns to the next free one or reports who holds it.
 
-The seven services (nginx, MariaDB, PostgreSQL, Redis, Mailpit, MinIO,
-Meilisearch) are each verified against a real binary by the `live_service`
-tests.
+The services (nginx, caddy, traefik, frankenphp, apache, mariadb,
+postgresql, mongodb, redis, nats-server, etcd, mailpit, meilisearch) are
+verified
+against real binaries by the `live_service` tests.
 
 ### PHP FastCGI pools
 
@@ -428,8 +432,9 @@ Four resolution strategies cover the ways upstreams publish Windows builds:
 | -------- | ------- | ------------------------ |
 | `php_net` | PHP | `windows.php.net` release manifest, hash included |
 | `node_dist` | Node.js | `nodejs.org/dist/index.json`, hashes in per-release `SHASUMS256.txt` |
-| `github_releases` | Caddy, PostgreSQL, Redis, Mailpit, Meilisearch, cloudflared | GitHub releases API, asset `digest` or a checksum asset |
-| `pinned` | Nginx, MariaDB, MinIO, Composer | Versions and hashes recorded in the catalog |
+| `github_releases` | Caddy, Traefik, FrankenPHP, PostgreSQL, Redis, Mailpit, Meilisearch, cloudflared, Bun, Deno, ripgrep, jq, NATS, etcd | GitHub releases API, asset `digest` or a checksum asset |
+| `go_dev` | Go | `go.dev/dl` manifest with an inline SHA-256 per artifact |
+| `pinned` | Nginx, Apache, MariaDB, MongoDB, Python, Composer | Versions and hashes recorded in the catalog |
 
 ### Integrity policy
 
@@ -442,6 +447,11 @@ recording asset digests recently.
 It is also why MySQL is absent. Oracle publishes only an MD5, on a page that
 blocks direct fetches, so DevX cannot verify the 300 MB ZIP. MariaDB speaks the
 same wire protocol and is offered instead.
+
+MinIO was removed for the same reason in reverse: in September 2026 the
+upstream archived every community release (`410 Gone` from
+`dl.min.io/server/minio/release`), so the pinned artifact became
+undownloadable and the component can no longer be honestly offered.
 
 ### Checking the catalog against reality
 
@@ -617,6 +627,12 @@ npm run tauri icon ../../assets/app-icon.png
 | 27 | In-app terminal | Done |
 | 28 | Scheduled tasks UI | Done |
 | 29 | Site templates | Done |
+| 30 | New components: Bun, Deno, ripgrep, jq | Done |
+| 31 | New services: Caddy, NATS, etcd, MongoDB | Done |
+| 32 | MinIO removed (upstream archive 410) | Done |
+| 33 | New web servers: Traefik, FrankenPHP | Done |
+| 34 | New runtimes: Go, Python | Done |
+| 35 | New web server: Apache (Apache Lounge) | Done |
 
 ## License
 

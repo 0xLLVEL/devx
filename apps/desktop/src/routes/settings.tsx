@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-import { PageHeader } from "@/components/page-header";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -19,6 +19,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { HeroBand } from "@/components/hero-band";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
@@ -66,29 +67,23 @@ export function SettingsPage() {
 
   if (configQuery.isPending || !draft) {
     return (
-      <>
-        <PageHeader title="Settings" />
-        <div className="p-6">
-          <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
-            <Loader2 className="size-4 animate-spin" />
-            Loading configuration…
-          </p>
-        </div>
-      </>
+      <div className="p-6">
+        <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
+          <Loader2 className="size-4 animate-spin" />
+          Loading configuration…
+        </p>
+      </div>
     );
   }
 
   if (configQuery.isError) {
     return (
-      <>
-        <PageHeader title="Settings" />
-        <div className="p-6">
-          <p className="flex items-center gap-2 text-sm text-destructive" role="alert">
-            <CircleAlert className="size-4" />
-            {configQuery.error.message}
-          </p>
-        </div>
-      </>
+      <div className="p-6">
+        <p className="flex items-center gap-2 text-sm text-destructive" role="alert">
+          <CircleAlert className="size-4" />
+          {configQuery.error.message}
+        </p>
+      </div>
     );
   }
 
@@ -100,30 +95,37 @@ export function SettingsPage() {
 
   return (
     <>
-      <PageHeader
-        title="Settings"
-        description="Stored in config.toml and validated before every save."
-        actions={
-          <>
-            <Button
-              variant="ghost"
-              onClick={() => reset.mutate()}
-              disabled={reset.isPending}
-            >
-              Restore defaults
-            </Button>
-            <Button
-              onClick={() => save.mutate(draft)}
-              disabled={!dirty || save.isPending}
-            >
-              {save.isPending ? <Loader2 className="animate-spin" /> : null}
-              Save changes
-            </Button>
-          </>
-        }
-      />
-
       <div className="space-y-4 p-6">
+        <HeroBand
+          title="Settings"
+          description="Stored in config.toml and validated before every save."
+          right={
+            <>
+              {dirty ? (
+                <Badge variant="warning">Unsaved changes</Badge>
+              ) : save.isSuccess ? (
+                <Badge variant="success">Saved</Badge>
+              ) : null}
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="ghost"
+                  onClick={() => reset.mutate()}
+                  disabled={reset.isPending}
+                >
+                  Restore defaults
+                </Button>
+                <Button
+                  onClick={() => save.mutate(draft)}
+                  disabled={!dirty || save.isPending}
+                >
+                  {save.isPending ? <Loader2 className="animate-spin" /> : null}
+                  Save changes
+                </Button>
+              </div>
+            </>
+          }
+        />
+
         {saveError ? (
           <div
             role="alert"

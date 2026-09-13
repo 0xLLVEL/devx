@@ -1,10 +1,20 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CircleAlert, ExternalLink, Globe, Loader2, Share2, Trash2 } from "lucide-react";
+import {
+  CircleAlert,
+  Copy,
+  ExternalLink,
+  Globe,
+  Loader2,
+  Share2,
+  Trash2,
+} from "lucide-react";
+import { useState } from "react";
 
-import { PageHeader } from "@/components/page-header";
+import { HeroBand } from "@/components/hero-band";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
 import { ipc, type SiteStatus, type TunnelStatus } from "@/lib/ipc";
 
 /** Share page: put a local site on a public URL with a quick tunnel. */
@@ -35,6 +45,11 @@ export function SharePage() {
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["tunnels"] }),
   });
 
+  const allSites = sites.data ?? [];
+  const sharedCount = allSites.filter(
+    (site) => tunnels.data?.[site.hostname]?.running === true,
+  ).length;
+
   const busy = start.isPending || stop.isPending;
   const error =
     start.error instanceof Error
@@ -45,12 +60,19 @@ export function SharePage() {
 
   return (
     <>
-      <PageHeader
-        title="Share"
-        description="Expose a site on a public https://…trycloudflare.com URL — no account, no ports opened."
-      />
 
       <div className="mx-auto w-full max-w-3xl space-y-4 p-6">
+        {allSites.length > 0 ? (
+          <HeroBand
+            title={
+              sharedCount === 0
+                ? "Everything is local only."
+                : `${sharedCount} site${sharedCount === 1 ? "" : "s"} live on the internet.`
+            }
+            description={`${allSites.length} site${allSites.length === 1 ? "" : "s"} available to share. Quick tunnels are ephemeral — stop sharing and the URL dies with the process.`}
+          />
+        ) : null}
+
         {error ? (
           <p className="flex items-center gap-2 text-sm text-destructive" role="alert">
             <CircleAlert className="size-4" />
@@ -63,13 +85,15 @@ export function SharePage() {
             <Loader2 className="size-4 animate-spin" />
             Loading sites…
           </p>
-        ) : (sites.data ?? []).length === 0 ? (
-          <div className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
-            No sites to share yet. Create one on the Sites page first.
-          </div>
+        ) : allSites.length === 0 ? (
+          <EmptyState
+            icon={<Globe />}
+            title="No sites to share yet."
+            description="Create one on the Sites page first, then come back to put it online."
+          />
         ) : (
-          <ul className="space-y-2">
-            {(sites.data ?? []).map((site) => (
+          <ul className="grid gap-2 sm:grid-cols-2">
+            {allSites.map((site) => (
               <ShareRow
                 key={site.hostname}
                 site={site}
@@ -86,7 +110,7 @@ export function SharePage() {
   );
 }
 
-/** One site's share row: local host, tunnel state and public URL. */
+/** One site's share card: local host, tunnel state, public URL, and a copy button. */
 function ShareRow({
   site,
   tunnel,
@@ -101,13 +125,39 @@ function ShareRow({
   onStop: () => void;
 }) {
   const shared = tunnel?.running === true;
+  const [copied, setCopied] = useState(false);
+
+  const copyUrl = async () => {
+    if (!tunnel?.url) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(tunnel.url);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard can be denied; the URL stays selectable on screen.
+    }
+  };
+
   return (
     <li>
-      <Card>
+      <Card
+        className={
+          shared
+            ? "animate-in fade-in slide-in-from-bottom-2 border-primary/40 duration-300"
+            : undefined
+        }
+      >
         <CardContent className="flex items-center justify-between gap-4 p-4">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <Globe className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+              <span
+                aria-hidden
+                className={`size-2 shrink-0 rounded-full ${
+                  shared ? "bg-success" : "bg-muted-foreground/40"
+                }`}
+              />
               <span className="font-mono text-sm font-medium" data-selectable>
                 {site.hostname}
               </span>
@@ -120,23 +170,35 @@ function ShareRow({
               )}
             </div>
             {shared && tunnel?.url ? (
-              <a
-                href={tunnel.url}
-                target="_blank"
-                rel="noreferrer"
-                className="mt-1 flex items-center gap-1 pl-6 text-xs font-medium text-primary hover:underline"
-              >
+              <p className="mt-1 flex items-center gap-1 pl-4 text-xs font-medium text-primary">
                 <span className="font-mono" data-selectable>
                   {tunnel.url}
                 </span>
-                <ExternalLink className="size-3" aria-hidden />
-              </a>
+                <a
+                  href={tunnel.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  aria-label={`Open ${tunnel.url}`}
+                  className="hover:underline"
+                >
+                  <ExternalLink className="size-3" aria-hidden />
+                </a>
+                <button
+                  type="button"
+                  onClick={() => void copyUrl()}
+                  className="ml-1 text-muted-foreground hover:text-foreground"
+                  aria-label="Copy the public URL"
+                >
+                  {copied ? <span className="text-success">Copied!</span> : <Copy className="size-3" />}
+                </button>
+              </p>
             ) : shared ? (
-              <p className="mt-1 pl-6 text-xs text-muted-foreground">
+              <p className="mt-1 flex items-center gap-1 pl-4 text-xs text-muted-foreground">
+                <Loader2 className="size-3 animate-spin" aria-hidden />
                 Assigning a public URL…
               </p>
             ) : (
-              <p className="mt-1 pl-6 text-xs text-muted-foreground">
+              <p className="mt-1 pl-4 text-xs text-muted-foreground">
                 Not shared. Anyone with the URL will see this site.
               </p>
             )}

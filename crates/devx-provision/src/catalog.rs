@@ -35,6 +35,8 @@ pub enum ComponentKind {
     Database,
     /// Key-value cache.
     Cache,
+    /// Message queue server such as NATS.
+    MessageQueue,
     /// Mail catcher.
     Mail,
     /// Object storage.
@@ -134,6 +136,10 @@ pub enum Source {
         /// Asset identifier as listed in the index, e.g. `win-x64-zip`.
         asset: String,
     },
+
+    /// `go.dev/dl/?mode=json`, which publishes the latest stable releases
+    /// with an inline SHA-256 per artifact.
+    GoDev,
 
     /// The GitHub releases API for a repository.
     ///
@@ -400,6 +406,7 @@ impl Component {
                 }
             }
             Source::PhpNet { .. } => {}
+            Source::GoDev => {}
         }
 
         if matches!(self.archive, ArchiveKind::Executable) && self.layout.executable_name.is_none()
@@ -453,10 +460,21 @@ mod tests {
             "postgresql",
             "redis",
             "mailpit",
-            "minio",
             "meilisearch",
             "composer",
             "cloudflared",
+            "mongodb",
+            "apache",
+            "traefik",
+            "frankenphp",
+            "go",
+            "python",
+            "etcd",
+            "nats-server",
+            "jq",
+            "ripgrep",
+            "deno",
+            "bun",
         ] {
             catalog
                 .component(id)

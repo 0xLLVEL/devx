@@ -129,6 +129,7 @@ describe("MailPage", () => {
   });
 
   it("clears the whole inbox with an empty id list", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
     renderWithProviders(<MailPage />);
 
     await userEvent.click(

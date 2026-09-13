@@ -93,7 +93,7 @@ impl Default for Network {
             http_port: 80,
             https_port: 443,
             dns_port: 53,
-            dns_mode: DnsMode::Auto,
+            dns_mode: DnsMode::HostsFile,
         }
     }
 }

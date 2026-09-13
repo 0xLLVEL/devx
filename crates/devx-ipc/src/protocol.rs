@@ -91,6 +91,9 @@ pub enum PrivilegedRequest {
         /// The DNS namespace the rule covered, e.g. `.test`.
         namespace: String,
     },
+    /// Asks the helper to exit gracefully. Sent by the desktop app when it
+    /// closes completely, so a helper it launched does not outlive it.
+    Shutdown,
 }
 
 /// The helper's reply to one [`PrivilegedRequest`].

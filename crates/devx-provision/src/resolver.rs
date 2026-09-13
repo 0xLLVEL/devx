@@ -25,6 +25,10 @@ pub struct Endpoints {
     pub node_dist_base_url: String,
     /// GitHub API base URL.
     pub github_api_base_url: String,
+    /// Go download manifest.
+    pub go_dl_url: String,
+    /// Base URL of the Go download tree, used for artifact links.
+    pub go_dist_base_url: String,
 }
 
 impl Default for Endpoints {
@@ -34,6 +38,8 @@ impl Default for Endpoints {
             node_index_url: "https://nodejs.org/dist/index.json".to_owned(),
             node_dist_base_url: "https://nodejs.org/dist".to_owned(),
             github_api_base_url: "https://api.github.com".to_owned(),
+            go_dl_url: "https://go.dev/dl/?mode=json".to_owned(),
+            go_dist_base_url: "https://go.dev/dl".to_owned(),
         }
     }
 }
@@ -90,6 +96,7 @@ impl Resolver {
                     .await?
             }
             Source::NodeDist { asset } => self.list_node(component, asset).await?,
+            Source::GoDev => self.list_go(component).await?,
             Source::GitHubReleases {
                 repo,
                 asset_pattern,
@@ -222,6 +229,58 @@ impl Resolver {
     }
 
     // --- nodejs.org -------------------------------------------------------
+
+    // --- go.dev ------------------------------------------------------------
+
+    /// Lists Go versions from the download manifest.
+    ///
+    /// `go.dev/dl/?mode=json` publishes the latest stable releases with an
+    /// inline SHA-256 per artifact, so every listed version is verifiable by
+    /// construction and nothing can end up in `unverifiable`.
+    async fn list_go(&self, component: &Component) -> Result<VersionListing> {
+        let response = self.http.get_text(&self.endpoints.go_dl_url).await?;
+        let index: Vec<GoRelease> = parse_json(&response.body, "Go download manifest")?;
+
+        let versions = index
+            .into_iter()
+            .filter(|release| release.windows_archive().is_some())
+            .map(|release| {
+                let file = release.windows_archive().expect("filtered above");
+                let file_name = file.filename.clone();
+                let url = format!(
+                    "{}/{}",
+                    self.endpoints.go_dist_base_url.trim_end_matches('/'),
+                    file_name
+                );
+
+                ComponentVersion {
+                    component_id: component.id.clone(),
+                    version: release.version.trim_start_matches("go").to_owned(),
+                    channel: if release.stable {
+                        ReleaseChannel::Stable
+                    } else {
+                        ReleaseChannel::Prerelease
+                    },
+                    released_at: None,
+                    artifact: Artifact {
+                        url,
+                        file_name,
+                        size_bytes: file.size,
+                        archive: component.archive,
+                        checksum: Checksum::Sha256 {
+                            hex: file.sha256.clone(),
+                        },
+                    },
+                }
+            })
+            .collect();
+
+        Ok(VersionListing {
+            versions,
+            stale: response.stale,
+            unverifiable: Vec::new(),
+        })
+    }
 
     /// Lists Node versions from `index.json`.
     ///
@@ -498,6 +557,39 @@ struct NodeRelease {
     lts: NodeLts,
 }
 
+/// One Go release in the download manifest.
+#[derive(Debug, Deserialize)]
+struct GoRelease {
+    version: String,
+    stable: bool,
+    files: Vec<GoFile>,
+}
+
+impl GoRelease {
+    /// The windows/amd64 zip artifact, when this release ships one.
+    fn windows_archive(&self) -> Option<&GoFile> {
+        self.files
+            .iter()
+            .find(|file| file.os == "windows" && file.arch == "amd64" && file.kind == "archive")
+    }
+}
+
+/// One downloadable artifact in a Go release.
+#[derive(Debug, Deserialize)]
+struct GoFile {
+    filename: String,
+    #[serde(default)]
+    os: String,
+    #[serde(default)]
+    arch: String,
+    #[serde(default)]
+    kind: String,
+    #[serde(default)]
+    sha256: String,
+    #[serde(default)]
+    size: Option<u64>,
+}
+
 /// Node's `lts` field: `false` for non-LTS, otherwise the codename.
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
@@ -545,6 +637,38 @@ struct GitHubAsset {
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn go_manifest_picks_the_windows_amd64_archive() {
+        let body = serde_json::json!([
+            {
+                "version": "go1.27.1",
+                "stable": true,
+                "files": [
+                    { "filename": "go1.27.1.src.tar.gz", "os": "", "arch": "", "kind": "source" },
+                    {
+                        "filename": "go1.27.1.windows-amd64.zip",
+                        "os": "windows",
+                        "arch": "amd64",
+                        "kind": "archive",
+                        "sha256": "a3911b5e0e1b1053f25ed0675f4c1c6aad1e2bfcf253df2b9be4caabd2edd95d",
+                        "size": 78931360
+                    }
+                ]
+            }
+        ]
+        );
+
+        let releases: Vec<GoRelease> = serde_json::from_value(body).expect("parse");
+        assert_eq!(releases.len(), 1);
+        let file = releases[0].windows_archive().expect("windows archive");
+        assert_eq!(file.filename, "go1.27.1.windows-amd64.zip");
+        assert_eq!(
+            file.sha256,
+            "a3911b5e0e1b1053f25ed0675f4c1c6aad1e2bfcf253df2b9be4caabd2edd95d"
+        );
+        assert_eq!(file.size, Some(78931360));
+    }
 
     #[test]
     fn node_file_names_follow_the_dist_layout() {

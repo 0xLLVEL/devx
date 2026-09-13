@@ -241,6 +241,7 @@ fn sync_site_blocks(paths: &AppPaths, store: &ConfigStore) -> anyhow::Result<()>
             Some(devx_provision::tls_listen_snippet(
                 &site.hostname,
                 store.config().network.https_port,
+                &paths.certs_dir(),
             ))
         } else {
             None

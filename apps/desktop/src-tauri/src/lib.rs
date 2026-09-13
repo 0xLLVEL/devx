@@ -8,6 +8,7 @@
 
 pub mod commands;
 pub mod events;
+pub mod helper;
 pub mod ipc;
 pub mod logging;
 pub mod services;
@@ -46,6 +47,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
             None,
@@ -76,7 +78,28 @@ pub fn run() {
             // silent repair (e.g. after a renamed executable) is safe.
             let _ = commands::settings_sync_autostart(app.handle().clone());
 
+            // Re-render the nginx site blocks at startup: on-disk state must
+            // match the config even after an app update changed the rendered
+            // format, and before the auto-started resolver matters.
+            if let Err(err) = commands::sync_site_blocks(&app.state()) {
+                tracing::warn!(error = %err, "could not sync nginx site blocks at startup");
+            }
+
             session::restore(app.handle().clone());
+
+            // Bring the DNS resolver up with the app: sites resolve without a
+            // manual Start. In hosts-file mode there is no resolver to run.
+            let dns_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let mode = dns_handle
+                    .state::<state::AppState>()
+                    .with_config(|store| store.config().network.dns_mode);
+                if mode == devx_core::DnsMode::Resolver {
+                    if let Err(err) = commands::dns_start(dns_handle.state()).await {
+                        tracing::warn!(error = %err, "could not auto-start the DNS resolver");
+                    }
+                }
+            });
 
             spawn_service_watcher(app.handle().clone());
 
@@ -87,6 +110,7 @@ pub fn run() {
         .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
                 persist_session(app);
+                shutdown_privileged(app);
             }
         });
 }
@@ -103,6 +127,43 @@ pub fn persist_session(app: &tauri::AppHandle) {
 
     if let Err(err) = session::save(&state.paths, &snapshot) {
         tracing::warn!(error = %err, "could not persist the session");
+    }
+}
+
+/// Tears the privileged side down on a full app exit.
+///
+/// The supervised services die with the job objects; what would otherwise
+/// outlive the app is the helper process DevX elevated and the NRPT rule
+/// pointing *.test at a resolver that no longer exists. Both are cleaned
+/// here: the rule is removed first (the helper must be alive for that),
+/// then the helper is asked to exit. Every step is best-effort — an
+/// unreachable helper simply means there is nothing to clean.
+fn shutdown_privileged(app: &tauri::AppHandle) {
+    use tauri::Manager as _;
+
+    let Some(state) = app.try_state::<state::AppState>() else {
+        return;
+    };
+    if !devx_privileged::PipeClient::is_available() {
+        return;
+    }
+
+    let suffix = state.with_config(|store| store.config().network.domain_suffix.clone());
+
+    let teardown = async {
+        let mut client = devx_privileged::PipeClient::connect()?;
+        client.hello().await?;
+        if let Err(err) = client.remove_nrpt_rule(&suffix).await {
+            tracing::warn!(error = %err, "could not remove the NRPT rule on exit");
+        }
+        client.shutdown().await
+    };
+
+    match tauri::async_runtime::block_on(teardown) {
+        Ok(()) => tracing::info!("privileged helper stopped"),
+        Err(err) => {
+            tracing::debug!(error = %err, "privileged teardown skipped (helper may be manual)");
+        }
     }
 }
 

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-09-11",
+  "updated_at": "2026-09-14",
   "components": [
     {
       "id": "php",
@@ -16,7 +16,9 @@
         "arch": "x64"
       },
       "archive": "zip",
-      "layout": { "strip_prefix": "none" },
+      "layout": {
+        "strip_prefix": "none"
+      },
       "binaries": {
         "php": "php.exe",
         "php-cgi": "php-cgi.exe"
@@ -188,31 +190,6 @@
       }
     },
     {
-      "id": "minio",
-      "name": "MinIO",
-      "kind": "storage",
-      "summary": "S3-compatible object storage for testing uploads without touching AWS.",
-      "homepage": "https://min.io/",
-      "license": "AGPL-3.0-only",
-      "multi_version": false,
-      "source": {
-        "type": "pinned",
-        "versions": [
-          {
-            "version": "RELEASE.2025-09-07T16-13-09Z",
-            "url": "https://dl.min.io/server/minio/release/windows-amd64/archive/minio.RELEASE.2025-09-07T16-13-09Z",
-            "sha256": "af709e6ba68488404e85acdd22a3030d0f5e56a108d4b27d744f18ceb50861b4"
-          }
-        ]
-      },
-      "archive": "executable",
-      "layout": { "executable_name": "minio.exe" },
-      "binaries": {
-        "minio": "minio.exe"
-      },
-      "caveat": "MinIO releases binaries from dl.min.io rather than GitHub, so versions are pinned in the DevX catalog with the SHA-256 published alongside each release."
-    },
-    {
       "id": "meilisearch",
       "name": "Meilisearch",
       "kind": "search",
@@ -226,7 +203,9 @@
         "asset_pattern": "^meilisearch-windows-amd64\\.exe$"
       },
       "archive": "executable",
-      "layout": { "executable_name": "meilisearch.exe" },
+      "layout": {
+        "executable_name": "meilisearch.exe"
+      },
       "binaries": {
         "meilisearch": "meilisearch.exe"
       }
@@ -250,10 +229,269 @@
         ]
       },
       "archive": "executable",
-      "layout": { "executable_name": "composer.phar" },
+      "layout": {
+        "executable_name": "composer.phar"
+      },
       "binaries": {
         "composer": "composer.phar"
       }
+    },
+    {
+      "id": "bun",
+      "name": "Bun",
+      "kind": "runtime",
+      "summary": "Fast all-in-one JavaScript runtime, bundler, test runner and package manager.",
+      "homepage": "https://bun.sh/",
+      "license": "MIT",
+      "multi_version": true,
+      "source": {
+        "type": "github_releases",
+        "repo": "oven-sh/bun",
+        "asset_pattern": "^bun-windows-x64\\.zip$"
+      },
+      "archive": "zip",
+      "binaries": {
+        "bun": "bun.exe"
+      }
+    },
+    {
+      "id": "deno",
+      "name": "Deno",
+      "kind": "runtime",
+      "summary": "TypeScript-native JavaScript runtime with batteries included.",
+      "homepage": "https://deno.com/",
+      "license": "MIT",
+      "multi_version": true,
+      "source": {
+        "type": "github_releases",
+        "repo": "denoland/deno",
+        "asset_pattern": "^deno-x86_64-pc-windows-msvc\\.zip$",
+        "checksum_asset_pattern": "^deno-x86_64-pc-windows-msvc\\.zip\\.sha256sum$"
+      },
+      "archive": "zip",
+      "binaries": {
+        "deno": "deno.exe"
+      }
+    },
+    {
+      "id": "ripgrep",
+      "name": "ripgrep",
+      "kind": "tool",
+      "summary": "Recursive regex search over directories, tuned for speed.",
+      "homepage": "https://github.com/BurntSushi/ripgrep",
+      "license": "MIT OR Unlicense",
+      "multi_version": true,
+      "source": {
+        "type": "github_releases",
+        "repo": "BurntSushi/ripgrep",
+        "asset_pattern": "^ripgrep-[0-9.]+-x86_64-pc-windows-msvc\\.zip$",
+        "checksum_asset_pattern": "^ripgrep-[0-9.]+-x86_64-pc-windows-msvc\\.zip\\.sha256$"
+      },
+      "archive": "zip",
+      "binaries": {
+        "rg": "rg.exe"
+      }
+    },
+    {
+      "id": "jq",
+      "name": "jq",
+      "kind": "tool",
+      "summary": "Command-line JSON processor for filtering and transforming payloads.",
+      "homepage": "https://jqlang.github.io/jq/",
+      "license": "MIT",
+      "multi_version": false,
+      "source": {
+        "type": "github_releases",
+        "repo": "jqlang/jq",
+        "asset_pattern": "^jq-windows-amd64\\.exe$"
+      },
+      "archive": "executable",
+      "layout": {
+        "executable_name": "jq.exe"
+      },
+      "binaries": {
+        "jq": "jq.exe"
+      }
+    },
+    {
+      "id": "nats-server",
+      "name": "NATS",
+      "kind": "message_queue",
+      "summary": "Lightweight pub/sub message server for local event-driven development.",
+      "homepage": "https://nats.io/",
+      "license": "Apache-2.0",
+      "multi_version": true,
+      "source": {
+        "type": "github_releases",
+        "repo": "nats-io/nats-server",
+        "asset_pattern": "^nats-server-v[0-9.]+-windows-amd64\\.zip$"
+      },
+      "archive": "zip",
+      "binaries": {
+        "nats-server": "nats-server.exe"
+      }
+    },
+    {
+      "id": "etcd",
+      "name": "etcd",
+      "kind": "cache",
+      "summary": "Distributed key-value store, handy for service discovery and config experiments.",
+      "homepage": "https://etcd.io/",
+      "license": "Apache-2.0",
+      "multi_version": true,
+      "source": {
+        "type": "github_releases",
+        "repo": "etcd-io/etcd",
+        "asset_pattern": "^etcd-v[0-9.]+-windows-amd64\\.zip$"
+      },
+      "archive": "zip",
+      "binaries": {
+        "etcd": "etcd.exe",
+        "etcdctl": "etcdctl.exe",
+        "etcdutl": "etcdutl.exe"
+      }
+    },
+    {
+      "id": "mongodb",
+      "name": "MongoDB",
+      "kind": "database",
+      "summary": "Document database for schema-flexible apps. Ships the server; mongosh is a separate download.",
+      "homepage": "https://www.mongodb.com/",
+      "license": "SSPL-1.0",
+      "multi_version": true,
+      "source": {
+        "type": "pinned",
+        "versions": [
+          {
+            "version": "8.3.11",
+            "url": "https://fastdl.mongodb.org/windows/mongodb-windows-x86_64-8.3.11.zip",
+            "sha256": "55574b06b41848207213a5e69575dd3487abf3cf07ecfe01b3aef1bab0084241"
+          },
+          {
+            "version": "8.2.1",
+            "url": "https://fastdl.mongodb.org/windows/mongodb-windows-x86_64-8.2.1.zip",
+            "sha256": "9125633283eda3490b22d5cb496c6d76101f5f415feb850b3497205a774b601a"
+          }
+        ]
+      },
+      "archive": "zip",
+      "binaries": {
+        "mongod": "bin/mongod.exe",
+        "mongos": "bin/mongos.exe"
+      }
+    },
+    {
+      "id": "traefik",
+      "name": "Traefik",
+      "kind": "web_server",
+      "summary": "Cloud-native reverse proxy and load balancer with automatic discovery.",
+      "homepage": "https://traefik.io/traefik/",
+      "license": "MIT",
+      "multi_version": true,
+      "source": {
+        "type": "github_releases",
+        "repo": "traefik/traefik",
+        "asset_pattern": "^traefik_v[0-9.]+_windows_amd64\\.zip$",
+        "checksum_asset_pattern": "^traefik_v[0-9.]+_checksums\\.txt$"
+      },
+      "archive": "zip",
+      "binaries": {
+        "traefik": "traefik.exe"
+      }
+    },
+    {
+      "id": "frankenphp",
+      "name": "FrankenPHP",
+      "kind": "web_server",
+      "summary": "PHP runtime embedded in a Caddy web server: serves PHP without FastCGI setup.",
+      "homepage": "https://frankenphp.dev/",
+      "license": "MIT",
+      "multi_version": true,
+      "source": {
+        "type": "github_releases",
+        "repo": "dunglas/frankenphp",
+        "asset_pattern": "^frankenphp-windows-x86_64\\.zip$"
+      },
+      "archive": "zip",
+      "binaries": {
+        "frankenphp": "frankenphp.exe",
+        "php": "php.exe",
+        "php-cgi": "php-cgi.exe"
+      }
+    },
+    {
+      "id": "go",
+      "name": "Go",
+      "kind": "runtime",
+      "summary": "Go toolchain for building and running Go programs.",
+      "homepage": "https://go.dev/",
+      "license": "BSD-3-Clause",
+      "multi_version": true,
+      "source": {
+        "type": "go_dev"
+      },
+      "archive": "zip",
+      "binaries": {
+        "go": "bin/go.exe",
+        "gofmt": "bin/gofmt.exe"
+      }
+    },
+    {
+      "id": "python",
+      "name": "Python",
+      "kind": "runtime",
+      "summary": "Embeddable Python interpreter for running scripts and tools.",
+      "homepage": "https://www.python.org/",
+      "license": "PSF-2.0",
+      "multi_version": true,
+      "source": {
+        "type": "pinned",
+        "versions": [
+          {
+            "version": "3.14.7",
+            "url": "https://www.python.org/ftp/python/3.14.7/python-3.14.7-embed-amd64.zip",
+            "sha256": "d297e5ff019966817ad8502465176139f2d3d840fa4ed84b13bed399a6ab1f15"
+          },
+          {
+            "version": "3.14.6",
+            "url": "https://www.python.org/ftp/python/3.14.6/python-3.14.6-embed-amd64.zip",
+            "sha256": "df901e84a896ff1ee720ad03377e0c8d8c2244fda79808aeeaff6316df1cb75c"
+          }
+        ]
+      },
+      "archive": "zip",
+      "binaries": {
+        "python": "python.exe"
+      },
+      "caveat": "Python publishes no standalone checksum feed for the embeddable build; these hashes were computed from the official archives and pinned in the DevX catalog. The embeddable distribution is minimal: pip is not bundled."
+    },
+    {
+      "id": "apache",
+      "name": "Apache HTTP Server",
+      "kind": "web_server",
+      "summary": "The classic Apache web server (Apache Lounge build) with .htaccess support.",
+      "homepage": "https://www.apache.org/",
+      "license": "Apache-2.0",
+      "multi_version": false,
+      "source": {
+        "type": "pinned",
+        "versions": [
+          {
+            "version": "2.4.68",
+            "url": "https://www.apachelounge.com/download/VS18/binaries/httpd-2.4.68-260827-Win64-VS18.zip",
+            "sha256": "a6b7de9fdccb28456f5b1f884920fe0b2425aadfca25c63ae1c0969d43bb355b",
+            "size_bytes": 14584378
+          }
+        ]
+      },
+      "archive": "zip",
+      "layout": {
+        "strip_prefix": "none"
+      },
+      "binaries": {
+        "httpd": "Apache24/bin/httpd.exe"
+      },
+      "caveat": "apache.org publishes no official Windows build. These are Apache Lounge community builds; hashes were computed from the released archives and pinned in the DevX catalog."
     },
     {
       "id": "cloudflared",
@@ -269,7 +507,9 @@
         "asset_pattern": "^cloudflared-windows-amd64\\.exe$"
       },
       "archive": "executable",
-      "layout": { "executable_name": "cloudflared.exe" },
+      "layout": {
+        "executable_name": "cloudflared.exe"
+      },
       "binaries": {
         "cloudflared": "cloudflared.exe"
       }

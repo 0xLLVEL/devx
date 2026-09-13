@@ -56,7 +56,7 @@ pub use service::{LaunchPlan, Readiness, RenderContext, ServiceDefinition};
 pub use service_defs::{definition_for, is_service, service_ids};
 pub use sites::{
     pool_endpoint_for, prune_stale_blocks, remove_site_block, render_server_block, validate_spec,
-    write_site_block, SiteSpec, SiteSyncReport,
+    write_fastcgi_params, write_site_block, SiteSpec, SiteSyncReport,
 };
 pub use version::{Artifact, Checksum, ComponentVersion, ReleaseChannel};
 pub use worker::{is_worker_id, plan_worker, plan_worker_instances, worker_id, WorkerPlan};

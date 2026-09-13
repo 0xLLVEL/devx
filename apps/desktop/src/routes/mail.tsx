@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 
-import { PageHeader } from "@/components/page-header";
+import { HeroBand } from "@/components/hero-band";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -20,6 +20,8 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
+import { StatTile } from "@/components/ui/stat-tile";
 import {
   ipc,
   type MailStatus,
@@ -76,10 +78,6 @@ export function MailPage() {
 
   return (
     <>
-      <PageHeader
-        title="Mail"
-        description="Every message your apps send is captured locally — nothing leaves your machine."
-      />
 
       <div className="mx-auto w-full max-w-4xl space-y-4 p-6">
         <StatusCard status={status.data} />
@@ -115,7 +113,11 @@ export function MailPage() {
               size="sm"
               variant="outline"
               disabled={busy}
-              onClick={() => remove.mutate([])}
+              onClick={() => {
+                if (window.confirm("Delete every captured message?")) {
+                  remove.mutate([]);
+                }
+              }}
             >
               <Trash2 />
               Clear inbox
@@ -127,32 +129,47 @@ export function MailPage() {
   );
 }
 
-/** SMTP target + inbox counters. */
+/** SMTP target + inbox counters, as a hero band with mini tiles. */
 function StatusCard({ status }: { status?: MailStatus }) {
   if (!status) {
     return null;
   }
   return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2 text-base">
-          <Inbox className="size-4 text-muted-foreground" aria-hidden />
-          Mail catcher
-          {status.running ? (
+    <>
+      <HeroBand
+        title={status.running ? "Mail catcher is capturing." : "Mail catcher is off."}
+        description={
+          status.running
+            ? `Point your app's SMTP client at 127.0.0.1:${status.smtp_port}; read mail here or in Mailpit's own UI on port ${status.port}.`
+            : "Start the mailpit service from the Services page to begin capturing mail."
+        }
+        right={
+          status.running ? (
             <Badge variant="secondary">
               {status.unread ?? "?"} unread of {status.total ?? "?"}
             </Badge>
           ) : (
             <Badge variant="outline">stopped</Badge>
-          )}
-        </CardTitle>
-        <CardDescription>
-          {status.running
-            ? `Point your app's SMTP client at 127.0.0.1:${status.smtp_port}; read mail here or in Mailpit's own UI on port ${status.port}.`
-            : "Start the mailpit service from the Services page to begin capturing mail."}
-        </CardDescription>
-      </CardHeader>
-    </Card>
+          )
+        }
+      />
+      {status.running ? (
+        <div className="grid gap-4 sm:grid-cols-2">
+          <StatTile
+            icon={<Mail className="size-4" />}
+            label="Unread"
+            value={String(status.unread ?? 0)}
+            sub="waiting to be read"
+          />
+          <StatTile
+            icon={<Inbox className="size-4" />}
+            label="Captured"
+            value={String(status.total ?? 0)}
+            sub="messages in the inbox"
+          />
+        </div>
+      ) : null}
+    </>
   );
 }
 
@@ -184,9 +201,13 @@ function MessageList({
             Loading messages…
           </p>
         ) : (messages ?? []).length === 0 ? (
-          <p className="p-4 text-sm text-muted-foreground">
-            No messages yet. Send one from your app to see it here.
-          </p>
+          <div className="p-4">
+            <EmptyState
+              icon={<Inbox />}
+              title="No messages yet."
+              description="Send one from your app to see it here."
+            />
+          </div>
         ) : (
           <ul className="space-y-1">
             {(messages ?? []).map((message) => (

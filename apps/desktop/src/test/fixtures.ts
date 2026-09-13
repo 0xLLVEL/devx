@@ -21,7 +21,7 @@ export function configFixture(overrides: Partial<Config> = {}): Config {
       http_port: 80,
       https_port: 443,
       dns_port: 53,
-      dns_mode: "auto",
+      dns_mode: "hosts_file",
     },
     provisioning: {
       catalog_url:
