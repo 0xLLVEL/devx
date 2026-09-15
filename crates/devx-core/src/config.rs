@@ -268,6 +268,73 @@ impl PhpExtensions {
     }
 }
 
+/// Resource limits, keyed by PHP version.
+///
+/// These land in each pool's rendered `php.ini`. A version missing from the
+/// map runs with the defaults below — the same values the template used
+/// before this became a setting.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct PhpLimits(
+    /// Per-version limit sets.
+    pub std::collections::BTreeMap<String, LimitConfig>,
+);
+
+impl PhpLimits {
+    /// The limits for `version`, when configured.
+    pub fn get(&self, version: &str) -> Option<&LimitConfig> {
+        self.0.get(version)
+    }
+
+    /// Records the limits for `version`.
+    pub fn insert(&mut self, version: impl Into<String>, config: LimitConfig) {
+        self.0.insert(version.into(), config);
+    }
+}
+
+/// One version's resource limits as ini values.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct LimitConfig {
+    /// `memory_limit` ini value, e.g. `256M`.
+    #[serde(default = "default_memory_limit")]
+    pub memory_limit: String,
+    /// `upload_max_filesize` ini value, e.g. `64M`.
+    #[serde(default = "default_upload_limit")]
+    pub upload_max_filesize: String,
+    /// `max_execution_time` in seconds.
+    #[serde(default = "default_execution_time")]
+    pub max_execution_time: u32,
+    /// Whether the Zend OPcache loads.
+    #[serde(default = "default_opcache")]
+    pub opcache_enabled: bool,
+}
+
+impl Default for LimitConfig {
+    fn default() -> Self {
+        Self {
+            memory_limit: default_memory_limit(),
+            upload_max_filesize: default_upload_limit(),
+            max_execution_time: default_execution_time(),
+            opcache_enabled: default_opcache(),
+        }
+    }
+}
+
+fn default_memory_limit() -> String {
+    "256M".to_owned()
+}
+
+fn default_upload_limit() -> String {
+    "64M".to_owned()
+}
+
+fn default_execution_time() -> u32 {
+    60
+}
+
+fn default_opcache() -> bool {
+    true
+}
+
 /// Xdebug settings, keyed by PHP version.
 ///
 /// `enabled` toggles the `zend_extension` load and the `xdebug.mode` lines in
@@ -403,6 +470,8 @@ pub struct Config {
     pub php_extensions: PhpExtensions,
     /// Xdebug settings per installed PHP version.
     pub php_xdebug: PhpXdebug,
+    /// Resource limits per installed PHP version.
+    pub php_limits: PhpLimits,
     /// User-configured local sites.
     pub sites: Vec<Site>,
     /// User-configured supervised worker processes.
@@ -421,6 +490,7 @@ impl Default for Config {
             php_pools: PhpPools::default(),
             php_extensions: PhpExtensions::default(),
             php_xdebug: PhpXdebug::default(),
+            php_limits: PhpLimits::default(),
             sites: Vec::new(),
             workers: Vec::new(),
             cron: Vec::new(),

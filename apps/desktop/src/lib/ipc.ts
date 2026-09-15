@@ -4,6 +4,7 @@ import type {
   ConnectionParams,
   DevxError,
   ErrorCode,
+  LimitConfig,
   WebServer,
 } from "@/bindings";
 
@@ -59,9 +60,11 @@ export type {
   ServiceEventUpdate,
   ServiceMetrics,
   ServiceState,
+  LimitConfig,
   SiteAuth,
   SiteRequestEntry,
   ServiceStatus,
+  BatchStartOutcome,
   SiteStatus,
   TemplateCreateResult,
   TemplateInfo,
@@ -127,6 +130,7 @@ export const ipc = {
   profileApply: (name: string) => unwrap(commands.profileApply(name)),
   profileDelete: (name: string) => unwrap(commands.profileDelete(name)),
   doctorRun: () => unwrap(commands.doctorRun()),
+  doctorFix: (checkId: string) => unwrap(commands.doctorFix(checkId)),
   eventsRecent: (limit: number | null) => unwrap(commands.eventsRecent(limit)),
   diskUsage: () => unwrap(commands.diskUsage()),
   portMap: () => unwrap(commands.portMap()),
@@ -139,6 +143,10 @@ export const ipc = {
     unwrap(commands.componentUninstall(componentId, version)),
   installedVersions: () => unwrap(commands.installedVersions()),
   serviceComponentIds: () => unwrap(commands.serviceComponentIds()),
+  servicesStartAll: () => unwrap(commands.servicesStartAll()),
+  mailMarkAllRead: () => unwrap(commands.mailMarkAllRead()),
+  mailSendTest: () => unwrap(commands.mailSendTest()),
+  servicesStopAll: () => unwrap(commands.servicesStopAll()),
   serviceStart: (componentId: string, version: string) =>
     unwrap(commands.serviceStart(componentId, version)),
   serviceStop: (id: string) => unwrap(commands.serviceStop(id)),
@@ -160,6 +168,9 @@ export const ipc = {
   phpExtSet: (version: string, extension: string, enabled: boolean) =>
     unwrap(commands.phpExtSet(version, extension, enabled)),
   phpXdebugGet: (version: string) => unwrap(commands.phpXdebugGet(version)),
+  phpLimitsGet: (version: string) => unwrap(commands.phpLimitsGet(version)),
+  phpLimitsSet: (version: string, limits: LimitConfig) =>
+    unwrap(commands.phpLimitsSet(version, limits)),
   phpXdebugSet: (version: string, enabled: boolean, mode: string, clientPort: number) =>
     unwrap(commands.phpXdebugSet(version, enabled, mode, clientPort)),
   siteList: () => unwrap(commands.siteList()),

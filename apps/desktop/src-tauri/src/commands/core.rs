@@ -119,6 +119,54 @@ pub fn doctor_run(state: State<'_, AppState>) -> Result<DoctorReport, Error> {
     ))
 }
 
+/// Applies the automatic repair for one doctor check.
+///
+/// Only checks that expose a `fix` id can be repaired; the ids are the stable
+/// `Check.id` values from the diagnostic report. Currently repairable:
+///
+/// - `config` — backs the broken file up next to itself and regenerates
+///   defaults, so the user keeps the broken file to inspect or recover.
+#[tauri::command]
+#[specta::specta]
+pub fn doctor_fix(state: State<'_, AppState>, check_id: String) -> Result<DoctorReport, Error> {
+    match check_id.as_str() {
+        "config" => {
+            let file = state.paths.config_file();
+            let backup = file.with_extension("toml.broken");
+            match std::fs::rename(&file, &backup) {
+                Ok(()) => tracing::info!(
+                    from = %file.display(),
+                    to = %backup.display(),
+                    "moved the broken config aside"
+                ),
+                // A missing file is already fixed; anything else is fatal.
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => {
+                    return Err(Error::new(
+                        devx_core::ErrorCode::Io,
+                        format!("could not move {} aside: {err}", file.display()),
+                    ));
+                }
+            }
+
+            // Rebuild the in-memory store from the (now default) path and
+            // persist it; the next doctor run then reads a healthy config.
+            let store = devx_core::ConfigStore::load(&state.paths)?;
+            state.with_config_mut(|slot| {
+                *slot = store;
+            });
+            state.mark_config_healthy();
+        }
+        other => {
+            return Err(Error::config(format!(
+                "check '{other}' has no automatic repair; follow the remedy text instead"
+            )));
+        }
+    }
+
+    doctor_run(state)
+}
+
 /// One recorded service transition from the persistent event log, for the UI.
 #[derive(Debug, Clone, serde::Serialize, specta::Type)]
 pub struct EventEntry {

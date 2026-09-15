@@ -89,6 +89,8 @@ pub struct PoolPlanOptions {
     pub extensions: Vec<String>,
     /// Xdebug settings; `None` renders no Xdebug directives.
     pub xdebug: Option<devx_core::config::XdebugConfig>,
+    /// Resource limits; `None` renders the built-in defaults.
+    pub limits: Option<devx_core::config::LimitConfig>,
 }
 
 impl PoolPlanOptions {
@@ -99,6 +101,7 @@ impl PoolPlanOptions {
             workers: DEFAULT_WORKERS,
             extensions: Vec::new(),
             xdebug: None,
+            limits: None,
         }
     }
 
@@ -117,6 +120,12 @@ impl PoolPlanOptions {
     /// Sets the Xdebug configuration.
     pub fn with_xdebug(mut self, xdebug: Option<devx_core::config::XdebugConfig>) -> Self {
         self.xdebug = xdebug;
+        self
+    }
+
+    /// Sets the resource limits; `None` keeps the built-in defaults.
+    pub fn with_limits(mut self, limits: Option<devx_core::config::LimitConfig>) -> Self {
+        self.limits = limits;
         self
     }
 }
@@ -206,6 +215,10 @@ pub fn plan_pool(
         ("extensions", render_extension_lines(&options.extensions)),
         // Pre-rendered Xdebug directives, empty when Xdebug is off.
         ("xdebug", render_xdebug_lines(options.xdebug.as_ref())),
+        ("memory_limit", options.limits.as_ref().map(|l| l.memory_limit.clone()).unwrap_or_else(|| "256M".into())),
+        ("upload_max_filesize", options.limits.as_ref().map(|l| l.upload_max_filesize.clone()).unwrap_or_else(|| "64M".into())),
+        ("max_execution_time", options.limits.as_ref().map(|l| l.max_execution_time.to_string()).unwrap_or_else(|| "60".into())),
+        ("opcache_line", options.limits.as_ref().map(|l| if l.opcache_enabled { "opcache.enable = On".to_owned() } else { "opcache.enable = Off".to_owned() }).unwrap_or_else(|| "opcache.enable = On".to_owned())),
     ];
 
     let php_ini = render(PHP_INI_TEMPLATE, &values)?;
@@ -409,9 +422,9 @@ short_open_tag = Off
 output_buffering = 4096
 zend.enable_gc = On
 expose_php = Off
-max_execution_time = 60
+max_execution_time = {{ max_execution_time }}
 max_input_time = 60
-memory_limit = 256M
+memory_limit = {{ memory_limit }}
 error_reporting = E_ALL & ~E_DEPRECATED & ~E_STRICT
 display_errors = Off
 display_startup_errors = Off
@@ -422,7 +435,8 @@ request_order = "GP"
 register_argc_argv = Off
 post_max_size = 64M
 default_charset = "UTF-8"
-upload_max_filesize = 64M
+upload_max_filesize = {{ upload_max_filesize }}
+{{ opcache_line }}
 max_file_uploads = 20
 allow_url_fopen = On
 allow_url_include = Off

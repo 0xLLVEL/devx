@@ -1,31 +1,22 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
-  ChevronDown,
+  ChevronRight,
   CircleAlert,
   Copy,
   ExternalLink,
   Globe,
   Loader2,
   Lock,
-  Network,
   Plus,
   ShieldCheck,
   Trash2,
-  Variable,
 } from "lucide-react";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -41,7 +32,14 @@ import {
   type SiteStatus,
 } from "@/lib/ipc";
 
-/** Document-root input with the native Windows folder picker beside it. */
+type WebServerChoice = "Nginx" | "Caddy" | "FrankenPhp";
+
+/**
+ * Document-root picker: a Browse button that opens the native Windows
+ * folder dialog, with the chosen path shown as selectable mono text. The
+ * path comes from the dialog, never from typing, so it is always a real
+ * existing directory.
+ */
 function DocrootField({
   id,
   label = "Document root",
@@ -61,18 +59,17 @@ function DocrootField({
   };
 
   return (
-    <div className="space-y-1.5" >
+    <div className="space-y-1.5">
       <Label htmlFor={id}>{label}</Label>
-      <div className="flex gap-2" >
-        <Input
+      <div className="flex items-center gap-2">
+        <span
           id={id}
-          value={value}
-          placeholder="C:\dev\myapp\public"
-          onChange={(event) => onChange(event.target.value)}
-          autoComplete="off"
-          spellCheck={false}
-          className="min-w-0 flex-1"
-        />
+          className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground"
+          data-selectable
+          title={value || undefined}
+        >
+          {value || "No folder selected"}
+        </span>
         <Button type="button" variant="outline" onClick={() => void browse()}>
           Browse…
         </Button>
@@ -81,22 +78,33 @@ function DocrootField({
   );
 }
 
-/** Sites page: local .test domains routed to project folders. */
+/** Display label for a web server kind. */
+function serverLabel(server: SiteStatus["web_server"]): string {
+  return server === "Nginx" ? "nginx" : server === "Caddy" ? "Caddy" : "FrankenPHP";
+}
+
+/** The base URL a site is served on, scheme included. */
+function siteUrl(site: SiteStatus): string {
+  return `${site.https ? "https" : "http"}://${site.hostname}`;
+}
+
+/** Sites page: the local network as one dense monitor table. */
 export function SitesPage() {
   const queryClient = useQueryClient();
   const sites = useQuery({ queryKey: ["sites"], queryFn: ipc.siteList });
-  // Installed PHP versions feed the "runs on" choice; pools know their ports.
   const phpPools = useQuery({ queryKey: ["php-pools"], queryFn: ipc.phpPoolList });
   const ca = useQuery({ queryKey: ["ca"], queryFn: ipc.caStatus });
   const dns = useQuery({ queryKey: ["dns"], queryFn: ipc.dnsStatus });
   const config = useQuery({ queryKey: ["config"], queryFn: ipc.configGet });
 
   const [adding, setAdding] = useState(false);
+  const [selected, setSelected] = useState<string | null>(null);
+
   const [hostname, setHostname] = useState("");
   const [docroot, setDocroot] = useState("");
   const [phpVersion, setPhpVersion] = useState("");
   const [https, setHttps] = useState(false);
-  const [webServer, setWebServer] = useState<"Nginx" | "Caddy" | "FrankenPhp">("Nginx");
+  const [webServer, setWebServer] = useState<WebServerChoice>("Nginx");
 
   const add = useMutation({
     mutationFn: () =>
@@ -140,10 +148,7 @@ export function SitesPage() {
 
   const phpChoices = (phpPools.data ?? []).map((pool) => pool.version);
   const allSites = sites.data ?? [];
-  const aliasCount = allSites.reduce((sum, site) => sum + site.aliases.length, 0);
-  const envCount = allSites.reduce((sum, site) => sum + Object.keys(site.env).length, 0);
-  const httpsCount = allSites.filter((site) => site.https).length;
-  const busy = add.isPending || remove.isPending;
+  const selectedSite = allSites.find((site) => site.hostname === selected) ?? null;
   const error =
     add.error instanceof Error
       ? add.error
@@ -160,344 +165,594 @@ export function SitesPage() {
             : `${allSites.length} site${allSites.length === 1 ? "" : "s"} served locally.`
         }
         description={`Anything under *.${dns.data?.suffix ?? "test"} resolves to this machine — the resolver covers every subdomain.`}
+        right={
+          <Button size="sm" onClick={() => setAdding((open) => !open)}>
+            <Plus />
+            {adding ? "Close form" : "Add site"}
+          </Button>
+        }
       />
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
-          {/* Main column: the sites themselves. */}
-          <div className="space-y-4">
-            <div className="flex items-center justify-between gap-2">
-              <h2 className="text-sm font-medium">
-                Configured sites
-                {allSites.length > 0 ? (
-                  <span className="ml-2 text-xs font-normal text-muted-foreground">
-                    {aliasCount} alias{aliasCount === 1 ? "" : "es"} · {envCount} env var
-                    {envCount === 1 ? "" : "s"} · {httpsCount} on HTTPS
-                  </span>
-                ) : null}
-              </h2>
-              <Button size="sm" onClick={() => setAdding((open) => !open)}>
-                <Plus />
-                {adding ? "Close form" : "Add site"}
-              </Button>
-            </div>
+      <NetworkStrip
+        dns={dns.data}
+        mode={config.data?.network.dns_mode ?? "hosts_file"}
+        ca={ca.data}
+        dnsBusy={dnsStart.isPending || dnsStop.isPending}
+        caInstalling={caInstall.isPending}
+        onDnsStart={() => dnsStart.mutate()}
+        onDnsStop={() => dnsStop.mutate()}
+        onCaInstall={() => caInstall.mutate()}
+      />
 
-            {adding ? (
-              <Card className="animate-in fade-in slide-in-from-bottom-2 duration-300">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-base">Add a site</CardTitle>
-                  <CardDescription>
-                    The host name must end in .test; pick the PHP version the
-                    site runs on, or none for a static site.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <form
-                    className="grid gap-3 sm:grid-cols-2"
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      add.mutate();
-                    }}
-                  >
-                    <div className="space-y-1.5">
-                      <Label htmlFor="site-hostname">Host name</Label>
-                      <Input
-                        id="site-hostname"
-                        placeholder="myapp.test"
-                        value={hostname}
-                        onChange={(event) => setHostname(event.target.value)}
-                        autoComplete="off"
-                        spellCheck={false}
-                      />
-                    </div>
-                    <DocrootField id="site-docroot" value={docroot} onChange={setDocroot} />
-                    <div className="space-y-1.5">
-                      <Label htmlFor="site-php">PHP</Label>
-                      <Select
-                        id="site-php"
-                        value={phpVersion}
-                        onChange={(event) => setPhpVersion(event.target.value)}
-                      >
-                        <option value="">None (static)</option>
-                        {phpChoices.map((version) => (
-                          <option key={version} value={version}>
-                            {version}
-                          </option>
-                        ))}
-                      </Select>
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="site-web-server">Web server</Label>
-                      <Select
-                        id="site-web-server"
-                        value={webServer}
-                        onChange={(event) =>
-                          setWebServer(
-                            event.target.value as "Nginx" | "Caddy" | "FrankenPhp",
-                          )
-                        }
-                      >
-                        <option value="Nginx">nginx</option>
-                        <option value="Caddy">Caddy</option>
-                        <option value="FrankenPhp">FrankenPHP</option>
-                      </Select>
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="site-https">HTTPS</Label>
-                      <Select
-                        id="site-https"
-                        value={https ? "on" : "off"}
-                        onChange={(event) => setHttps(event.target.value === "on")}
-                      >
-                        <option value="off">HTTP only</option>
-                        <option value="on">HTTP + HTTPS</option>
-                      </Select>
-                    </div>
-                    <div className="flex items-center gap-2 sm:col-span-2">
-                      <Button type="submit" size="sm" disabled={busy || add.isPending}>
-                        {add.isPending ? (
-                          <Loader2 className="animate-spin" />
-                        ) : (
-                          <Plus />
-                        )}
-                        Add site
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setAdding(false)}
-                      >
-                        Cancel
-                      </Button>
-                    </div>
-                  </form>
+      {adding ? (
+        <AddSiteForm
+          hostname={hostname}
+          docroot={docroot}
+          phpVersion={phpVersion}
+          https={https}
+          webServer={webServer}
+          phpChoices={phpChoices}
+          busy={add.isPending}
+          onHostname={setHostname}
+          onDocroot={setDocroot}
+          onPhp={setPhpVersion}
+          onHttps={setHttps}
+          onServer={setWebServer}
+          onSubmit={() => add.mutate()}
+          onClose={() => setAdding(false)}
+          error={error}
+        />
+      ) : null}
 
-                  {error ? (
-                    <p
-                      className="mt-3 flex items-center gap-2 text-sm text-destructive"
-                      role="alert"
-                    >
-                      <CircleAlert className="size-4" />
-                      {error.message}
-                    </p>
-                  ) : null}
-                </CardContent>
-              </Card>
-            ) : null}
-
-            {sites.isPending ? (
-              <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
-                <Loader2 className="size-4 animate-spin" />
-                Loading sites…
-              </p>
-            ) : allSites.length === 0 ? (
-              <EmptyState
-                icon={<Globe />}
-                title="No sites yet."
-                description="Add one and DevX will route its .test host name to your project folder."
-                action={
-                  <Button size="sm" onClick={() => setAdding(true)}>
-                    <Plus />
-                    Create your first site
-                  </Button>
-                }
-              />
-            ) : (
-              <ul className="space-y-2">
-                {allSites.map((site) => (
-                  <SiteRow
-                    key={site.hostname}
-                    site={site}
-                    phpChoices={phpChoices}
-                    removing={remove.isPending && remove.variables === site.hostname}
-                    onRemove={() => remove.mutate(site.hostname)}
-                    onAliasAdd={(alias) => aliasAdd.mutate({ hostname: site.hostname, alias })}
-                    onAliasDelete={(alias) => aliasDelete.mutate({ hostname: site.hostname, alias })}
-                    aliasBusy={aliasAdd.isPending || aliasDelete.isPending}
-                  />
-                ))}
-              </ul>
-            )}
-          </div>
-
-          {/* Rail: local-network plumbing. */}
-          <div className="space-y-4">
-            <DnsCard
-              status={dns.data}
-              mode={config.data?.network.dns_mode ?? "hosts_file"}
-              busy={dnsStart.isPending || dnsStop.isPending}
-              onStart={() => dnsStart.mutate()}
-              onStop={() => dnsStop.mutate()}
-            />
-
-            <CaCard
-              status={ca.data}
-              onInstall={() => caInstall.mutate()}
-              installing={caInstall.isPending}
-            />
-
-            <TemplatesCard phpChoices={phpChoices} />
-          </div>
-        </div>
-      </div>
-  );
-}
-
-/** Display label for a web server kind. */
-function serverLabel(server: SiteStatus["web_server"]): string {
-  return server === "Nginx" ? "nginx" : server === "Caddy" ? "Caddy" : "FrankenPHP";
-}
-
-/** The base URL a site is served on, scheme included. */
-function siteUrl(site: SiteStatus): string {
-  return `${site.https ? "https" : "http"}://${site.hostname}`;
-}
-
-/**
- * The bundled DNS resolver card: wildcard `*.test` resolution for every
- * site, including subdomains the hosts file could never list.
- */
-function DnsCard({
-  status,
-  mode,
-  busy,
-  onStart,
-  onStop,
-}: {
-  status?: DnsStatus;
-  mode: DnsMode;
-  busy: boolean;
-  onStart: () => void;
-  onStop: () => void;
-}) {
-  const queryClient = useQueryClient();
-  const repair = useMutation({
-    mutationFn: ipc.dnsRepair,
-    onSettled: () => queryClient.invalidateQueries({ queryKey: ["dns"] }),
-  });
-
-  if (!status) {
-    return null;
-  }
-
-  return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2 text-base">
-          <Network className="size-4 text-muted-foreground" aria-hidden />
-          {mode === "hosts_file" ? "Hosts file" : "DNS resolver"}
-          {mode === "hosts_file" ? (
-            <Badge variant="secondary">active</Badge>
-          ) : status.running ? (
-            <Badge variant="secondary">running :{status.port}</Badge>
-          ) : (
-            <Badge variant="outline">stopped</Badge>
-          )}
-        </CardTitle>
-        <CardDescription>
-          {mode === "hosts_file"
-            ? "Every configured name is written to the Windows hosts file (127.0.0.1). Exact names only — no wildcard subdomains."
-            : status.running
-              ? `Answers *.${status.suffix} (including subdomains) with loopback.`
-              : "Start it to resolve *." + status.suffix + " names, including subdomains."}
-        </CardDescription>
-        {mode !== "hosts_file" && status.running && status.nrpt_active === false ? (
-          <div className="space-y-2">
-            <p className="text-xs text-warning">
-              Windows is not routing *.{status.suffix} to DevX (privileged
-              helper unavailable) — names will not resolve until the rule is
-              installed.
-            </p>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={repair.isPending}
-              onClick={() => repair.mutate()}
-            >
-              {repair.isPending ? <Loader2 className="animate-spin" /> : null}
-              Fix routing
+      {sites.isPending ? (
+        <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
+          <Loader2 className="size-4 animate-spin" />
+          Loading sites…
+        </p>
+      ) : allSites.length === 0 ? (
+        <EmptyState
+          icon={<Globe />}
+          title="No sites yet."
+          description="Add one and DevX will route its .test host name to your project folder."
+          action={
+            <Button size="sm" onClick={() => setAdding(true)}>
+              <Plus />
+              Create your first site
             </Button>
-          </div>
-        ) : null}
-        {mode !== "hosts_file" && status.running && status.nrpt_active === null ? (
-          <p className="text-xs text-muted-foreground">
-            NRPT status unknown: the privileged helper did not answer.
-          </p>
-        ) : null}
-      </CardHeader>
-      <CardContent>
-        {mode === "hosts_file" ? (
-          <p className="text-sm text-muted-foreground">
-            Adding or removing a site keeps the hosts file in sync
-            automatically — no resolver, no NRPT rule, no extra service.
-          </p>
-        ) : status.running ? (
-          <Button size="sm" variant="outline" onClick={onStop} disabled={busy}>
-            {busy ? <Loader2 className="animate-spin" /> : null}
-            Stop resolver
-          </Button>
-        ) : (
-          <Button size="sm" onClick={onStart} disabled={busy}>
-            {busy ? <Loader2 className="animate-spin" /> : <Network />}
-            Start resolver
-          </Button>
-        )}
-      </CardContent>
-    </Card>
+          }
+        />
+      ) : (
+        <div className="overflow-x-auto rounded-md border border-border">
+          <table className="w-full min-w-[720px] text-left text-sm">
+            <thead className="bg-muted/60 text-xs text-muted-foreground">
+              <tr>
+                <th className="px-3 py-2 font-medium">Site</th>
+                <th className="hidden px-3 py-2 font-medium md:table-cell">Serves</th>
+                <th className="hidden px-3 py-2 font-medium lg:table-cell">Document root</th>
+                <th className="px-3 py-2 font-medium">Health</th>
+                <th className="px-3 py-2 text-right font-medium">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {allSites.map((site) => (
+                <SiteRow
+                  key={site.hostname}
+                  site={site}
+                  open={selected === site.hostname}
+                  removing={remove.isPending && remove.variables === site.hostname}
+                  onToggle={() =>
+                    setSelected((current) =>
+                      current === site.hostname ? null : site.hostname,
+                    )
+                  }
+                  onRemove={() => remove.mutate(site.hostname)}
+                >
+                  {selectedSite !== null && selectedSite.hostname === site.hostname ? (
+                    <SiteDetail
+                      site={selectedSite}
+                      phpChoices={phpChoices}
+                      onAliasAdd={(alias) =>
+                        aliasAdd.mutate({ hostname: site.hostname, alias })
+                      }
+                      onAliasDelete={(alias) =>
+                        aliasDelete.mutate({ hostname: site.hostname, alias })
+                      }
+                      aliasBusy={aliasAdd.isPending || aliasDelete.isPending}
+                    />
+                  ) : null}
+                </SiteRow>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <TemplatesSection phpChoices={phpChoices} />
+    </div>
   );
 }
 
 /**
- * The local CA's status card: install it once and every HTTPS site works.
- *
- * `trusted === null` means the privileged helper is unavailable, so DevX
- * cannot know — the honest answer is "unknown", not "no".
+ * One flat strip of background plumbing: name resolution and certificate
+ * trust as dot + label + inline action. Reads as a status line, not as two
+ * side-quest cards competing with the site table.
  */
-function CaCard({
-  status,
-  onInstall,
-  installing,
+function NetworkStrip({
+  dns,
+  mode,
+  ca,
+  dnsBusy,
+  caInstalling,
+  onDnsStart,
+  onDnsStop,
+  onCaInstall,
 }: {
-  status?: CaStatus;
-  onInstall: () => void;
-  installing: boolean;
+  dns?: DnsStatus;
+  mode: DnsMode;
+  ca?: CaStatus;
+  dnsBusy: boolean;
+  caInstalling: boolean;
+  onDnsStart: () => void;
+  onDnsStop: () => void;
+  onCaInstall: () => void;
 }) {
-  if (!status) {
+  if (!dns || !ca) {
     return null;
   }
 
-  const trusted = status.trusted;
-  const label =
-    trusted === true
-      ? "Trusted by this machine"
-      : trusted === false
-        ? "Not installed in the trust store"
-        : "Trust store unknown (helper unavailable)";
+  const resolverHealthy = mode === "hosts_file" ? true : dns.running;
+  const resolverLabel =
+    mode === "hosts_file"
+      ? `Hosts file · *.${dns.suffix}`
+      : dns.running
+        ? `Resolver :${dns.port} · *.${dns.suffix}`
+        : "Resolver stopped";
+  const resolverProblem =
+    mode !== "hosts_file" && (!dns.running || dns.nrpt_active === false);
 
   return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2 text-base">
-          <ShieldCheck className="size-4 text-muted-foreground" aria-hidden />
-          Local certificate authority
-        </CardTitle>
-        <CardDescription>{label}</CardDescription>
-      </CardHeader>
-      <CardContent>
-        {trusted === false ? (
-          <Button size="sm" onClick={onInstall} disabled={installing}>
-            {installing ? <Loader2 className="animate-spin" /> : <ShieldCheck />}
+    <div className="flex flex-wrap items-center gap-x-6 gap-y-1.5 rounded-md border border-border bg-card px-3 py-2 text-sm">
+      <span className="flex items-center gap-2">
+        <span
+          aria-hidden
+          className={`size-1.5 rounded-full ${resolverHealthy ? "bg-success" : "bg-warning"}`}
+        />
+        <span className={resolverProblem ? "text-warning" : undefined}>{resolverLabel}</span>
+        {mode !== "hosts_file" ? (
+          dns.running ? (
+            <Button size="sm" variant="ghost" onClick={onDnsStop} disabled={dnsBusy}>
+              Stop
+            </Button>
+          ) : (
+            <Button size="sm" variant="ghost" onClick={onDnsStart} disabled={dnsBusy}>
+              Start
+            </Button>
+          )
+        ) : null}
+      </span>
+      <span className="flex items-center gap-2">
+        <span
+          aria-hidden
+          className={`size-1.5 rounded-full ${ca.trusted ? "bg-success" : "bg-warning"}`}
+        />
+        <span className={ca.trusted ? undefined : "text-warning"}>
+          {ca.trusted === true
+            ? "CA trusted"
+            : ca.trusted === false
+              ? "CA not installed"
+              : "CA trust unknown"}
+        </span>
+        {ca.trusted === false ? (
+          <Button size="sm" variant="ghost" onClick={onCaInstall} disabled={caInstalling}>
+            {caInstalling ? <Loader2 className="animate-spin" /> : null}
             Install CA
           </Button>
-        ) : (
-          <p className="text-sm text-muted-foreground">
-            {status.exists
-              ? "The CA signs a certificate for each HTTPS site automatically."
-              : "The CA is created the first time a site enables HTTPS."}
+        ) : null}
+      </span>
+      <span className="ml-auto hidden text-xs text-muted-foreground xl:block">
+        {mode === "hosts_file"
+          ? "Names resolve through the Windows hosts file."
+          : dns.running
+            ? "The bundled resolver answers every subdomain."
+            : "Start the resolver to cover subdomains too."}
+      </span>
+    </div>
+  );
+}
+
+/** The collapsed add-site form: one compact grid row of fields. */
+function AddSiteForm({
+  hostname,
+  docroot,
+  phpVersion,
+  https,
+  webServer,
+  phpChoices,
+  busy,
+  onHostname,
+  onDocroot,
+  onPhp,
+  onHttps,
+  onServer,
+  onSubmit,
+  onClose,
+  error,
+}: {
+  hostname: string;
+  docroot: string;
+  phpVersion: string;
+  https: boolean;
+  webServer: WebServerChoice;
+  phpChoices: string[];
+  busy: boolean;
+  onHostname: (value: string) => void;
+  onDocroot: (value: string) => void;
+  onPhp: (value: string) => void;
+  onHttps: (value: boolean) => void;
+  onServer: (value: WebServerChoice) => void;
+  onSubmit: () => void;
+  onClose: () => void;
+  error: Error | null;
+}) {
+  return (
+    <div className="rounded-md border border-primary/40 bg-card p-4">
+      <form
+        className="grid items-end gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_9rem_9rem_8rem]"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onSubmit();
+        }}
+      >
+        <div className="space-y-1.5">
+          <Label htmlFor="site-hostname">Host name</Label>
+          <Input
+            id="site-hostname"
+            placeholder="myapp.test"
+            value={hostname}
+            onChange={(event) => onHostname(event.target.value)}
+            autoComplete="off"
+            spellCheck={false}
+          />
+        </div>
+        <DocrootField id="site-docroot" value={docroot} onChange={onDocroot} />
+        <div className="space-y-1.5">
+          <Label htmlFor="site-php">PHP</Label>
+          <Select
+            id="site-php"
+            value={phpVersion}
+            onChange={(event) => onPhp(event.target.value)}
+          >
+            <option value="">None (static)</option>
+            {phpChoices.map((version) => (
+              <option key={version} value={version}>
+                {version}
+              </option>
+            ))}
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="site-web-server">Web server</Label>
+          <Select
+            id="site-web-server"
+            value={webServer}
+            onChange={(event) => onServer(event.target.value as WebServerChoice)}
+          >
+            <option value="Nginx">nginx</option>
+            <option value="Caddy">Caddy</option>
+            <option value="FrankenPhp">FrankenPHP</option>
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="site-https">HTTPS</Label>
+          <Select
+            id="site-https"
+            value={https ? "on" : "off"}
+            onChange={(event) => onHttps(event.target.value === "on")}
+          >
+            <option value="off">HTTP only</option>
+            <option value="on">HTTP + HTTPS</option>
+          </Select>
+        </div>
+      </form>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <Button type="button" size="sm" disabled={busy} onClick={onSubmit}>
+          {busy ? <Loader2 className="animate-spin" /> : <Plus />}
+          Add site
+        </Button>
+        <Button type="button" variant="ghost" size="sm" onClick={onClose}>
+          Cancel
+        </Button>
+        {error ? (
+          <p className="flex items-center gap-2 text-sm text-destructive" role="alert">
+            <CircleAlert className="size-4" />
+            {error.message}
           </p>
-        )}
-      </CardContent>
-    </Card>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * One site in the monitor table. The row is the summary; clicking it opens
+ * the full editor directly beneath, spanning the table width.
+ */
+function SiteRow({
+  site,
+  open,
+  removing,
+  onToggle,
+  onRemove,
+  children,
+}: {
+  site: SiteStatus;
+  open: boolean;
+  removing: boolean;
+  onToggle: () => void;
+  onRemove: () => void;
+  children?: ReactNode;
+}) {
+  return (
+    <>
+      <tr
+        className={`border-t border-border transition-colors duration-150 ${
+          open ? "bg-sidebar-accent/50" : "hover:bg-sidebar-accent/30"
+        }`}
+      >
+        <td className="px-3 py-2">
+          <button
+            type="button"
+            className="flex cursor-pointer items-center gap-2 text-left"
+            onClick={onToggle}
+            aria-expanded={open}
+            aria-label={`Edit ${site.hostname}`}
+          >
+            <ChevronRight
+              aria-hidden
+              className={`size-3.5 shrink-0 text-muted-foreground transition-transform duration-150 ${
+                open ? "rotate-90" : ""
+              }`}
+            />
+            <span className="font-mono text-sm font-medium" data-selectable>
+              {site.hostname}
+            </span>
+            {site.auth ? (
+              <Lock className="size-3 text-muted-foreground" aria-label="Basic auth on" />
+            ) : null}
+          </button>
+        </td>
+        <td className="hidden px-3 py-2 md:table-cell">
+          <span className="flex flex-wrap items-center gap-1.5">
+            {site.php_version ? (
+              <Badge variant="secondary">PHP {site.php_version}</Badge>
+            ) : (
+              <Badge variant="outline">static</Badge>
+            )}
+            <Badge variant="outline">{serverLabel(site.web_server)}</Badge>
+            {site.https ? (
+              <Badge variant="outline">
+                <Lock className="size-3" aria-hidden /> HTTPS
+              </Badge>
+            ) : null}
+            {site.aliases.length > 0 ? (
+              <Badge variant="outline">+{site.aliases.length} alias</Badge>
+            ) : null}
+            {Object.keys(site.env).length > 0 ? (
+              <Badge variant="outline">{Object.keys(site.env).length} env</Badge>
+            ) : null}
+          </span>
+          {site.php_endpoint ? (
+            <span
+              className="mt-0.5 block font-mono text-xs text-muted-foreground"
+              data-selectable
+            >
+              fastcgi_pass {site.php_endpoint}
+            </span>
+          ) : null}
+        </td>
+        <td
+          className="hidden max-w-56 truncate px-3 py-2 font-mono text-xs text-muted-foreground lg:table-cell"
+          data-selectable
+          title={site.docroot}
+        >
+          {site.docroot}
+        </td>
+        <td className="px-3 py-2">
+          <PingButton hostname={site.hostname} />
+        </td>
+        <td className="px-3 py-2">
+          <div className="flex items-center justify-end gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => void openInBrowser(siteUrl(site))}
+              aria-label={`Open ${site.hostname} in browser`}
+            >
+              <ExternalLink />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => void navigator.clipboard.writeText(siteUrl(site))}
+              aria-label={`Copy ${site.hostname} URL`}
+            >
+              <Copy />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={removing}
+              onClick={onRemove}
+              aria-label={`Remove ${site.hostname}`}
+            >
+              {removing ? <Loader2 className="animate-spin" /> : <Trash2 />}
+            </Button>
+          </div>
+        </td>
+      </tr>
+      {open ? (
+        <tr className="border-t border-border bg-background">
+          <td className="p-0" colSpan={5}>
+            {children}
+          </td>
+        </tr>
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * The full editor for one site, spanning the table width as a two-column
+ * workspace: serving behavior on the left; aliases, env, auth and requests
+ * on the right behind tabs, so only one per-site surface shows at a time.
+ */
+function SiteDetail({
+  site,
+  phpChoices,
+  onAliasAdd,
+  onAliasDelete,
+  aliasBusy,
+}: {
+  site: SiteStatus;
+  phpChoices: string[];
+  onAliasAdd: (alias: string) => void;
+  onAliasDelete: (alias: string) => void;
+  aliasBusy: boolean;
+}) {
+  const queryClient = useQueryClient();
+  const [draftDocroot, setDraftDocroot] = useState(site.docroot);
+  const [draftPhp, setDraftPhp] = useState(site.php_version);
+  const [draftHttps, setDraftHttps] = useState(site.https);
+  const [draftServer, setDraftServer] = useState<WebServerChoice>(site.web_server);
+  const [section, setSection] = useState<"aliases" | "env" | "auth" | "requests">(
+    "aliases",
+  );
+
+  // Re-adding the hostname is the edit path: `site_add` replaces the
+  // location/behavior while carrying the env vars and aliases over.
+  const save = useMutation({
+    mutationFn: () =>
+      ipc.siteAdd(site.hostname, draftDocroot.trim(), draftPhp, draftHttps, draftServer),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["sites"] }),
+  });
+
+  const saveError = save.error instanceof Error ? save.error : null;
+
+  return (
+    <div className="grid gap-6 p-4 lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)]">
+      <section className="space-y-3">
+        <h3 className="text-xs font-semibold text-muted-foreground">Behavior</h3>
+        <DocrootField
+          id={`edit-docroot-${site.hostname}`}
+          value={draftDocroot}
+          onChange={setDraftDocroot}
+        />
+        <div className="grid gap-3 sm:grid-cols-3">
+          <div className="space-y-1.5">
+            <Label htmlFor={`edit-php-${site.hostname}`}>PHP</Label>
+            <Select
+              id={`edit-php-${site.hostname}`}
+              value={draftPhp}
+              onChange={(event) => setDraftPhp(event.target.value)}
+            >
+              <option value="">None (static)</option>
+              {phpChoices.map((version) => (
+                <option key={version} value={version}>
+                  {version}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor={`edit-server-${site.hostname}`}>Web server</Label>
+            <Select
+              id={`edit-server-${site.hostname}`}
+              value={draftServer}
+              onChange={(event) => setDraftServer(event.target.value as WebServerChoice)}
+            >
+              <option value="Nginx">nginx</option>
+              <option value="Caddy">Caddy</option>
+              <option value="FrankenPhp">FrankenPHP</option>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor={`edit-https-${site.hostname}`}>HTTPS</Label>
+            <Select
+              id={`edit-https-${site.hostname}`}
+              value={draftHttps ? "on" : "off"}
+              onChange={(event) => setDraftHttps(event.target.value === "on")}
+            >
+              <option value="off">HTTP only</option>
+              <option value="on">HTTP + HTTPS</option>
+            </Select>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button size="sm" disabled={save.isPending} onClick={() => save.mutate()}>
+            {save.isPending ? <Loader2 className="animate-spin" /> : null}
+            Save changes
+          </Button>
+          <span className="font-mono text-xs text-muted-foreground" data-selectable>
+            {site.docroot}
+          </span>
+        </div>
+        {saveError ? (
+          <p className="flex items-center gap-2 text-sm text-destructive" role="alert">
+            <CircleAlert className="size-4" />
+            {saveError.message}
+          </p>
+        ) : null}
+      </section>
+
+      <section className="space-y-3">
+        <div
+          role="tablist"
+          aria-label="Site sections"
+          className="flex gap-1 border-b border-border"
+        >
+          {(
+            [
+              [
+                "aliases",
+                `Aliases${site.aliases.length > 0 ? ` (${site.aliases.length})` : ""}`,
+              ],
+              [
+                "env",
+                `Env${Object.keys(site.env).length > 0 ? ` (${Object.keys(site.env).length})` : ""}`,
+              ],
+              ["auth", site.auth ? "Auth on" : "Auth"],
+              ["requests", "Requests"],
+            ] as const
+          ).map(([id, label]) => (
+            <button
+              key={id}
+              role="tab"
+              type="button"
+              aria-selected={section === id}
+              onClick={() => setSection(id)}
+              className={`relative cursor-pointer px-3 py-2 text-sm transition-colors duration-150 ${
+                section === id
+                  ? "font-medium text-foreground after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full after:bg-primary"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        {section === "aliases" ? (
+          <AliasPanel
+            site={site}
+            busy={aliasBusy}
+            onAdd={onAliasAdd}
+            onDelete={onAliasDelete}
+          />
+        ) : null}
+        {section === "env" ? <EnvPanel site={site} /> : null}
+        {section === "auth" ? <AuthPanel site={site} /> : null}
+        {section === "requests" ? <RequestsPanel hostname={site.hostname} /> : null}
+      </section>
+    </div>
   );
 }
 
@@ -557,241 +812,6 @@ function PingButton({ hostname }: { hostname: string }) {
 }
 
 /**
- * One configured site. Clicking the row opens the editor: the serving
- * behavior (docroot, PHP, HTTPS) plus the alias and env sections.
- */
-function SiteRow({
-  site,
-  phpChoices,
-  removing,
-  onRemove,
-  onAliasAdd,
-  onAliasDelete,
-  aliasBusy,
-}: {
-  site: SiteStatus;
-  phpChoices: string[];
-  removing: boolean;
-  onRemove: () => void;
-  onAliasAdd: (alias: string) => void;
-  onAliasDelete: (alias: string) => void;
-  aliasBusy: boolean;
-}) {
-  const queryClient = useQueryClient();
-  const [editing, setEditing] = useState(false);
-  const [draftDocroot, setDraftDocroot] = useState(site.docroot);
-  const [draftPhp, setDraftPhp] = useState(site.php_version);
-  const [draftHttps, setDraftHttps] = useState(site.https);
-  const [draftServer, setDraftServer] = useState<
-    "Nginx" | "Caddy" | "FrankenPhp"
-  >(site.web_server);
-
-  // Re-adding the hostname is the edit path: `site_add` replaces the
-  // location/behavior while carrying the env vars and aliases over.
-  const save = useMutation({
-    mutationFn: () =>
-      ipc.siteAdd(site.hostname, draftDocroot.trim(), draftPhp, draftHttps, draftServer),
-    onSettled: () => queryClient.invalidateQueries({ queryKey: ["sites"] }),
-  });
-
-  const saveError = save.error instanceof Error ? save.error : null;
-
-  return (
-    <li>
-      <Card className={editing ? "border-primary/40" : undefined}>
-        <CardContent className="flex items-center justify-between gap-4 p-4">
-          <button
-            type="button"
-            className="flex min-w-0 flex-1 items-center gap-2 text-left"
-            onClick={() => setEditing((open) => !open)}
-            aria-expanded={editing}
-            aria-label={`Edit ${site.hostname}`}
-          >
-            <Globe className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-            <span className="min-w-0">
-              <span className="flex flex-wrap items-center gap-2">
-                <span className="font-mono text-sm font-medium" data-selectable>
-                  {site.hostname}
-                </span>
-                {site.php_version ? (
-                  <Badge variant="secondary">PHP {site.php_version}</Badge>
-                ) : (
-                  <Badge variant="outline">static</Badge>
-                )}
-                <Badge variant="outline">{serverLabel(site.web_server)}</Badge>
-                {site.https ? (
-                  <Badge variant="outline">
-                    <Lock className="size-3" aria-hidden /> HTTPS
-                  </Badge>
-                ) : null}
-                {Object.keys(site.env).length > 0 ? (
-                  <Badge variant="outline">
-                    <Variable className="size-3" aria-hidden /> {Object.keys(site.env).length} env
-                  </Badge>
-                ) : null}
-                {site.aliases.length > 0 ? (
-                  <Badge variant="outline">+{site.aliases.length} alias</Badge>
-                ) : null}
-              </span>
-              <span
-                className="mt-1 block truncate text-xs text-muted-foreground"
-                data-selectable
-              >
-                {site.docroot}
-              </span>
-              {site.php_endpoint ? (
-                <span
-                  className="mt-0.5 block truncate font-mono text-xs text-muted-foreground"
-                  data-selectable
-                >
-                  fastcgi_pass {site.php_endpoint}
-                </span>
-              ) : null}
-            </span>
-            <ChevronDown
-              aria-hidden
-              className={`size-4 shrink-0 text-muted-foreground transition-transform ${
-                editing ? "rotate-180" : ""
-              }`}
-            />
-          </button>
-          <div className="flex shrink-0 items-center gap-1">
-            <PingButton hostname={site.hostname} />
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => void openInBrowser(siteUrl(site))}
-              aria-label={`Open ${site.hostname} in browser`}
-            >
-              <ExternalLink />
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => void navigator.clipboard.writeText(siteUrl(site))}
-              aria-label={`Copy ${site.hostname} URL`}
-            >
-              <Copy />
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={removing}
-              onClick={onRemove}
-              aria-label={`Remove ${site.hostname}`}
-            >
-              {removing ? <Loader2 className="animate-spin" /> : <Trash2 />}
-            </Button>
-          </div>
-        </CardContent>
-        {editing ? (
-          <div className="animate-in fade-in slide-in-from-bottom-2 space-y-4 border-t border-border p-4 duration-300">
-            <section className="space-y-3">
-              <h3 className="text-xs font-semibold text-muted-foreground">Behavior</h3>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <DocrootField
-                  id={`edit-docroot-${site.hostname}`}
-                  value={draftDocroot}
-                  onChange={setDraftDocroot}
-                />
-                <div className="space-y-1.5">
-                  <Label htmlFor={`edit-php-${site.hostname}`}>PHP</Label>
-                  <Select
-                    id={`edit-php-${site.hostname}`}
-                    value={draftPhp}
-                    onChange={(event) => setDraftPhp(event.target.value)}
-                  >
-                    <option value="">None (static)</option>
-                    {phpChoices.map((version) => (
-                      <option key={version} value={version}>
-                        {version}
-                      </option>
-                    ))}
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor={`edit-server-${site.hostname}`}>Web server</Label>
-                  <Select
-                    id={`edit-server-${site.hostname}`}
-                    value={draftServer}
-                    onChange={(event) =>
-                      setDraftServer(
-                        event.target.value as "Nginx" | "Caddy" | "FrankenPhp",
-                      )
-                    }
-                  >
-                    <option value="Nginx">nginx</option>
-                    <option value="Caddy">Caddy</option>
-                    <option value="FrankenPhp">FrankenPHP</option>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor={`edit-https-${site.hostname}`}>HTTPS</Label>
-                  <Select
-                    id={`edit-https-${site.hostname}`}
-                    value={draftHttps ? "on" : "off"}
-                    onChange={(event) => setDraftHttps(event.target.value === "on")}
-                  >
-                    <option value="off">HTTP only</option>
-                    <option value="on">HTTP + HTTPS</option>
-                  </Select>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <Button size="sm" disabled={save.isPending} onClick={() => save.mutate()}>
-                  {save.isPending ? <Loader2 className="animate-spin" /> : null}
-                  Save changes
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => {
-                    setDraftDocroot(site.docroot);
-                    setDraftPhp(site.php_version);
-                    setDraftHttps(site.https);
-                    setDraftServer(site.web_server);
-                    setEditing(false);
-                  }}
-                >
-                  Close
-                </Button>
-              </div>
-              {saveError ? (
-                <p className="flex items-center gap-2 text-sm text-destructive" role="alert">
-                  <CircleAlert className="size-4" />
-                  {saveError.message}
-                </p>
-              ) : null}
-            </section>
-            <section className="space-y-2">
-              <h3 className="text-xs font-semibold text-muted-foreground">Aliases</h3>
-              <AliasPanel
-                site={site}
-                busy={aliasBusy}
-                onAdd={onAliasAdd}
-                onDelete={onAliasDelete}
-              />
-            </section>
-            <section className="space-y-2">
-              <h3 className="text-xs font-semibold text-muted-foreground">Environment</h3>
-              <EnvPanel site={site} />
-            </section>
-            <section className="space-y-2">
-              <h3 className="text-xs font-semibold text-muted-foreground">Basic auth</h3>
-              <AuthPanel site={site} />
-            </section>
-            <section className="space-y-2">
-              <h3 className="text-xs font-semibold text-muted-foreground">Requests</h3>
-              <RequestsPanel hostname={site.hostname} />
-            </section>
-          </div>
-        ) : null}
-      </Card>
-    </li>
-  );
-}
-
-/**
  * Edits a site's alias host names: the nginx `server_name` list. Each alias
  * resolves like the primary name and shows up in the same server block.
  */
@@ -811,7 +831,7 @@ function AliasPanel({
   const entries = [...site.aliases].sort((a, b) => a.localeCompare(b));
 
   return (
-    <div className="space-y-3 border-t border-border p-4">
+    <div className="space-y-3">
       {entries.length > 0 ? (
         <ul className="space-y-1.5">
           {entries.map((name) => (
@@ -874,7 +894,7 @@ function AliasPanel({
 /**
  * Edits a site's environment variables: one row per var, plus an add form.
  *
- * Saving re-renders the nginx block and restarts nginx, so the values reach
+ * Saving re-renders the block and restarts the server, so the values reach
  * the site's PHP as `fastcgi_param`s immediately.
  */
 function EnvPanel({ site }: { site: SiteStatus }) {
@@ -904,7 +924,7 @@ function EnvPanel({ site }: { site: SiteStatus }) {
   const entries = Object.entries(site.env).sort(([a], [b]) => a.localeCompare(b));
 
   return (
-    <div className="space-y-3 border-t border-border p-4">
+    <div className="space-y-3">
       {site.php_version ? null : (
         <p className="text-xs text-muted-foreground">
           This site is static; environment variables only reach PHP sites.
@@ -992,7 +1012,7 @@ function EnvPanel({ site }: { site: SiteStatus }) {
 
 /**
  * The site's recent requests, parsed live from its access log. Polls while
- * the editor is open — it is an inspector, not a dashboard chart.
+ * the tab is open — it is an inspector, not a dashboard chart.
  */
 function RequestsPanel({ hostname }: { hostname: string }) {
   const [live, setLive] = useState(true);
@@ -1005,12 +1025,12 @@ function RequestsPanel({ hostname }: { hostname: string }) {
   const entries = requests.data ?? [];
 
   return (
-    <div className="space-y-3 border-t border-border p-4">
+    <div className="space-y-3">
       <div className="flex items-center justify-between gap-3">
         <p className="text-sm text-muted-foreground">
           {entries.length > 0
             ? `${entries.length} most recent request${entries.length === 1 ? "" : "s"}`
-            : "No requests logged yet. Load the site in a browser, then refresh."}
+            : "No requests logged yet. Load the site in a browser, then wait for the next poll."}
         </p>
         <label className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
           Live
@@ -1053,11 +1073,14 @@ function RequestsPanel({ hostname }: { hostname: string }) {
                   <td className="whitespace-nowrap px-2 py-1.5 text-muted-foreground">
                     {formatRequestTime(entry.time_unix)}
                   </td>
-                  <td className="max-w-48 truncate px-2 py-1.5 font-mono" title={`${entry.method} ${entry.path}`}>
+                  <td
+                    className="max-w-48 truncate px-2 py-1.5 font-mono"
+                    title={`${entry.method} ${entry.path}`}
+                  >
                     {entry.method} {entry.path}
                   </td>
                   <td className="px-2 py-1.5">
-                    <Badge variant={entry.status < 400 ? "success" : entry.status < 500 ? "warning" : "warning"}>
+                    <Badge variant={entry.status < 400 ? "success" : "warning"}>
                       {entry.status || "—"}
                     </Badge>
                   </td>
@@ -1123,7 +1146,7 @@ function AuthPanel({ site }: { site: SiteStatus }) {
   const error = setAuth.error instanceof Error ? setAuth.error : null;
 
   return (
-    <div className="space-y-3 border-t border-border p-4">
+    <div className="space-y-3">
       {site.auth ? (
         <p className="flex items-center gap-2 text-sm">
           <Lock className="size-4 text-muted-foreground" aria-hidden />
@@ -1207,10 +1230,11 @@ function AuthPanel({ site }: { site: SiteStatus }) {
  * step. Download-based templates (WordPress, Laravel) return a suggested
  * terminal command instead of fetching anything without a checksum.
  */
-function TemplatesCard({ phpChoices }: { phpChoices: string[] }) {
+function TemplatesSection({ phpChoices }: { phpChoices: string[] }) {
   const queryClient = useQueryClient();
   const templates = useQuery({ queryKey: ["templates"], queryFn: ipc.templateList });
 
+  const [open, setOpen] = useState(false);
   const [templateId, setTemplateId] = useState("static");
   const [hostname, setHostname] = useState("");
   const [docroot, setDocroot] = useState("");
@@ -1237,109 +1261,131 @@ function TemplatesCard({ phpChoices }: { phpChoices: string[] }) {
   const chosen = (templates.data ?? []).find((template) => template.id === templateId);
   const error = create.error instanceof Error ? create.error : null;
 
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="flex cursor-pointer items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-sm text-muted-foreground transition-colors duration-150 hover:text-foreground"
+      >
+        <Plus className="size-4" aria-hidden />
+        Create from template…
+        <span className="ml-auto hidden text-xs xl:block">
+          WordPress, Laravel, static or a git clone — scaffolded and registered in one step.
+        </span>
+      </button>
+    );
+  }
+
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">From template</CardTitle>
-        <CardDescription>Scaffold the folder and register the site in one step.</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <form
-          className="space-y-3"
-          onSubmit={(event) => {
-            event.preventDefault();
-            create.mutate();
-          }}
-        >
-          <div className="space-y-1.5">
-            <Label htmlFor="template-id">Template</Label>
-            <Select
-              id="template-id"
-              value={templateId}
-              onChange={(event) => setTemplateId(event.target.value)}
-            >
-              {(templates.data ?? []).map((template) => (
-                <option key={template.id} value={template.id}>
-                  {template.name}
-                </option>
-              ))}
-            </Select>
-            <p className="text-xs text-muted-foreground">{chosen?.description}</p>
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="template-hostname">Site host name</Label>
+    <div className="rounded-md border border-border bg-card p-4">
+      <form
+        className="grid items-end gap-3 md:grid-cols-[10rem_minmax(0,1fr)_minmax(0,1.4fr)_9rem]"
+        onSubmit={(event) => {
+          event.preventDefault();
+          create.mutate();
+        }}
+      >
+        <div className="space-y-1.5">
+          <Label htmlFor="template-id">Template</Label>
+          <Select
+            id="template-id"
+            value={templateId}
+            onChange={(event) => setTemplateId(event.target.value)}
+          >
+            {(templates.data ?? []).map((template) => (
+              <option key={template.id} value={template.id}>
+                {template.name}
+              </option>
+            ))}
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="template-hostname">Site host name</Label>
+          <Input
+            id="template-hostname"
+            value={hostname}
+            placeholder="myapp.test"
+            onChange={(event) => setHostname(event.target.value)}
+            autoComplete="off"
+            spellCheck={false}
+          />
+        </div>
+        <DocrootField
+          id="template-docroot"
+          label="Document root (new folder)"
+          value={docroot}
+          onChange={setDocroot}
+        />
+        <div className="space-y-1.5">
+          <Label htmlFor="template-php">PHP version</Label>
+          <Select
+            id="template-php"
+            value={phpVersion}
+            onChange={(event) => setPhpVersion(event.target.value)}
+            disabled={templateId === "static"}
+          >
+            <option value="">None (static)</option>
+            {phpChoices.map((version) => (
+              <option key={version} value={version}>
+                {version}
+              </option>
+            ))}
+          </Select>
+        </div>
+        {templateId === "git" ? (
+          <div className="space-y-1.5 md:col-span-4">
+            <Label htmlFor="template-git-url">Repository URL</Label>
             <Input
-              id="template-hostname"
-              value={hostname}
-              placeholder="myapp.test"
-              onChange={(event) => setHostname(event.target.value)}
-              autoComplete="off"
+              id="template-git-url"
+              value={gitUrl}
+              onChange={(event) => setGitUrl(event.target.value)}
+              placeholder="https://github.com/user/repo.git"
               spellCheck={false}
+              autoComplete="off"
             />
           </div>
-          <DocrootField id="template-docroot" label="Document root (new folder)" value={docroot} onChange={setDocroot} />
-          {templateId === "git" ? (
-            <div className="space-y-1.5">
-              <Label htmlFor="template-git-url">Repository URL</Label>
-              <Input
-                id="template-git-url"
-                value={gitUrl}
-                onChange={(event) => setGitUrl(event.target.value)}
-                placeholder="https://github.com/user/repo.git"
-                spellCheck={false}
-                autoComplete="off"
-              />
-            </div>
-          ) : null}
-          <div className="space-y-1.5">
-            <Label htmlFor="template-php">PHP version</Label>
-            <Select
-              id="template-php"
-              value={phpVersion}
-              onChange={(event) => setPhpVersion(event.target.value)}
-              disabled={templateId === "static"}
-            >
-              <option value="">None (static)</option>
-              {phpChoices.map((version) => (
-                <option key={version} value={version}>
-                  {version}
-                </option>
-              ))}
-            </Select>
-          </div>
-          <Button
-            type="submit"
-            size="sm"
-            disabled={
-              create.isPending ||
-              hostname.trim().length === 0 ||
-              docroot.trim().length === 0 ||
-              (templateId === "git" && gitUrl.trim().length === 0)
-            }
-          >
-            {create.isPending ? <Loader2 className="animate-spin" /> : <Plus />}
-            Create site
-          </Button>
-        </form>
+        ) : null}
+      </form>
 
-        {create.data?.follow_up_command ? (
-          <div className="mt-3 rounded-md border border-border bg-muted/40 p-3 text-sm">
-            <p className="mb-1 text-xs text-muted-foreground">
-              Finish the scaffold in the Terminal (runtimes are already on
-              PATH):
-            </p>
-            <code className="font-mono text-xs" data-selectable>
-              {create.data.follow_up_command}
-            </code>
-          </div>
-        ) : null}
-        {error ? (
-          <p className="mt-3 flex items-center gap-2 text-sm text-destructive" role="alert">
-            <CircleAlert className="size-4" />
-            {error.message}
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <Button
+          type="button"
+          size="sm"
+          disabled={
+            create.isPending ||
+            hostname.trim().length === 0 ||
+            docroot.trim().length === 0 ||
+            (templateId === "git" && gitUrl.trim().length === 0)
+          }
+          onClick={() => create.mutate()}
+        >
+          {create.isPending ? <Loader2 className="animate-spin" /> : <Plus />}
+          Create site
+        </Button>
+        <Button type="button" variant="ghost" size="sm" onClick={() => setOpen(false)}>
+          Close
+        </Button>
+        <span className="text-xs text-muted-foreground">{chosen?.description}</span>
+      </div>
+
+      {create.data?.follow_up_command ? (
+        <div className="mt-3 rounded-md border border-border bg-muted/40 p-3 text-sm">
+          <p className="mb-1 text-xs text-muted-foreground">
+            Finish the scaffold in the Terminal (runtimes are already on
+            PATH):
           </p>
-        ) : null}
-      </CardContent>
-    </Card>
+          <code className="font-mono text-xs" data-selectable>
+            {create.data.follow_up_command}
+          </code>
+        </div>
+      ) : null}
+      {error ? (
+        <p className="mt-3 flex items-center gap-2 text-sm text-destructive" role="alert">
+          <CircleAlert className="size-4" />
+          {error.message}
+        </p>
+      ) : null}
+    </div>
   );
 }

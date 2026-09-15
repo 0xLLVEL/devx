@@ -5,14 +5,17 @@ import {
   HardDrive,
   Loader2,
   Package,
+  Play,
+  Square,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { PageHeader } from "@/components/page-header";
 import { StatusBadge } from "@/components/status-dot";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ipc, ipcEvents, type ServiceMetrics } from "@/lib/ipc";
 import { summarizeMetrics, useServiceMetrics, useSites } from "@/lib/queries";
@@ -27,10 +30,26 @@ import { cn } from "@/lib/utils";
 export function DashboardPage() {
   const sites = useSites();
   const metrics = useServiceMetrics();
+  const queryClient = useQueryClient();
+
+  const invalidateServices = () => {
+    void queryClient.invalidateQueries({ queryKey: ["service-metrics"] });
+    void queryClient.invalidateQueries({ queryKey: ["events"] });
+  };
+  const startAll = useMutation({
+    mutationFn: ipc.servicesStartAll,
+    onSettled: invalidateServices,
+  });
+  const stopAll = useMutation({
+    mutationFn: ipc.servicesStopAll,
+    onSettled: invalidateServices,
+  });
 
   const entries = metrics.data ?? [];
   const { runningCount, failed, cpu, memory } = summarizeMetrics(entries);
   const activity = useActivityFeed();
+  const stoppedCount = entries.filter((entry) => entry.state === "stopped" || entry.state === "failed").length;
+  const batchBusy = startAll.isPending || stopAll.isPending;
 
   return (
     <div className="space-y-5 p-5">
@@ -50,6 +69,29 @@ export function DashboardPage() {
             {(sites.data?.length ?? 0) === 1 ? "" : "s"} served locally ·{" "}
             {cpu.toFixed(0)}% CPU · {formatBytes(memory)} resident
           </>
+        }
+        right={
+          entries.length > 0 ? (
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                disabled={batchBusy || stoppedCount === 0}
+                onClick={() => startAll.mutate()}
+              >
+                {startAll.isPending ? <Loader2 className="animate-spin" /> : <Play />}
+                Start all
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={batchBusy || runningCount === 0}
+                onClick={() => stopAll.mutate()}
+              >
+                {stopAll.isPending ? <Loader2 className="animate-spin" /> : <Square />}
+                Stop all
+              </Button>
+            </div>
+          ) : null
         }
       />
 

@@ -55,6 +55,16 @@ export const commands = {
 	/**  Runs environment diagnostics against the live system. */
 	doctorRun: () => typedError<DoctorReport, DevxError>(__TAURI_INVOKE("doctor_run")),
 	/**
+	 *  Applies the automatic repair for one doctor check.
+	 * 
+	 *  Only checks that expose a `fix` id can be repaired; the ids are the stable
+	 *  `Check.id` values from the diagnostic report. Currently repairable:
+	 * 
+	 *  - `config` — backs the broken file up next to itself and regenerates
+	 *    defaults, so the user keeps the broken file to inspect or recover.
+	 */
+	doctorFix: (checkId: string) => typedError<DoctorReport, DevxError>(__TAURI_INVOKE("doctor_fix", { checkId })),
+	/**
 	 *  Returns the newest service events from the persistent log, newest first.
 	 * 
 	 *  The log survives app restarts, so this answers "what happened while I
@@ -110,6 +120,13 @@ export const commands = {
 	serviceStart: (componentId: string, version: string) => typedError<ServiceStatus, DevxError>(__TAURI_INVOKE("service_start", { componentId, version })),
 	/**  Stops a running supervised service. */
 	serviceStop: (id: string) => typedError<ServiceStatus, DevxError>(__TAURI_INVOKE("service_stop", { id })),
+	/**  Starts every service that is not running; see [`BatchStartOutcome`]. */
+	servicesStartAll: () => typedError<BatchStartOutcome[], DevxError>(__TAURI_INVOKE("services_start_all")),
+	/**
+	 *  Stops every active supervised service, concurrently and non-fatal per
+	 *  service, exactly as [`services_start_all`] starts them.
+	 */
+	servicesStopAll: () => typedError<BatchStartOutcome[], DevxError>(__TAURI_INVOKE("services_stop_all")),
 	/**  Returns the status of a supervised service. */
 	serviceStatus: (id: string) => typedError<ServiceStatus, DevxError>(__TAURI_INVOKE("service_status", { id })),
 	/**  Returns log lines for a service newer than `after` (0 for all retained). */
@@ -178,6 +195,16 @@ export const commands = {
 	 *  pool restarts with the re-rendered ini, exactly like an extension toggle.
 	 */
 	phpXdebugSet: (version: string, enabled: boolean, mode: string, clientPort: number) => typedError<PhpXdebugInfo, DevxError>(__TAURI_INVOKE("php_xdebug_set", { version, enabled, mode, clientPort })),
+	/**
+	 *  The resource limits for `version`, or the built-in defaults when the
+	 *  version has no stored override.
+	 */
+	phpLimitsGet: (version: string) => typedError<LimitConfig, DevxError>(__TAURI_INVOKE("php_limits_get", { version })),
+	/**
+	 *  Sets the resource limits for `version`, restarting a running pool so the
+	 *  re-rendered ini takes effect immediately.
+	 */
+	phpLimitsSet: (version: string, limits: LimitConfig) => typedError<LimitConfig, DevxError>(__TAURI_INVOKE("php_limits_set", { version, limits })),
 	/**  Lists the configured sites with their resolved PHP endpoints. */
 	siteList: () => typedError<SiteStatus[], DevxError>(__TAURI_INVOKE("site_list")),
 	/**
@@ -307,6 +334,23 @@ export const commands = {
 	mailMessage: (id: string) => typedError<Message, DevxError>(__TAURI_INVOKE("mail_message", { id })),
 	/**  Deletes the given messages, or every message when `ids` is empty. */
 	mailDelete: (ids: string[]) => typedError<null, DevxError>(__TAURI_INVOKE("mail_delete", { ids })),
+	/**
+	 *  Marks every message in the inbox read.
+	 * 
+	 *  Mailpit's API only takes explicit ids, so this lists the inbox and marks
+	 *  everything it returns — the same call the list view uses, so nothing is
+	 *  read that the UI has not shown.
+	 */
+	mailMarkAllRead: () => typedError<null, DevxError>(__TAURI_INVOKE("mail_mark_all_read")),
+	/**
+	 *  Sends one clearly-labelled test email through Mailpit's own SMTP port.
+	 * 
+	 *  This is the round-trip check: the message enters via SMTP exactly as an
+	 *  application's mail would, and appears in the inbox a second later. The
+	 *  SMTP conversation is raw and unauthenticated because Mailpit's local
+	 *  listener accepts everything.
+	 */
+	mailSendTest: () => typedError<null, DevxError>(__TAURI_INVOKE("mail_send_test")),
 	/**
 	 *  Shares `hostname` publicly through a Cloudflare quick tunnel.
 	 * 
@@ -520,6 +564,21 @@ export type BackupEntry = {
 	created_unix: number,
 };
 
+/**
+ *  Starts every registered service that is not already running.
+ * 
+ *  Starts run concurrently; each failure is collected rather than aborting
+ *  the rest, so one broken service never blocks bringing up the others.
+ *  The result pairs each id with its outcome, keeping partial-success
+ *  honest in the UI.
+ */
+export type BatchStartOutcome = {
+	/**  Service identifier. */
+	id: string,
+	/**  `None` on success; the error message when that one failed. */
+	error: string | null,
+};
+
 /**  The local CA's trust status, for the UI. */
 export type CaStatus = {
 	/**  Whether the CA exists on disk (signed certificates are possible). */
@@ -543,6 +602,12 @@ export type Check = {
 	detail: string,
 	/**  How to fix it, when the status is not `Pass`. */
 	remedy: string | null,
+	/**
+	 *  Identifier of an automatic repair the app can perform, when one
+	 *  exists. The UI renders a fix action for checks that carry it, and
+	 *  `doctor_fix` accepts exactly these ids.
+	 */
+	fix: string | null,
 };
 
 /**  Outcome of a single diagnostic check. */
@@ -678,6 +743,8 @@ export type Config_Deserialize = {
 	php_extensions: PhpExtensions,
 	/**  Xdebug settings per installed PHP version. */
 	php_xdebug: PhpXdebug,
+	/**  Resource limits per installed PHP version. */
+	php_limits: PhpLimits,
 	/**  User-configured local sites. */
 	sites: Site_Deserialize[],
 	/**  User-configured supervised worker processes. */
@@ -709,6 +776,8 @@ export type Config_Serialize = {
 	php_extensions: PhpExtensions,
 	/**  Xdebug settings per installed PHP version. */
 	php_xdebug: PhpXdebug,
+	/**  Resource limits per installed PHP version. */
+	php_limits: PhpLimits,
 	/**  User-configured local sites. */
 	sites: Site_Serialize[],
 	/**  User-configured supervised worker processes. */
@@ -1015,6 +1084,18 @@ export type InstalledVersion = {
 	path: string,
 };
 
+/**  One version's resource limits as ini values. */
+export type LimitConfig = {
+	/**  `memory_limit` ini value, e.g. `256M`. */
+	memory_limit?: string,
+	/**  `upload_max_filesize` ini value, e.g. `64M`. */
+	upload_max_filesize?: string,
+	/**  `max_execution_time` in seconds. */
+	max_execution_time?: number,
+	/**  Whether the Zend OPcache loads. */
+	opcache_enabled?: boolean,
+};
+
 /**  One captured log line, for the UI tail. */
 export type LogEntry = {
 	/**  Monotonic sequence number. */
@@ -1176,6 +1257,17 @@ export type PhpExtensionInfo = {
 export type PhpExtensions = 
 /**  Enabled extension DLL names keyed by PHP version. */
 { [key in string]: string[] };
+
+/**
+ *  Resource limits, keyed by PHP version.
+ * 
+ *  These land in each pool's rendered `php.ini`. A version missing from the
+ *  map runs with the defaults below — the same values the template used
+ *  before this became a setting.
+ */
+export type PhpLimits = 
+/**  Per-version limit sets. */
+{ [key in string]: LimitConfig };
 
 /**  A summary of one PHP FastCGI pool, including its live state. */
 export type PhpPoolStatus = {

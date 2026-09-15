@@ -33,6 +33,7 @@ export function configFixture(overrides: Partial<Config> = {}): Config {
     php_pools: {},
     php_extensions: {},
     php_xdebug: {},
+    php_limits: {},
     sites: [],
     workers: [],
     cron: [],
@@ -53,6 +54,7 @@ export function doctorFixture(
         status: "pass",
         detail: "version 152.0.4191.66",
         remedy: null,
+        fix: null,
       },
       {
         id: "writable-config",
@@ -60,6 +62,7 @@ export function doctorFixture(
         status: "pass",
         detail: "C:\\Users\\dev\\AppData\\Roaming\\DevX",
         remedy: null,
+        fix: null,
       },
     ],
     ...overrides,

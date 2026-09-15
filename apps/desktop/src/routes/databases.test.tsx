@@ -68,19 +68,26 @@ describe("DatabasesPage", () => {
     ).toBeInTheDocument();
   });
 
-  it("lists servers with engine label and port", async () => {
+  it("lists servers as selectable engine rows with engine label and port", async () => {
+    const user = userEvent.setup();
     renderWithProviders(<DatabasesPage />);
 
-    const select = await screen.findByLabelText(/engine/i);
+    const mariadb = await screen.findByRole("button", {
+      name: /mariadb\s*:3306/i,
+    });
     expect(
-      await screen.findByRole("option", {
-        name: /mariadb — 127\.0\.0\.1:3306/i,
-      }),
+      screen.getByRole("button", { name: /postgresql\s*:5432/i }),
     ).toBeInTheDocument();
+    expect(mariadb).toHaveAttribute("aria-pressed", "true");
     expect(
-      screen.getByRole("option", { name: /postgresql.*5432/i }),
+      screen.getByRole("button", { name: /postgresql\s*:5432/i }),
+    ).toHaveAttribute("aria-pressed", "false");
+
+    // Selecting the other engine switches the workspace header to it.
+    await user.click(screen.getByRole("button", { name: /postgresql\s*:5432/i }));
+    expect(
+      await screen.findByText(/query — postgresql/i),
     ).toBeInTheDocument();
-    expect(select).toHaveValue("mariadb");
   });
 
   it("lists databases and their tables for the selected server", async () => {

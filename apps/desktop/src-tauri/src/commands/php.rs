@@ -79,8 +79,16 @@ pub async fn php_pool_start(
     let port = pool_port(&state, &version)?;
     let extensions = pool_extensions(&state, &version);
     let xdebug = pool_xdebug(&state, &version);
-    let plan =
-        crate::services::plan_php_pool(&state.paths, &version, port, workers, &extensions, xdebug)?;
+    let limits = pool_limits(&state, &version);
+    let plan = crate::services::plan_php_pool(
+        &state.paths,
+        &version,
+        port,
+        workers,
+        &extensions,
+        xdebug,
+        limits,
+    )?;
     let id = plan.id.clone();
 
     let supervisor = match state.services.get(&id) {
@@ -234,6 +242,7 @@ pub async fn php_ext_set(
             let port = pool_port(&state, &version)?;
             let extensions = pool_extensions(&state, &version);
             let xdebug = pool_xdebug(&state, &version);
+            let limits = pool_limits(&state, &version);
             let plan = crate::services::plan_php_pool(
                 &state.paths,
                 &version,
@@ -241,6 +250,7 @@ pub async fn php_ext_set(
                 workers,
                 &extensions,
                 xdebug,
+                limits,
             )?;
 
             // Stop before re-registering: the registry refuses to replace an
@@ -366,6 +376,7 @@ pub async fn php_xdebug_set(
             let port = pool_port(&state, &version)?;
             let extensions = pool_extensions(&state, &version);
             let xdebug = pool_xdebug(&state, &version);
+            let limits = pool_limits(&state, &version);
             let plan = crate::services::plan_php_pool(
                 &state.paths,
                 &version,
@@ -373,6 +384,7 @@ pub async fn php_xdebug_set(
                 workers,
                 &extensions,
                 xdebug,
+                limits,
             )?;
 
             supervisor.stop().await;
@@ -394,6 +406,12 @@ fn pool_extensions(state: &AppState, version: &str) -> Vec<String> {
 fn pool_xdebug(state: &AppState, version: &str) -> Option<devx_core::config::XdebugConfig> {
     state
         .with_config(|store| store.config().php_xdebug.get(version).cloned())
+}
+
+/// The configured limits for `version`, when set.
+fn pool_limits(state: &AppState, version: &str) -> Option<devx_core::config::LimitConfig> {
+    state
+        .with_config(|store| store.config().php_limits.get(version).cloned())
 }
 
 /// The configured worker count for `version`, or the default.
@@ -461,4 +479,87 @@ fn from_summary(summary: PhpPoolSummary) -> PhpPoolStatus {
         version: summary.version,
         workers: summary.workers,
     }
+}
+
+/// The resource limits for `version`, or the built-in defaults when the
+/// version has no stored override.
+#[tauri::command]
+#[specta::specta]
+pub fn php_limits_get(
+    state: State<'_, AppState>,
+    version: String,
+) -> Result<devx_core::config::LimitConfig, Error> {
+    Ok(state
+        .with_config(|store| store.config().php_limits.get(&version).cloned())
+        .unwrap_or_default())
+}
+
+/// Sets the resource limits for `version`, restarting a running pool so the
+/// re-rendered ini takes effect immediately.
+#[tauri::command]
+#[specta::specta]
+pub async fn php_limits_set(
+    state: State<'_, AppState>,
+    version: String,
+    limits: devx_core::config::LimitConfig,
+) -> Result<devx_core::config::LimitConfig, Error> {
+    validate_limit_value(&limits.memory_limit, "memory_limit")?;
+    validate_limit_value(&limits.upload_max_filesize, "upload_max_filesize")?;
+    if limits.max_execution_time == 0 || limits.max_execution_time > 3600 {
+        return Err(Error::invalid_input(
+            "max_execution_time must be between 1 and 3600 seconds",
+        ));
+    }
+
+    state.with_config_mut(|store| {
+        store.update(|config| config.php_limits.insert(version.clone(), limits.clone()))
+    })?;
+
+    // A running pool must restart to load the new ini values.
+    let id = devx_provision::pool_id(&version);
+    if let Some(supervisor) = state.services.get(&id) {
+        if supervisor.state().is_active() {
+            let workers = pool_workers(&state, &version);
+            let port = pool_port(&state, &version)?;
+            let extensions = pool_extensions(&state, &version);
+            let xdebug = pool_xdebug(&state, &version);
+            let plan = crate::services::plan_php_pool(
+                &state.paths,
+                &version,
+                port,
+                workers,
+                &extensions,
+                xdebug,
+                Some(limits.clone()),
+            )?;
+
+            supervisor.stop().await;
+            let spec = crate::services::pool_spec(&state.paths, &plan)?;
+            let replacement = state.services.register(spec)?;
+            replacement.start().await?;
+        }
+    }
+
+    Ok(limits)
+}
+
+/// Validates an ini byte-limit value like `256M`, `1G` or `1024K`.
+fn validate_limit_value(value: &str, label: &str) -> Result<(), Error> {
+    let trimmed = value.trim();
+    let (number, unit) = trimmed.split_at(trimmed.len().saturating_sub(1));
+    let multiplier = match unit {
+        "K" | "k" | "M" | "m" | "G" | "g" => 1usize, // unit shape only
+        _ => {
+            return Err(Error::invalid_input(format!(
+                "{label} must end in K, M or G (e.g. 256M)"
+            )))
+        }
+    };
+    let digits: String = number.chars().filter(|c| c.is_ascii_digit()).collect();
+    if digits.len() != number.len() || digits.is_empty() || multiplier == 0 {
+        return Err(Error::invalid_input(format!(
+            "{label} must be a number followed by K, M or G (e.g. 256M)"
+        )));
+    }
+    Ok(())
 }

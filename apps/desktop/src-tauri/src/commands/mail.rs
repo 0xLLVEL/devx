@@ -84,6 +84,61 @@ pub async fn mail_delete(state: State<'_, AppState>, ids: Vec<String>) -> Result
         .await
 }
 
+/// Marks every message in the inbox read.
+///
+/// Mailpit's API only takes explicit ids, so this lists the inbox and marks
+/// everything it returns — the same call the list view uses, so nothing is
+/// read that the UI has not shown.
+#[tauri::command]
+#[specta::specta]
+pub async fn mail_mark_all_read(state: State<'_, AppState>) -> Result<(), Error> {
+    let port = mail_api_port(&state)?;
+    let client = devx_mail::MailpitClient::new("127.0.0.1", port);
+    let inbox = client.inbox(250).await?;
+    let ids: Vec<String> = inbox.messages.iter().map(|m| m.id.clone()).collect();
+    if ids.is_empty() {
+        return Ok(());
+    }
+    client.set_read(&ids, true).await
+}
+
+/// Sends one clearly-labelled test email through Mailpit's own SMTP port.
+///
+/// This is the round-trip check: the message enters via SMTP exactly as an
+/// application's mail would, and appears in the inbox a second later. The
+/// SMTP conversation is raw and unauthenticated because Mailpit's local
+/// listener accepts everything.
+#[tauri::command]
+#[specta::specta]
+pub async fn mail_send_test(_state: State<'_, AppState>) -> Result<(), Error> {
+    let host = "127.0.0.1";
+
+    let stream = tokio::net::TcpStream::connect((host, MAILPIT_SMTP_PORT))
+        .await
+        .map_err(|err| {
+            Error::new(
+                devx_core::ErrorCode::Network,
+                format!("cannot reach SMTP on {host}:{MAILPIT_SMTP_PORT}: {err}"),
+            )
+            .with_hint("start the mailpit service first")
+        })?;
+
+    let (mut reader, mut writer) = stream.into_split();
+    let mut session = crate::mail::SmtpSession::new(&mut reader, &mut writer);
+    session.expect_greeting().await?;
+    session.helo(host).await?;
+    session.mail_from("devx@test.local").await?;
+    session.rcpt_to("recipient@test.local").await?;
+    session.data(
+        "DevX test email",
+        "Sent by DevX's Send test email action to verify the SMTP round-trip.",
+    )
+    .await?;
+    session.quit().await?;
+
+    Ok(())
+}
+
 /// The port Mailpit's API answers on, from the running service's supervisor.
 fn mail_api_port(state: &AppState) -> Result<u16, Error> {
     state

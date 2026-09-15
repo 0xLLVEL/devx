@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   dnsStop: vi.fn(),
   configGet: vi.fn(),
   templateList: vi.fn(),
+  pickDirectory: vi.fn(),
 }));
 
 vi.mock("@/lib/ipc", async () => {
@@ -25,11 +26,16 @@ vi.mock("@/lib/ipc", async () => {
   return { ...actual, ipc: mocks };
 });
 
+vi.mock("@/lib/pick-directory", () => ({ pickDirectory: mocks.pickDirectory }));
+
 describe("SitesPage", () => {
   beforeEach(() => {
     for (const mock of Object.values(mocks)) {
       mock.mockReset();
     }
+    // The docroot comes from the native folder dialog; each test sets the
+    // path it "picked", or leaves the mock returning nothing (a cancel).
+    mocks.pickDirectory.mockResolvedValue(undefined);
     mocks.siteList.mockResolvedValue([]);
     mocks.configGet.mockResolvedValue(configFixture());
     mocks.templateList.mockResolvedValue([]);
@@ -142,7 +148,8 @@ describe("SitesPage", () => {
 
     await user.click(await screen.findByRole("button", { name: /add site/i }));
     await user.type(await screen.findByLabelText("Host name"), "myapp.test");
-    await user.type(screen.getByLabelText("Document root"), "C:\\dev\\myapp\\public");
+    mocks.pickDirectory.mockResolvedValue("C:\\dev\\myapp\\public");
+await user.click(screen.getByRole("button", { name: /^browse/i }));
     await user.selectOptions(screen.getByLabelText("PHP"), "8.4.25");
     await user.click(screen.getByRole("button", { name: /^add site$/i }));
 
@@ -165,7 +172,8 @@ describe("SitesPage", () => {
 
     await user.click(await screen.findByRole("button", { name: /add site/i }));
     await user.type(await screen.findByLabelText("Host name"), "secure.test");
-    await user.type(screen.getByLabelText("Document root"), "C:\\dev\\secure");
+    mocks.pickDirectory.mockResolvedValue("C:\\dev\\secure");
+await user.click(screen.getByRole("button", { name: /^browse/i }));
     await user.selectOptions(screen.getByLabelText("HTTPS"), "on");
     await user.click(screen.getByRole("button", { name: /^add site$/i }));
 
@@ -189,7 +197,8 @@ describe("SitesPage", () => {
 
     await user.click(await screen.findByRole("button", { name: /add site/i }));
     await user.type(await screen.findByLabelText("Host name"), "not-a-domain");
-    await user.type(screen.getByLabelText("Document root"), "C:\\dev\\x");
+    mocks.pickDirectory.mockResolvedValue("C:\\dev\\x");
+await user.click(screen.getByRole("button", { name: /^browse/i }));
     await user.click(screen.getByRole("button", { name: /^add site$/i }));
 
     expect(
@@ -242,8 +251,9 @@ describe("SitesPage", () => {
     await user.click(await screen.findByRole("button", { name: /edit myapp.test/i }));
 
     expect(await screen.findByText("Behavior")).toBeInTheDocument();
-    const docroot = screen.getByLabelText("Document root");
-    expect(docroot).toHaveValue("C:\\dev\\myapp\\public");
+    expect(
+      document.getElementById("edit-docroot-myapp.test")?.textContent,
+    ).toBe("C:\\dev\\myapp\\public");
 
     await user.click(screen.getByRole("button", { name: /save changes/i }));
 
@@ -258,7 +268,7 @@ describe("SitesPage", () => {
     });
   });
 
-  it("starts the DNS resolver from the card when it is stopped", async () => {
+  it("starts the DNS resolver from the status strip when it is stopped", async () => {
     const user = userEvent.setup();
     mocks.configGet.mockResolvedValue({
       ...configFixture(),
@@ -273,8 +283,8 @@ describe("SitesPage", () => {
 
     renderWithProviders(<SitesPage />);
 
-    expect(await screen.findByText(/start resolver/i)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /start resolver/i }));
+    expect(await screen.findByText(/resolver stopped/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /start/i }));
     await waitFor(() => expect(mocks.dnsStart).toHaveBeenCalledTimes(1));
   });
 
@@ -299,12 +309,12 @@ describe("SitesPage", () => {
 
     renderWithProviders(<SitesPage />);
 
-    expect(await screen.findByText(/stop resolver/i)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /stop resolver/i }));
+    expect(await screen.findByText(/resolver :9353/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /stop/i }));
     await waitFor(() => expect(mocks.dnsStop).toHaveBeenCalledTimes(1));
   });
 
-  it("offers the CA install button while the machine does not trust it", async () => {
+  it("offers the CA install action while the machine does not trust it", async () => {
     const user = userEvent.setup();
     mocks.caStatus.mockResolvedValue({ exists: true, trusted: false });
     mocks.caInstall.mockResolvedValue({ exists: true, trusted: true });
@@ -312,7 +322,7 @@ describe("SitesPage", () => {
     renderWithProviders(<SitesPage />);
 
     expect(
-      await screen.findByText(/not installed in the trust store/i),
+      await screen.findByText(/ca not installed/i),
     ).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /install ca/i }));
@@ -325,7 +335,7 @@ describe("SitesPage", () => {
     renderWithProviders(<SitesPage />);
 
     expect(
-      await screen.findByText(/trust store unknown \(helper unavailable\)/i),
+      await screen.findByText(/ca trust unknown/i),
     ).toBeInTheDocument();
     // Without a definite "not trusted" there is nothing to install against.
     expect(screen.queryByRole("button", { name: /install ca/i })).not.toBeInTheDocument();

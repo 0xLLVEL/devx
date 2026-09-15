@@ -16,27 +16,20 @@ import { useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { EmptyState } from "@/components/ui/empty-state";
-import { Select } from "@/components/ui/select";
 import { PageHeader } from "@/components/page-header";
+import { Select } from "@/components/ui/select";
 import { pickCsvSavePath, pickSqlFile } from "@/lib/pick-file";
 import { ipc, type DbResult, type DbServer, type DbValue } from "@/lib/ipc";
 
-/** Databases page: browse schemas and run read-only queries. */
+/** Databases page: one engine selected on the left, its workspace on the right. */
 export function DatabasesPage() {
   const servers = useQuery({ queryKey: ["db-servers"], queryFn: ipc.dbListServers });
 
-  // Total backups across the three services; the per-service cards reuse
-  // the same cache keys, so this is one fetch per service at most.
+  // Total backups across the three services; the per-engine query in the
+  // workspace reuses the same cache key, so this is one fetch per engine.
   const mariadbBackups = useQuery({
     queryKey: ["backups", "mariadb"],
     queryFn: () => ipc.backupList("mariadb"),
@@ -56,7 +49,6 @@ export function DatabasesPage() {
 
   const [selected, setSelected] = useState("");
   const [database, setDatabase] = useState("");
-  const [statement, setStatement] = useState("");
 
   const chosen: DbServer | undefined = (servers.data ?? []).find(
     (server) => server.service_id === selected,
@@ -73,7 +65,7 @@ export function DatabasesPage() {
       }
     : null;
 
-  // Table listing follows the selected database; a fresh server resets it.
+  // Table listing follows the selected database; a fresh engine resets it.
   const tables = useQuery({
     queryKey: ["db-tables", chosen?.service_id, database],
     queryFn: () => ipc.dbListTables(params!),
@@ -85,6 +77,158 @@ export function DatabasesPage() {
     enabled: params !== null,
   });
 
+  if (servers.isPending) {
+    return (
+      <div className="space-y-4 p-5">
+        <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
+          <Loader2 className="size-4 animate-spin" />
+          Detecting database servers…
+        </p>
+      </div>
+    );
+  }
+
+  if ((servers.data ?? []).length === 0) {
+    return (
+      <div className="space-y-4 p-5">
+        <EmptyState
+          icon={<Database />}
+          title="No database servers registered yet."
+          description="Install MariaDB, PostgreSQL or Redis from the Components page."
+        />
+      </div>
+    );
+  }
+
+  const reachable = (servers.data ?? []).filter((server) => server.reachable).length;
+
+  return (
+    <div className="space-y-4 p-5">
+      <PageHeader
+        title={
+          reachable === 0
+            ? "No database engines are running."
+            : `${reachable} of ${servers.data!.length} engines reachable.`
+        }
+        description={`${backupCount} backup${backupCount === 1 ? "" : "s"} across all services · the query browser never writes.`}
+      />
+
+      <div className="grid gap-4 lg:grid-cols-[18rem_minmax(0,1fr)]">
+        {/* Sidebar: engine choice, database, tables — the navigation surface. */}
+        <aside className="space-y-4">
+          <div className="rounded-md border border-border bg-card p-3">
+            <h2 className="mb-1.5 text-sm font-medium">Engine</h2>
+            <ul className="space-y-1">
+              {(servers.data ?? []).map((server) => (
+                <li key={server.service_id}>
+                  <EngineLink
+                    server={server}
+                    active={server.service_id === chosen?.service_id}
+                    onSelect={() => {
+                      setSelected(server.service_id);
+                      setDatabase("");
+                    }}
+                  />
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <div className="rounded-md border border-border bg-card p-3">
+            <Label htmlFor="db-database" className="mb-1.5 block">
+              Database
+            </Label>
+            <span className="sr-only" id="db-database-hint">
+              Selects which database the table list reads from.
+            </span>
+            <Select
+              id="db-database"
+              className="w-full"
+              value={database}
+              onChange={(event) => setDatabase(event.target.value)}
+            >
+              <option value="">—</option>
+              {(databases.data?.rows ?? []).map((row) => (
+                <option key={cellText(row[0])} value={cellText(row[0])}>
+                  {cellText(row[0])}
+                </option>
+              ))}
+            </Select>
+
+            <div className="mt-3 border-t border-border pt-3">
+              <p className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                <Table2 className="size-3.5" aria-hidden />
+                Tables{database ? ` in ${database}` : ""}
+              </p>
+              <TableNames
+                result={tables.data}
+                pending={tables.isPending}
+                idle={database === ""}
+                emptyHint="No tables found."
+                idleHint="Pick a database to list its tables."
+              />
+            </div>
+          </div>
+        </aside>
+
+        {/* Workspace: query console, then backups for the selected engine. */}
+        <div className="min-w-0 space-y-4">
+          {chosen ? <QueryPanel server={chosen} params={params} /> : null}
+          {chosen ? <BackupsCard server={chosen} /> : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** One selectable engine row: dot + label + port, deciding column first. */
+function EngineLink({
+  server,
+  active,
+  onSelect,
+}: {
+  server: DbServer;
+  active: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      aria-pressed={active}
+      className={`flex w-full cursor-pointer items-center justify-between gap-2 rounded-sm border px-2.5 py-2 text-left text-sm transition-colors duration-150 ${
+        active
+          ? "border-border bg-sidebar-accent font-medium text-sidebar-accent-foreground"
+          : "border-transparent text-muted-foreground hover:bg-sidebar-accent/60"
+      }`}
+    >
+      <span className="flex min-w-0 items-center gap-2">
+        <span
+          aria-hidden
+          className={`size-1.5 shrink-0 rounded-full ${server.reachable ? "bg-success" : "bg-muted-foreground/50"}`}
+        />
+        <span className="truncate">{engineLabel(server.engine)}</span>
+      </span>
+      <span className="data-value shrink-0 text-xs text-muted-foreground">
+        :{server.port}
+      </span>
+    </button>
+  );
+}
+
+/**
+ * The query console: one read-only statement, its grid, and the import /
+ * export actions that operate on the selected engine.
+ */
+function QueryPanel({
+  server,
+  params,
+}: {
+  server: DbServer;
+  params: Parameters<typeof ipc.dbQuery>[0] | null;
+}) {
+  const [statement, setStatement] = useState("");
+
   const run = useMutation({ mutationFn: () => ipc.dbQuery(params!, statement) });
   const importSql = useMutation({
     mutationFn: async () => {
@@ -93,7 +237,7 @@ export function DatabasesPage() {
       if (!path) {
         return;
       }
-      await ipc.dbImportSql(chosen!.service_id, path);
+      await ipc.dbImportSql(server.service_id, path);
     },
   });
   const exportCsv = useMutation({
@@ -114,204 +258,91 @@ export function DatabasesPage() {
         ? importSql.error
         : exportCsv.error instanceof Error
           ? exportCsv.error
-          : databases.error instanceof Error
-            ? databases.error
-            : tables.error instanceof Error
-              ? tables.error
-              : null;
+          : null;
 
   return (
-    <div className="mx-auto w-full max-w-4xl space-y-4 p-5">
-        {servers.data && servers.data.length > 0 ? (
-          <PageHeader
-            title={
-              servers.data.every((server) => !server.reachable)
-                ? "No database engines are running."
-                : `${servers.data.filter((server) => server.reachable).length} of ${servers.data.length} engines reachable.`
-            }
-            description={`${backupCount} backup${backupCount === 1 ? "" : "s"} across all services · the query browser never writes.`}
-          />
+    <section className="rounded-md border border-border bg-card">
+      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
+        <div className="min-w-0">
+          <h2 className="flex items-center gap-2 text-sm font-semibold">
+            <HardDrive className="size-4 text-muted-foreground" aria-hidden />
+            Query — {engineLabel(server.engine)}
+            <Badge variant={server.reachable ? "secondary" : "outline"}>
+              {server.reachable ? "reachable" : "not running"}
+            </Badge>
+          </h2>
+          <p className="text-xs text-muted-foreground">
+            127.0.0.1:{server.port} · read-only statement, rendered as a grid.
+          </p>
+        </div>
+      </header>
+
+      <div className="space-y-3 p-4">
+        <form
+          className="flex flex-wrap items-end gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            run.mutate();
+          }}
+        >
+          <div className="min-w-0 flex-1 space-y-1.5">
+            <Label htmlFor="db-statement">Statement</Label>
+            <Input
+              id="db-statement"
+              placeholder="SELECT version()"
+              value={statement}
+              onChange={(event) => setStatement(event.target.value)}
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <Button type="submit" size="sm" disabled={busy || statement.trim() === ""}>
+              {busy ? <Loader2 className="animate-spin" /> : <Play />}
+              Run
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={
+                server.engine === "redis" || !server.reachable || importSql.isPending
+              }
+              onClick={() => importSql.mutate()}
+            >
+              {importSql.isPending ? <Loader2 className="animate-spin" /> : <Upload />}
+              Import .sql
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={busy || statement.trim() === "" || exportCsv.isPending}
+              onClick={() => exportCsv.mutate()}
+            >
+              {exportCsv.isPending ? <Loader2 className="animate-spin" /> : <Download />}
+              Export CSV
+            </Button>
+          </div>
+        </form>
+
+        {error ? (
+          <p className="flex items-center gap-2 text-sm text-destructive" role="alert">
+            <CircleAlert className="size-4" />
+            {error.message}
+          </p>
         ) : null}
 
-        {servers.isPending ? (
-          <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
-            <Loader2 className="size-4 animate-spin" />
-            Detecting database servers…
-          </p>
-        ) : (servers.data ?? []).length === 0 ? (
-          <EmptyState
-            icon={<Database />}
-            title="No database servers registered yet."
-            description="Install MariaDB, PostgreSQL or Redis from the Components page."
-          />
-        ) : (
-          <>
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <HardDrive className="size-4 text-muted-foreground" aria-hidden />
-                  Server
-                </CardTitle>
-                <CardDescription>
-                  DevX targets the running service's actual port; reachability
-                  is checked live.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="flex flex-wrap items-end gap-3">
-                <div className="space-y-1.5">
-                  <Label htmlFor="db-server">Engine</Label>
-                  <Select
-                    id="db-server"
-                    className="w-56"
-                    value={chosen?.service_id ?? ""}
-                    onChange={(event) => {
-                      setSelected(event.target.value);
-                      setDatabase("");
-                    }}
-                  >
-                    {(servers.data ?? []).map((server) => (
-                      <option key={server.service_id} value={server.service_id}>
-                        {server.reachable ? "● " : "○ "}
-                        {engineLabel(server.engine)} — 127.0.0.1:{server.port}
-                        {server.reachable ? "" : " (unreachable)"}
-                      </option>
-                    ))}
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="db-database">Database</Label>
-                  <Select
-                    id="db-database"
-                    className="w-56"
-                    value={database}
-                    onChange={(event) => setDatabase(event.target.value)}
-                  >
-                    <option value="">—</option>
-                    {(databases.data?.rows ?? []).map((row) => (
-                      <option key={cellText(row[0])} value={cellText(row[0])}>
-                        {cellText(row[0])}
-                      </option>
-                    ))}
-                  </Select>
-                </div>
-                {chosen ? (
-                  <Badge variant={chosen.reachable ? "secondary" : "outline"}>
-                    {chosen.reachable ? "reachable" : "not running"}
-                  </Badge>
-                ) : null}
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <Table2 className="size-4 text-muted-foreground" aria-hidden />
-                  Tables
-                </CardTitle>
-                <CardDescription>
-                  {database === ""
-                    ? "Pick a database to list its tables."
-                    : `Tables in ${database}.`}
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <TableNames result={tables.data} pending={tables.isPending} />
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <Database className="size-4 text-muted-foreground" aria-hidden />
-                  Query
-                </CardTitle>
-                <CardDescription>
-                  One read-only statement against the selected server, rendered
-                  as a grid.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <form
-                  className="space-y-3"
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    run.mutate();
-                  }}
-                >
-                  <div className="flex flex-wrap items-end gap-3">
-                  <div className="w-full">
-                    <Label htmlFor="db-statement">Statement</Label>
-                    <Input
-                      id="db-statement"
-                      placeholder="SELECT version()"
-                      value={statement}
-                      onChange={(event) => setStatement(event.target.value)}
-                      autoComplete="off"
-                      spellCheck={false}
-                    />
-                  </div>
-                  <Button type="submit" size="sm" disabled={busy || statement.trim() === ""}>
-                    {busy ? <Loader2 className="animate-spin" /> : <Play />}
-                    Run
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    disabled={
-                      chosen?.engine === "redis" ||
-                      !chosen?.reachable ||
-                      importSql.isPending
-                    }
-                    onClick={() => importSql.mutate()}
-                  >
-                    {importSql.isPending ? (
-                      <Loader2 className="animate-spin" />
-                    ) : (
-                      <Upload />
-                    )}
-                    Import .sql
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    disabled={busy || statement.trim() === "" || exportCsv.isPending}
-                    onClick={() => exportCsv.mutate()}
-                  >
-                    {exportCsv.isPending ? (
-                      <Loader2 className="animate-spin" />
-                    ) : (
-                      <Download />
-                    )}
-                    Export CSV
-                  </Button>
-                  </div>
-                </form>
-
-                {error ? (
-                  <p className="mt-3 flex items-center gap-2 text-sm text-destructive" role="alert">
-                    <CircleAlert className="size-4" />
-                    {error.message}
-                  </p>
-                ) : null}
-
-                <div className="mt-4">
-                  <ResultGrid result={run.data} pending={run.isPending} />
-                </div>
-              </CardContent>
-            </Card>
-
-          {chosen ? <BackupsCard server={chosen} /> : null}
-          </>
-        )}
-    </div>
+        <ResultGrid result={run.data} pending={run.isPending} />
+      </div>
+    </section>
   );
 }
 
 /**
  * Backups for one database server: SQL dumps for MariaDB/PostgreSQL, RDB
  * snapshots for Redis. The ten newest are kept; older ones are pruned.
+ * Rendered as a dense table, not one bordered card per file.
  */
 function BackupsCard({ server }: { server: DbServer }) {
   const queryClient = useQueryClient();
@@ -346,28 +377,27 @@ function BackupsCard({ server }: { server: DbServer }) {
           : null;
 
   return (
-    <Card>
-      <CardHeader className="pb-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Save className="size-4 text-muted-foreground" aria-hidden />
-              Backups — {engineLabel(server.engine)}
-            </CardTitle>
-            <CardDescription>
-              {server.engine === "redis"
-                ? "Snapshots the keyspace with SAVE and copies the RDB file; restoring needs Redis stopped."
-                : "Dumps all databases through the engine's own tool into plain SQL."}{" "}
-              The ten newest backups are kept.
-            </CardDescription>
-          </div>
-          <Button size="sm" onClick={() => create.mutate()} disabled={create.isPending}>
-            {create.isPending ? <Loader2 className="animate-spin" /> : <Save />}
-            Back up now
-          </Button>
+    <section className="rounded-md border border-border bg-card">
+      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
+        <div className="min-w-0">
+          <h2 className="flex items-center gap-2 text-sm font-semibold">
+            <Save className="size-4 text-muted-foreground" aria-hidden />
+            Backups — {engineLabel(server.engine)}
+          </h2>
+          <p className="text-xs text-muted-foreground">
+            {server.engine === "redis"
+              ? "Snapshots the keyspace with SAVE; restoring needs Redis stopped."
+              : "Dumps all databases through the engine's own tool into plain SQL."}{" "}
+            The ten newest are kept.
+          </p>
         </div>
-      </CardHeader>
-      <CardContent className="space-y-3">
+        <Button size="sm" onClick={() => create.mutate()} disabled={create.isPending}>
+          {create.isPending ? <Loader2 className="animate-spin" /> : <Save />}
+          Back up now
+        </Button>
+      </header>
+
+      <div className="p-4">
         {backups.isPending ? (
           <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
             <Loader2 className="size-4 animate-spin" />
@@ -378,11 +408,11 @@ function BackupsCard({ server }: { server: DbServer }) {
             No backups yet. Take one before schema experiments or upgrades.
           </p>
         ) : (
-          <ul className="space-y-1.5">
+          <ul className="divide-y divide-border">
             {entries.map((entry) => (
               <li
                 key={entry.file_name}
-                className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2"
+                className="flex items-center justify-between gap-3 py-2 first:pt-0 last:pb-0"
               >
                 <div className="min-w-0">
                   <p className="truncate font-mono text-xs" data-selectable>
@@ -392,7 +422,7 @@ function BackupsCard({ server }: { server: DbServer }) {
                     {formatTimestamp(entry.created_unix)} · {formatSize(entry.size_bytes)}
                   </p>
                 </div>
-                <div className="flex shrink-0 items-center gap-2">
+                <div className="flex shrink-0 items-center gap-1">
                   <Button
                     variant="outline"
                     size="sm"
@@ -430,13 +460,13 @@ function BackupsCard({ server }: { server: DbServer }) {
         )}
 
         {actionError ? (
-          <p className="flex items-center gap-2 text-sm text-destructive" role="alert">
+          <p className="mt-3 flex items-center gap-2 text-sm text-destructive" role="alert">
             <CircleAlert className="size-4" />
             {actionError.message}
           </p>
         ) : null}
-      </CardContent>
-    </Card>
+      </div>
+    </section>
   );
 }
 
@@ -459,14 +489,25 @@ function formatSize(bytes: number): string {
   return `${bytes} B`;
 }
 
-/** The table-name listing inside its card. */
+/** The table-name listing in the sidebar. */
 function TableNames({
   result,
   pending,
+  idle,
+  emptyHint,
+  idleHint,
 }: {
   result?: DbResult;
   pending: boolean;
+  idle: boolean;
+  emptyHint: string;
+  idleHint: string;
 }) {
+  // A disabled query (no database picked yet) stays `pending` forever, so
+  // the idle hint must be checked before the spinner.
+  if (idle) {
+    return <p className="text-xs text-muted-foreground">{idleHint}</p>;
+  }
   if (pending) {
     return (
       <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
@@ -477,17 +518,13 @@ function TableNames({
   }
   const names = (result?.rows ?? []).map((row) => cellText(row[0]));
   if (names.length === 0) {
-    return (
-      <p className="text-sm text-muted-foreground">No tables found.</p>
-    );
+    return <p className="text-xs text-muted-foreground">{emptyHint}</p>;
   }
   return (
-    <ul className="flex flex-wrap gap-2">
+    <ul className="space-y-0.5">
       {names.map((name) => (
-        <li key={name}>
-          <Badge variant="outline" className="font-mono" data-selectable>
-            {name}
-          </Badge>
+        <li key={name} className="truncate font-mono text-xs" data-selectable>
+          {name}
         </li>
       ))}
     </ul>
@@ -521,14 +558,14 @@ function ResultGrid({
     );
   }
   return (
-    <div className="overflow-x-auto rounded-lg border border-border">
+    <div className="overflow-x-auto rounded-sm border border-border">
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-border bg-muted/50">
             {result.columns.map((column) => (
               <th
                 key={column.name}
-                className="px-3 py-2 text-left font-medium"
+                className="px-3 py-2 text-left text-xs font-medium"
                 data-selectable
               >
                 {column.name}
@@ -540,7 +577,7 @@ function ResultGrid({
           {result.rows.map((row, index) => (
             <tr key={index} className="border-b border-border last:border-b-0">
               {row.map((cell, cellIndex) => (
-                <td key={cellIndex} className="px-3 py-1.5 font-mono" data-selectable>
+                <td key={cellIndex} className="px-3 py-1.5 font-mono text-xs" data-selectable>
                   {renderCell(cell)}
                 </td>
               ))}

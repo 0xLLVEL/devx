@@ -5,7 +5,10 @@ import {
   Inbox,
   Loader2,
   Mail,
+  MailCheck,
   MailOpen,
+  Search,
+  Send,
   Trash2,
 } from "lucide-react";
 import { useState } from "react";
@@ -21,6 +24,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
+import { Input } from "@/components/ui/input";
 import {
   ipc,
   type MailStatus,
@@ -58,15 +62,45 @@ export function MailPage() {
     },
   });
 
+  const markAllRead = useMutation({
+    mutationFn: ipc.mailMarkAllRead,
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["mail-list"] });
+      queryClient.invalidateQueries({ queryKey: ["mail-status"] });
+    },
+  });
+  const sendTest = useMutation({
+    mutationFn: ipc.mailSendTest,
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["mail-list"] });
+      queryClient.invalidateQueries({ queryKey: ["mail-status"] });
+    },
+  });
+
+  const [filter, setFilter] = useState("");
+  const needle = filter.trim().toLowerCase();
+  const visibleMessages = (messages.data ?? []).filter((message) => {
+    if (needle === "") return true;
+    return (
+      message.subject.toLowerCase().includes(needle) ||
+      message.from.address.toLowerCase().includes(needle) ||
+      message.from.name.toLowerCase().includes(needle)
+    );
+  });
+
   const busy = remove.isPending;
   const error =
     remove.error instanceof Error
       ? remove.error
-      : messages.error instanceof Error
-        ? messages.error
-        : viewer.error instanceof Error
-          ? viewer.error
-          : null;
+      : markAllRead.error instanceof Error
+        ? markAllRead.error
+        : sendTest.error instanceof Error
+          ? sendTest.error
+          : messages.error instanceof Error
+            ? messages.error
+            : viewer.error instanceof Error
+              ? viewer.error
+              : null;
 
   const select = (id: string) => {
     setSelectedId(id);
@@ -75,9 +109,17 @@ export function MailPage() {
     void queryClient.invalidateQueries({ queryKey: ["mail-status"] });
   };
 
+  const unreadCount = (messages.data ?? []).filter((m) => !m.read).length;
+
   return (
     <div className="mx-auto w-full max-w-5xl space-y-4 p-5">
-      <StatusCard status={status.data} />
+      <StatusCard
+        status={status.data}
+        busy={sendTest.isPending || markAllRead.isPending}
+        unreadCount={unreadCount}
+        onSendTest={() => sendTest.mutate()}
+        onMarkAllRead={() => markAllRead.mutate()}
+      />
 
         {error ? (
           <p className="flex items-center gap-2 text-sm text-destructive" role="alert">
@@ -89,8 +131,10 @@ export function MailPage() {
         {status.data?.running ? (
           <div className="grid gap-4 lg:grid-cols-[1fr_1.4fr]">
             <MessageList
-              messages={messages.data}
+              messages={visibleMessages}
               pending={messages.isPending}
+              filter={filter}
+              onFilter={setFilter}
               selectedId={selectedId}
               onSelect={select}
               onDelete={(id) => remove.mutate([id])}
@@ -125,8 +169,23 @@ export function MailPage() {
   );
 }
 
-/** SMTP target + inbox counters, as a status strip in the header. */
-function StatusCard({ status }: { status?: MailStatus }) {
+/**
+ * SMTP target + inbox counters as a status strip, with the inbox actions:
+ * send a test email, mark everything read, and filter the list.
+ */
+function StatusCard({
+  status,
+  busy,
+  unreadCount,
+  onSendTest,
+  onMarkAllRead,
+}: {
+  status?: MailStatus;
+  busy: boolean;
+  unreadCount: number;
+  onSendTest: () => void;
+  onMarkAllRead: () => void;
+}) {
   if (!status) {
     return null;
   }
@@ -139,22 +198,43 @@ function StatusCard({ status }: { status?: MailStatus }) {
           : "Start the mailpit service from the Services page to begin capturing mail."
       }
       right={
-        status.running ? (
-          <Badge variant="secondary" className="data-value">
-            {status.unread ?? "?"} unread · {status.total ?? "?"} captured
-          </Badge>
-        ) : (
-          <Badge variant="outline">stopped</Badge>
-        )
+        <div className="flex flex-col items-end gap-2">
+          {status.running ? (
+            <Badge variant="secondary" className="data-value">
+              {status.unread ?? "?"} unread · {status.total ?? "?"} captured
+            </Badge>
+          ) : (
+            <Badge variant="outline">stopped</Badge>
+          )}
+          {status.running ? (
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="outline" disabled={busy} onClick={onSendTest}>
+                {busy ? <Loader2 className="animate-spin" /> : <Send />}
+                Send test email
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={busy || unreadCount === 0}
+                onClick={onMarkAllRead}
+              >
+                <MailCheck />
+                Mark all read
+              </Button>
+            </div>
+          ) : null}
+        </div>
       }
     />
   );
 }
 
-/** The list of captured messages, newest first. */
+/** The list of captured messages, newest first, with a text filter. */
 function MessageList({
   messages,
   pending,
+  filter,
+  onFilter,
   selectedId,
   onSelect,
   onDelete,
@@ -162,6 +242,8 @@ function MessageList({
 }: {
   messages?: MessageSummary[];
   pending: boolean;
+  filter: string;
+  onFilter: (value: string) => void;
   selectedId: string | null;
   onSelect: (id: string) => void;
   onDelete: (id: string) => void;
@@ -171,6 +253,19 @@ function MessageList({
     <Card className="self-start">
       <CardHeader className="pb-3">
         <CardTitle className="text-base">Inbox</CardTitle>
+        <div className="relative mt-2">
+          <Search
+            className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
+            aria-hidden
+          />
+          <Input
+            value={filter}
+            onChange={(event) => onFilter(event.target.value)}
+            placeholder="Filter by sender or subject…"
+            className="pl-8"
+            aria-label="Filter messages"
+          />
+        </div>
       </CardHeader>
       <CardContent className="p-2">
         {pending ? (
@@ -182,8 +277,12 @@ function MessageList({
           <div className="p-4">
             <EmptyState
               icon={<Inbox />}
-              title="No messages yet."
-              description="Send one from your app to see it here."
+              title={filter ? "No messages match the filter." : "No messages yet."}
+              description={
+                filter
+                  ? "Clear the filter to see every captured message."
+                  : "Send one from your app — or use Send test email — to see it here."
+              }
             />
           </div>
         ) : (

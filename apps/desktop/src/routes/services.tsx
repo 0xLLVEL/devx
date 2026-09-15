@@ -3,6 +3,7 @@ import {
   Bug,
   CalendarClock,
   CircleAlert,
+  Gauge,
   Loader2,
   Play,
   Plus,
@@ -32,6 +33,7 @@ import { Switch } from "@/components/ui/switch";
 import {
   ipc,
   type InstalledVersion,
+  type LimitConfig,
   type LogEntry,
   type PhpPoolStatus,
   type ServiceState,
@@ -155,6 +157,7 @@ function PhpPoolCard({
   const queryClient = useQueryClient();
   const [showExtensions, setShowExtensions] = useState(false);
   const [showXdebug, setShowXdebug] = useState(false);
+  const [showLimits, setShowLimits] = useState(false);
 
   // The pool may have been started from elsewhere; poll to keep the badge live.
   const status = useQuery({
@@ -233,8 +236,17 @@ function PhpPoolCard({
             <Bug />
             {showXdebug ? "Hide Xdebug" : "Xdebug"}
           </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowLimits((open) => !open)}
+          >
+            <Gauge />
+            {showLimits ? "Hide limits" : "Limits"}
+          </Button>
         </div>
         {showXdebug ? <XdebugPanel version={pool.version} /> : null}
+        {showLimits ? <LimitsPanel version={pool.version} /> : null}
         {showExtensions ? <ExtensionsPanel version={pool.version} /> : null}
         <LogTail id={pool.id} active={running} />
       </CardContent>
@@ -388,6 +400,164 @@ function XdebugPanel({ version }: { version: string }) {
         <p className="flex items-center gap-2 text-sm text-destructive" role="alert">
           <CircleAlert className="size-4" />
           {set.error.message}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Resource limits for one PHP pool: memory, upload size, execution time
+ * and OPcache. Saving re-renders the pool's ini; a running pool restarts
+ * so the values apply immediately.
+ */
+function LimitsPanel({ version }: { version: string }) {
+  const queryClient = useQueryClient();
+
+  const limits = useQuery({
+    queryKey: ["php-limits", version],
+    queryFn: () => ipc.phpLimitsGet(version),
+  });
+
+  const set = useMutation({
+    mutationFn: (next: LimitConfig) => ipc.phpLimitsSet(version, next),
+    onSuccess: (saved) => queryClient.setQueryData(["php-limits", version], saved),
+  });
+
+  if (limits.isPending) {
+    return (
+      <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
+        <Loader2 className="size-4 animate-spin" />
+        Loading limits…
+      </p>
+    );
+  }
+  if (limits.isError) {
+    return (
+      <p className="flex items-center gap-2 text-sm text-destructive" role="alert">
+        <CircleAlert className="size-4" />
+        {limits.error.message}
+      </p>
+    );
+  }
+
+  const current = {
+    memory_limit: limits.data.memory_limit ?? "256M",
+    upload_max_filesize: limits.data.upload_max_filesize ?? "64M",
+    max_execution_time: limits.data.max_execution_time ?? 60,
+    opcache_enabled: limits.data.opcache_enabled ?? true,
+  };
+
+  return (
+    <LimitsForm
+      version={version}
+      current={current}
+      saving={set.isPending}
+      error={set.error instanceof Error ? set.error.message : null}
+      onSave={(next) => set.mutate(next)}
+    />
+  );
+}
+
+function LimitsForm({
+  version,
+  current,
+  saving,
+  error,
+  onSave,
+}: {
+  version: string;
+  current: {
+    memory_limit: string;
+    upload_max_filesize: string;
+    max_execution_time: number;
+    opcache_enabled: boolean;
+  };
+  saving: boolean;
+  error: string | null;
+  onSave: (next: LimitConfig) => void;
+}) {
+  const [memory, setMemory] = useState(current.memory_limit);
+  const [upload, setUpload] = useState(current.upload_max_filesize);
+  const [execution, setExecution] = useState(String(current.max_execution_time));
+  const [opcache, setOpcache] = useState(current.opcache_enabled);
+
+  const dirty =
+    memory !== current.memory_limit ||
+    upload !== current.upload_max_filesize ||
+    Number(execution) !== current.max_execution_time ||
+    opcache !== current.opcache_enabled;
+
+  const save = () => {
+    onSave({
+      memory_limit: memory.trim(),
+      upload_max_filesize: upload.trim(),
+      max_execution_time: Number(execution) || 60,
+      opcache_enabled: opcache,
+    });
+  };
+
+  return (
+    <div className="space-y-3 rounded-sm border border-border p-3">
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="space-y-1.5">
+          <Label htmlFor={`limits-memory-${version}`}>Memory limit</Label>
+          <Input
+            id={`limits-memory-${version}`}
+            value={memory}
+            onChange={(event) => setMemory(event.target.value)}
+            placeholder="256M"
+            className="w-24 font-mono text-xs"
+            autoComplete="off"
+            spellCheck={false}
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor={`limits-upload-${version}`}>Upload max</Label>
+          <Input
+            id={`limits-upload-${version}`}
+            value={upload}
+            onChange={(event) => setUpload(event.target.value)}
+            placeholder="64M"
+            className="w-24 font-mono text-xs"
+            autoComplete="off"
+            spellCheck={false}
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor={`limits-exec-${version}`}>Max execution (s)</Label>
+          <Input
+            id={`limits-exec-${version}`}
+            type="number"
+            min={1}
+            max={3600}
+            value={execution}
+            onChange={(event) => setExecution(event.target.value)}
+            className="w-24 font-mono text-xs"
+          />
+        </div>
+        <label className="flex items-center gap-2 text-sm">
+          <span>OPcache</span>
+          <Switch
+            checked={opcache}
+            onCheckedChange={setOpcache}
+            aria-label={`Toggle OPcache for ${version}`}
+          />
+        </label>
+      </div>
+      <div className="flex items-center gap-2">
+        <Button size="sm" disabled={saving || !dirty} onClick={save}>
+          {saving ? <Loader2 className="animate-spin" /> : null}
+          Save limits
+        </Button>
+        <span className="text-xs text-muted-foreground">
+          A running pool restarts to apply the new values.
+        </span>
+      </div>
+      {error ? (
+        <p className="flex items-center gap-2 text-sm text-destructive" role="alert">
+          <CircleAlert className="size-4" />
+          {error}
         </p>
       ) : null}
     </div>

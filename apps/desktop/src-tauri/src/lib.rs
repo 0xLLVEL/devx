@@ -8,6 +8,7 @@
 
 pub mod commands;
 pub mod event_log;
+pub mod mail;
 pub mod events;
 pub mod helper;
 pub mod ipc;

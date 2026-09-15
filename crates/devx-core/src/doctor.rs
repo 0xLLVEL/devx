@@ -39,6 +39,10 @@ pub struct Check {
     pub detail: String,
     /// How to fix it, when the status is not `Pass`.
     pub remedy: Option<String>,
+    /// Identifier of an automatic repair the app can perform, when one
+    /// exists. The UI renders a fix action for checks that carry it, and
+    /// `doctor_fix` accepts exactly these ids.
+    pub fix: Option<String>,
 }
 
 impl Check {
@@ -55,7 +59,14 @@ impl Check {
             status,
             detail: detail.into(),
             remedy: remedy.map(str::to_owned),
+            fix: None,
         }
+    }
+
+    /// Attaches an automatic repair id to this check.
+    fn fixable(mut self, fix: &str) -> Self {
+        self.fix = Some(fix.to_owned());
+        self
     }
 }
 
@@ -149,7 +160,8 @@ fn check_config(paths: &AppPaths, health: &ConfigHealth) -> Check {
             Some(hint.as_deref().unwrap_or(
                 "Fix the file, or delete it to regenerate defaults. DevX is running on defaults until then.",
             )),
-        ),
+        )
+        .fixable("config"),
     }
 }
 

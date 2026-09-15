@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CircleAlert,
   CircleCheck,
@@ -6,6 +6,7 @@ import {
   RefreshCw,
   Stethoscope,
   TriangleAlert,
+  Wrench,
 } from "lucide-react";
 
 import { PageHeader } from "@/components/page-header";
@@ -26,10 +27,17 @@ const STATUS_META: Record<
 
 /** Diagnostics page: environment checks with actionable remedies. */
 export function DiagnosticsPage() {
+  const queryClient = useQueryClient();
+
   const doctor = useQuery({
     queryKey: ["doctor"],
     queryFn: ipc.doctorRun,
     staleTime: 0,
+  });
+
+  const fix = useMutation({
+    mutationFn: (checkId: string) => ipc.doctorFix(checkId),
+    onSuccess: (report) => queryClient.setQueryData(["doctor"], report),
   });
 
   const data = doctor.data;
@@ -126,6 +134,40 @@ export function DiagnosticsPage() {
                           >
                             {check.remedy}
                           </Callout>
+                        ) : null}
+                        {check.fix ? (
+                          <div className="flex items-center gap-2 pt-1">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              disabled={fix.isPending}
+                              onClick={() => {
+                                if (
+                                  check.fix === "config" &&
+                                  !window.confirm(
+                                    "Move the broken config file aside and regenerate defaults? The broken copy is kept as config.toml.broken.",
+                                  )
+                                ) {
+                                  return;
+                                }
+                                fix.mutate(check.fix as string);
+                              }}
+                            >
+                              {fix.isPending && fix.variables === check.fix ? (
+                                <Loader2 className="animate-spin" />
+                              ) : (
+                                <Wrench />
+                              )}
+                              Fix automatically
+                            </Button>
+                            {fix.isError && fix.variables === check.fix ? (
+                              <span className="text-xs text-destructive" role="alert">
+                                {fix.error instanceof Error
+                                  ? fix.error.message
+                                  : "Repair failed"}
+                              </span>
+                            ) : null}
+                          </div>
                         ) : null}
                       </div>
                     </li>
