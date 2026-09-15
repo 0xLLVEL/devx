@@ -4,6 +4,7 @@ import type {
   ConnectionParams,
   DevxError,
   ErrorCode,
+  WebServer,
 } from "@/bindings";
 
 export type {
@@ -27,9 +28,11 @@ export type {
   DbServer,
   DbValue,
   DevxError,
+  DirUsage,
   DnsMode,
   DoctorReport,
   ErrorCode,
+  EventEntry,
   General,
   InstalledVersion,
   InstallPhase,
@@ -46,6 +49,9 @@ export type {
   PhpExtensionInfo,
   PhpPoolStatus,
   PhpPools,
+  PhpXdebugInfo,
+  ProfileEntry,
+  PortEntry,
   PrivilegedStatus,
   Provisioning,
   ReleaseChannel,
@@ -53,6 +59,8 @@ export type {
   ServiceEventUpdate,
   ServiceMetrics,
   ServiceState,
+  SiteAuth,
+  SiteRequestEntry,
   ServiceStatus,
   SiteStatus,
   TemplateCreateResult,
@@ -114,7 +122,14 @@ export const ipc = {
   configReset: () => unwrap(commands.configReset()),
   configExport: () => unwrap(commands.configExport()),
   configImport: (body: string) => unwrap(commands.configImport(body)),
+  profileList: () => unwrap(commands.profileList()),
+  profileSave: (name: string) => unwrap(commands.profileSave(name)),
+  profileApply: (name: string) => unwrap(commands.profileApply(name)),
+  profileDelete: (name: string) => unwrap(commands.profileDelete(name)),
   doctorRun: () => unwrap(commands.doctorRun()),
+  eventsRecent: (limit: number | null) => unwrap(commands.eventsRecent(limit)),
+  diskUsage: () => unwrap(commands.diskUsage()),
+  portMap: () => unwrap(commands.portMap()),
   catalogList: () => unwrap(commands.catalogList()),
   componentVersions: (componentId: string) =>
     unwrap(commands.componentVersions(componentId)),
@@ -144,9 +159,15 @@ export const ipc = {
   phpExtList: (version: string) => unwrap(commands.phpExtList(version)),
   phpExtSet: (version: string, extension: string, enabled: boolean) =>
     unwrap(commands.phpExtSet(version, extension, enabled)),
+  phpXdebugGet: (version: string) => unwrap(commands.phpXdebugGet(version)),
+  phpXdebugSet: (version: string, enabled: boolean, mode: string, clientPort: number) =>
+    unwrap(commands.phpXdebugSet(version, enabled, mode, clientPort)),
   siteList: () => unwrap(commands.siteList()),
-  siteAdd: (hostname: string, docroot: string, phpVersion: string, https: boolean) =>
-    unwrap(commands.siteAdd(hostname, docroot, phpVersion, https)),
+  sitePing: (hostname: string) => unwrap(commands.sitePing(hostname)),
+  siteRequests: (hostname: string, limit: number) =>
+    unwrap(commands.siteRequests(hostname, limit)),
+  siteAdd: (hostname: string, docroot: string, phpVersion: string, https: boolean, webServer: WebServer | null) =>
+    unwrap(commands.siteAdd(hostname, docroot, phpVersion, https, webServer)),
   siteRemove: (hostname: string) => unwrap(commands.siteRemove(hostname)),
   siteEnvSet: (hostname: string, key: string, value: string) =>
     unwrap(commands.siteEnvSet(hostname, key, value)),
@@ -154,6 +175,8 @@ export const ipc = {
     unwrap(commands.siteEnvDelete(hostname, key)),
   siteAliasAdd: (hostname: string, alias: string) =>
     unwrap(commands.siteAliasAdd(hostname, alias)),
+  siteAuthSet: (hostname: string, username: string | null, password: string | null) =>
+    unwrap(commands.siteAuthSet(hostname, username, password)),
   siteAliasDelete: (hostname: string, alias: string) =>
     unwrap(commands.siteAliasDelete(hostname, alias)),
   backupList: (serviceId: string) => unwrap(commands.backupList(serviceId)),
@@ -165,6 +188,10 @@ export const ipc = {
   terminalPath: () => unwrap(commands.terminalPath()),
   terminalRun: (cwd: string, command: string) =>
     unwrap(commands.terminalRun(cwd, command)),
+  terminalUseVersion: (componentId: string, version: string) =>
+    unwrap(commands.terminalUseVersion(componentId, version)),
+  terminalUnsetVersion: (componentId: string) =>
+    unwrap(commands.terminalUnsetVersion(componentId)),
   templateList: () => unwrap(commands.templateList()),
   templateCreate: (
     templateId: string,
@@ -172,7 +199,8 @@ export const ipc = {
     docroot: string,
     phpVersion: string,
     https: boolean,
-  ) => unwrap(commands.templateCreate(templateId, hostname, docroot, phpVersion, https)),
+    gitUrl: string | null,
+  ) => unwrap(commands.templateCreate(templateId, hostname, docroot, phpVersion, https, gitUrl)),
   cronList: () => unwrap(commands.cronList()),
   cronSet: (
     name: string,
@@ -197,6 +225,10 @@ export const ipc = {
     unwrap(commands.dbListDatabases(params)),
   dbListTables: (params: ConnectionParams) =>
     unwrap(commands.dbListTables(params)),
+  dbImportSql: (serviceId: string, filePath: string) =>
+    unwrap(commands.dbImportSql(serviceId, filePath)),
+  dbExportCsv: (params: ConnectionParams, statement: string, filePath: string) =>
+    unwrap(commands.dbExportCsv(params, statement, filePath)),
   mailStatus: () => unwrap(commands.mailStatus()),
   mailList: (limit: number) => unwrap(commands.mailList(limit)),
   mailMessage: (id: string) => unwrap(commands.mailMessage(id)),

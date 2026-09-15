@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 
-import { HeroBand } from "@/components/hero-band";
+import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -21,7 +21,6 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
-import { StatTile } from "@/components/ui/stat-tile";
 import {
   ipc,
   type MailStatus,
@@ -77,10 +76,8 @@ export function MailPage() {
   };
 
   return (
-    <>
-
-      <div className="mx-auto w-full max-w-4xl space-y-4 p-6">
-        <StatusCard status={status.data} />
+    <div className="mx-auto w-full max-w-5xl space-y-4 p-5">
+      <StatusCard status={status.data} />
 
         {error ? (
           <p className="flex items-center gap-2 text-sm text-destructive" role="alert">
@@ -125,51 +122,32 @@ export function MailPage() {
           </div>
         ) : null}
       </div>
-    </>
   );
 }
 
-/** SMTP target + inbox counters, as a hero band with mini tiles. */
+/** SMTP target + inbox counters, as a status strip in the header. */
 function StatusCard({ status }: { status?: MailStatus }) {
   if (!status) {
     return null;
   }
   return (
-    <>
-      <HeroBand
-        title={status.running ? "Mail catcher is capturing." : "Mail catcher is off."}
-        description={
-          status.running
-            ? `Point your app's SMTP client at 127.0.0.1:${status.smtp_port}; read mail here or in Mailpit's own UI on port ${status.port}.`
-            : "Start the mailpit service from the Services page to begin capturing mail."
-        }
-        right={
-          status.running ? (
-            <Badge variant="secondary">
-              {status.unread ?? "?"} unread of {status.total ?? "?"}
-            </Badge>
-          ) : (
-            <Badge variant="outline">stopped</Badge>
-          )
-        }
-      />
-      {status.running ? (
-        <div className="grid gap-4 sm:grid-cols-2">
-          <StatTile
-            icon={<Mail className="size-4" />}
-            label="Unread"
-            value={String(status.unread ?? 0)}
-            sub="waiting to be read"
-          />
-          <StatTile
-            icon={<Inbox className="size-4" />}
-            label="Captured"
-            value={String(status.total ?? 0)}
-            sub="messages in the inbox"
-          />
-        </div>
-      ) : null}
-    </>
+    <PageHeader
+      title={status.running ? "Mail catcher is capturing." : "Mail catcher is off."}
+      description={
+        status.running
+          ? `Point your app's SMTP client at 127.0.0.1:${status.smtp_port}; read mail here or in Mailpit's own UI on port ${status.port}.`
+          : "Start the mailpit service from the Services page to begin capturing mail."
+      }
+      right={
+        status.running ? (
+          <Badge variant="secondary" className="data-value">
+            {status.unread ?? "?"} unread · {status.total ?? "?"} captured
+          </Badge>
+        ) : (
+          <Badge variant="outline">stopped</Badge>
+        )
+      }
+    />
   );
 }
 
@@ -244,7 +222,7 @@ function MessageRow({
 }) {
   return (
     <div
-      className={`group flex items-center gap-2 rounded-md p-2 text-sm ${
+      className={`group flex items-center gap-2 rounded-sm p-2 text-sm transition-colors duration-150 cursor-pointer ${
         selected ? "bg-accent" : "hover:bg-accent/50"
       }`}
     >
@@ -341,7 +319,7 @@ function MessageViewer({
             </Badge>
           ))}
         </div>
-        <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-lg border border-border bg-muted/30 p-3 font-mono text-xs" data-selectable>
+        <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-sm border border-border bg-muted/30 p-3 font-mono text-xs" data-selectable>
           {message.text ?? "(no plain-text body)"}
         </pre>
       </CardContent>

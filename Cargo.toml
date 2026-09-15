@@ -71,6 +71,7 @@ walkdir = "2.5"
 
 # --- Hashing / crypto ---
 sha2 = "0.10"
+bcrypt = "0.17"
 base64 = "0.23"
 # Local CA and site certificates. `x509-parser` re-enables loading the saved
 # CA certificate back (`CertificateParams::from_ca_cert_pem`).

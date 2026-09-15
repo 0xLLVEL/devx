@@ -106,6 +106,8 @@ async fn nginx_serves_a_php_site_through_its_pool() {
         php_version: Some(php_version.clone()),
         env: Vec::new(),
         aliases: Vec::new(),
+        web_server: devx_provision::sites::WebServerKind::Nginx,
+        auth: None,
     };
     write_site_block(
         &sites_dir,
@@ -180,6 +182,8 @@ async fn nginx_serves_a_php_site_through_its_pool() {
             php_version: None,
             env: Vec::new(),
             aliases: Vec::new(),
+            web_server: devx_provision::sites::WebServerKind::Nginx,
+            auth: None,
         },
         None,
         None,

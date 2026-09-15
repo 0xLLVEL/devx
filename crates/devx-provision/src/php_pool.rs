@@ -87,6 +87,8 @@ pub struct PoolPlanOptions {
     pub workers: u32,
     /// Enabled extension DLL file names, rendered into the pool's `php.ini`.
     pub extensions: Vec<String>,
+    /// Xdebug settings; `None` renders no Xdebug directives.
+    pub xdebug: Option<devx_core::config::XdebugConfig>,
 }
 
 impl PoolPlanOptions {
@@ -96,6 +98,7 @@ impl PoolPlanOptions {
             port,
             workers: DEFAULT_WORKERS,
             extensions: Vec::new(),
+            xdebug: None,
         }
     }
 
@@ -108,6 +111,12 @@ impl PoolPlanOptions {
     /// Overrides the enabled extensions.
     pub fn with_extensions(mut self, extensions: Vec<String>) -> Self {
         self.extensions = extensions;
+        self
+    }
+
+    /// Sets the Xdebug configuration.
+    pub fn with_xdebug(mut self, xdebug: Option<devx_core::config::XdebugConfig>) -> Self {
+        self.xdebug = xdebug;
         self
     }
 }
@@ -195,6 +204,8 @@ pub fn plan_pool(
         // Pre-rendered `extension =` lines; the loop lives in Rust because the
         // renderer only handles flat string maps.
         ("extensions", render_extension_lines(&options.extensions)),
+        // Pre-rendered Xdebug directives, empty when Xdebug is off.
+        ("xdebug", render_xdebug_lines(options.xdebug.as_ref())),
     ];
 
     let php_ini = render(PHP_INI_TEMPLATE, &values)?;
@@ -291,6 +302,32 @@ fn is_zend_extension(file_name: &str) -> bool {
         .and_then(|rest| rest.strip_suffix(".dll"))
         .unwrap_or(file_name);
     matches!(stem, "opcache" | "xdebug")
+}
+
+/// Renders the Xdebug directive block for the pool's `php.ini`.
+///
+/// Empty when Xdebug is not configured for the version. The mode directives
+/// only render when the mode is active — a disabled entry keeps the
+/// `zend_extension` line (harmless) but turns the debugger off, which is how
+/// "toggle off without deleting the settings" behaves.
+fn render_xdebug_lines(config: Option<&devx_core::config::XdebugConfig>) -> String {
+    let Some(config) = config else {
+        return String::new();
+    };
+    if config.mode.is_empty() {
+        return String::new();
+    }
+
+    let mut lines = vec![
+        "; Xdebug, managed by DevX.".to_owned(),
+        format!("xdebug.mode = {}", config.mode),
+    ];
+    if config.is_enabled() && config.client_port > 0 {
+        lines.push(format!("xdebug.client_port = {}", config.client_port));
+        lines.push("xdebug.client_host = 127.0.0.1".to_owned());
+        lines.push("xdebug.start_with_request = yes".to_owned());
+    }
+    lines.join("\n")
 }
 
 /// Lists the extension DLLs an installed PHP version ships.
@@ -391,6 +428,7 @@ allow_url_fopen = On
 allow_url_include = Off
 extension_dir = {{ install_dir }}/ext
 {{ extensions }}
+{{ xdebug }}
 
 [Date]
 ; No hard-coded timezone: PHP falls back to UTC, and per-site overrides come
@@ -677,6 +715,28 @@ mod tests {
             "{lines}"
         );
         assert_eq!(render_extension_lines(&[]), "");
+    }
+
+    #[test]
+    fn xdebug_lines_render_mode_and_port_when_enabled() {
+        let config = devx_core::config::XdebugConfig::debug();
+        let lines = render_xdebug_lines(Some(&config));
+
+        assert!(lines.contains("xdebug.mode = debug"), "{lines}");
+        assert!(lines.contains("xdebug.client_port = 9003"), "{lines}");
+        assert!(lines.contains("xdebug.start_with_request = yes"), "{lines}");
+    }
+
+    #[test]
+    fn xdebug_lines_are_empty_when_unconfigured_or_off() {
+        assert_eq!(render_xdebug_lines(None), "");
+        let off = devx_core::config::XdebugConfig {
+            mode: "off".to_owned(),
+            client_port: 0,
+        };
+        let lines = render_xdebug_lines(Some(&off));
+        assert!(lines.contains("xdebug.mode = off"), "{lines}");
+        assert!(!lines.contains("client_port"), "{lines}");
     }
 
     #[test]

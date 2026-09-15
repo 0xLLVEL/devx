@@ -37,7 +37,7 @@ fn invalid_configuration_falls_back_to_defaults_without_touching_the_file() {
 
     // DevX keeps running on defaults rather than refusing to start.
     assert_eq!(store.config(), &Config::default());
-    assert_eq!(store.config().network.dns_mode, DnsMode::Auto);
+    assert_eq!(store.config().network.dns_mode, DnsMode::HostsFile);
 
     // The broken file is preserved so the user can see what they wrote.
     assert_eq!(

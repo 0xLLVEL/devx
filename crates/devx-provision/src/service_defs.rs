@@ -419,6 +419,18 @@ fn apache() -> ServiceDefinition {
     // modules live under ServerRoot. PHP is served by proxying .php to
     // the first DevX PHP pool (FastCGI, port 9100) — DevX installs NTS
     // PHP builds, which have no mod_php library.
+    //
+    // Three directives make the FastCGI handoff work with plain php-cgi:
+    // 1. The trailing slash on `proxy:fcgi://host:port/` — without it
+    //    mod_proxy_fcgi appends the translated filename to the authority,
+    //    and Apache reports a bogus DNS lookup for `127.0.0.1:9100c:`.
+    // 2. `ProxyFCGIBackendType GENERIC` — with the default FPM type Apache
+    //    leaves a `proxy:fcgi://` prefix inside SCRIPT_FILENAME, which
+    //    php-cgi (unlike PHP-FPM) does not strip.
+    // 3. `ProxyFCGISetEnvIf` rewriting SCRIPT_FILENAME to
+    //    DOCUMENT_ROOT + REQUEST_URI and setting REDIRECT_STATUS — Apache
+    //    would otherwise send a `/C:/...` path (leading slash), and php-cgi
+    //    refuses scripts without REDIRECT_STATUS (cgi.force_redirect).
     let httpd_conf = r##"ServerRoot "{{ install_dir }}/Apache24"
 Listen 127.0.0.1:{{ port }}
 ServerName localhost
@@ -439,7 +451,9 @@ LoadModule proxy_module modules/mod_proxy.so
 LoadModule proxy_fcgi_module modules/mod_proxy_fcgi.so
 
 TypesConfig conf/mime.types
-DirectoryIndex index.php index.html
+ProxyFCGIBackendType GENERIC
+ProxyFCGISetEnvIf "true" SCRIPT_FILENAME "%{reqenv:DOCUMENT_ROOT}%{REQUEST_URI}"
+ProxyFCGISetEnvIf "true" REDIRECT_STATUS 200
 
 DocumentRoot "{{ data_dir }}/www"
 <Directory "{{ data_dir }}/www">
@@ -449,7 +463,7 @@ DocumentRoot "{{ data_dir }}/www"
 </Directory>
 
 <FilesMatch \.php$>
-    SetHandler "proxy:fcgi://127.0.0.1:9100"
+    SetHandler "proxy:fcgi://127.0.0.1:9100/"
 </FilesMatch>
 
 ErrorLog  "{{ log_dir }}/apache-error.log"
@@ -523,9 +537,19 @@ mod tests {
         let rendered = render_template(&file.template, &ctx(8085));
         assert!(rendered.contains("Listen 127.0.0.1:8085"), "{rendered}");
         assert!(
-            rendered.contains("SetHandler \"proxy:fcgi://127.0.0.1:9100\""),
-            "{rendered}"
-        );
+        rendered.contains("SetHandler \"proxy:fcgi://127.0.0.1:9100/\""),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("ProxyFCGIBackendType GENERIC"),
+        "{rendered}"
+    );
+    assert!(
+        rendered
+            .contains("SCRIPT_FILENAME \"%{reqenv:DOCUMENT_ROOT}%{REQUEST_URI}\""),
+        "{rendered}"
+    );
+    assert!(rendered.contains("REDIRECT_STATUS 200"), "{rendered}");
         assert!(rendered.contains("AllowOverride All"), "{rendered}");
     }
 

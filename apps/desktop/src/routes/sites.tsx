@@ -1,7 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Activity,
   ChevronDown,
   CircleAlert,
+  Copy,
+  ExternalLink,
   Globe,
   Loader2,
   Lock,
@@ -13,7 +16,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 
-import { HeroBand } from "@/components/hero-band";
+import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -24,10 +27,11 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
-import { StatTile } from "@/components/ui/stat-tile";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { openInBrowser } from "@/lib/open-url";
 import { pickDirectory } from "@/lib/pick-directory";
 import {
   ipc,
@@ -92,14 +96,17 @@ export function SitesPage() {
   const [docroot, setDocroot] = useState("");
   const [phpVersion, setPhpVersion] = useState("");
   const [https, setHttps] = useState(false);
+  const [webServer, setWebServer] = useState<"Nginx" | "Caddy" | "FrankenPhp">("Nginx");
 
   const add = useMutation({
-    mutationFn: () => ipc.siteAdd(hostname.trim(), docroot.trim(), phpVersion, https),
+    mutationFn: () =>
+      ipc.siteAdd(hostname.trim(), docroot.trim(), phpVersion, https, webServer),
     onSuccess: () => {
       setHostname("");
       setDocroot("");
       setPhpVersion("");
       setHttps(false);
+      setWebServer("Nginx");
       setAdding(false);
       queryClient.invalidateQueries({ queryKey: ["sites"] });
     },
@@ -145,51 +152,29 @@ export function SitesPage() {
         : null;
 
   return (
-    <>
-      <div className="space-y-4 p-6">
-        <HeroBand
-          title={
-            allSites.length === 0
-              ? "Your local network is empty."
-              : `${allSites.length} site${allSites.length === 1 ? "" : "s"} served locally.`
-          }
-          description={`Anything under *.${dns.data?.suffix ?? "test"} resolves to this machine — the resolver covers every subdomain.`}
-        />
+    <div className="space-y-4 p-5">
+      <PageHeader
+        title={
+          allSites.length === 0
+            ? "Your local network is empty."
+            : `${allSites.length} site${allSites.length === 1 ? "" : "s"} served locally.`
+        }
+        description={`Anything under *.${dns.data?.suffix ?? "test"} resolves to this machine — the resolver covers every subdomain.`}
+      />
 
-        {allSites.length > 0 ? (
-          <div className="animate-in fade-in slide-in-from-bottom-2 grid gap-4 duration-300 sm:grid-cols-2 xl:grid-cols-4">
-            <StatTile
-              icon={<Globe className="size-4" />}
-              label="Sites"
-              value={String(allSites.length)}
-              sub="local domains"
-            />
-            <StatTile
-              icon={<Network className="size-4" />}
-              label="Aliases"
-              value={String(aliasCount)}
-              sub="extra host names"
-            />
-            <StatTile
-              icon={<Variable className="size-4" />}
-              label="Env vars"
-              value={String(envCount)}
-              sub="exposed to PHP"
-            />
-            <StatTile
-              icon={<Lock className="size-4" />}
-              label="HTTPS"
-              value={String(httpsCount)}
-              sub="behind the local CA"
-            />
-          </div>
-        ) : null}
-
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
           {/* Main column: the sites themselves. */}
           <div className="space-y-4">
             <div className="flex items-center justify-between gap-2">
-              <h2 className="text-sm font-medium">Configured sites</h2>
+              <h2 className="text-sm font-medium">
+                Configured sites
+                {allSites.length > 0 ? (
+                  <span className="ml-2 text-xs font-normal text-muted-foreground">
+                    {aliasCount} alias{aliasCount === 1 ? "" : "es"} · {envCount} env var
+                    {envCount === 1 ? "" : "s"} · {httpsCount} on HTTPS
+                  </span>
+                ) : null}
+              </h2>
               <Button size="sm" onClick={() => setAdding((open) => !open)}>
                 <Plus />
                 {adding ? "Close form" : "Add site"}
@@ -238,6 +223,22 @@ export function SitesPage() {
                             {version}
                           </option>
                         ))}
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="site-web-server">Web server</Label>
+                      <Select
+                        id="site-web-server"
+                        value={webServer}
+                        onChange={(event) =>
+                          setWebServer(
+                            event.target.value as "Nginx" | "Caddy" | "FrankenPhp",
+                          )
+                        }
+                      >
+                        <option value="Nginx">nginx</option>
+                        <option value="Caddy">Caddy</option>
+                        <option value="FrankenPhp">FrankenPHP</option>
                       </Select>
                     </div>
                     <div className="space-y-1.5">
@@ -293,7 +294,7 @@ export function SitesPage() {
               <EmptyState
                 icon={<Globe />}
                 title="No sites yet."
-                description="Add one and DevX will route its .test host name through nginx to your project folder."
+                description="Add one and DevX will route its .test host name to your project folder."
                 action={
                   <Button size="sm" onClick={() => setAdding(true)}>
                     <Plus />
@@ -339,8 +340,17 @@ export function SitesPage() {
           </div>
         </div>
       </div>
-    </>
   );
+}
+
+/** Display label for a web server kind. */
+function serverLabel(server: SiteStatus["web_server"]): string {
+  return server === "Nginx" ? "nginx" : server === "Caddy" ? "Caddy" : "FrankenPHP";
+}
+
+/** The base URL a site is served on, scheme included. */
+function siteUrl(site: SiteStatus): string {
+  return `${site.https ? "https" : "http"}://${site.hostname}`;
 }
 
 /**
@@ -492,6 +502,61 @@ function CaCard({
 }
 
 /**
+ * Health check for one site: runs `site_ping` on demand and shows the HTTP
+ * status or the failure inline as a badge, replacing itself while in flight.
+ */
+function PingButton({ hostname }: { hostname: string }) {
+  const ping = useMutation({ mutationFn: () => ipc.sitePing(hostname) });
+
+  if (ping.isPending) {
+    return (
+      <Button variant="ghost" size="sm" disabled aria-label={`Checking ${hostname}`}>
+        <Loader2 className="animate-spin" />
+      </Button>
+    );
+  }
+
+  if (ping.isError) {
+    return (
+      <Badge variant="warning" className="max-w-40 truncate" title={String(ping.error)}>
+        check failed
+      </Badge>
+    );
+  }
+
+  const result = ping.data;
+  if (result === undefined) {
+    return (
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={() => ping.mutate()}
+        aria-label={`Check ${hostname}`}
+      >
+        <Activity />
+      </Button>
+    );
+  }
+
+  const ok = result.status !== null && result.status < 500;
+  return (
+    <button
+      type="button"
+      onClick={() => ping.mutate()}
+      title={
+        result.error ?? `HTTP ${result.status} in ${result.latency_ms} ms — click to re-check`
+      }
+      className="cursor-pointer"
+      aria-label={`Re-check ${hostname}`}
+    >
+      <Badge variant={ok ? "success" : "warning"}>
+        {result.status !== null ? `${result.status} · ${result.latency_ms} ms` : "no response"}
+      </Badge>
+    </button>
+  );
+}
+
+/**
  * One configured site. Clicking the row opens the editor: the serving
  * behavior (docroot, PHP, HTTPS) plus the alias and env sections.
  */
@@ -517,11 +582,15 @@ function SiteRow({
   const [draftDocroot, setDraftDocroot] = useState(site.docroot);
   const [draftPhp, setDraftPhp] = useState(site.php_version);
   const [draftHttps, setDraftHttps] = useState(site.https);
+  const [draftServer, setDraftServer] = useState<
+    "Nginx" | "Caddy" | "FrankenPhp"
+  >(site.web_server);
 
   // Re-adding the hostname is the edit path: `site_add` replaces the
   // location/behavior while carrying the env vars and aliases over.
   const save = useMutation({
-    mutationFn: () => ipc.siteAdd(site.hostname, draftDocroot.trim(), draftPhp, draftHttps),
+    mutationFn: () =>
+      ipc.siteAdd(site.hostname, draftDocroot.trim(), draftPhp, draftHttps, draftServer),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["sites"] }),
   });
 
@@ -549,6 +618,7 @@ function SiteRow({
                 ) : (
                   <Badge variant="outline">static</Badge>
                 )}
+                <Badge variant="outline">{serverLabel(site.web_server)}</Badge>
                 {site.https ? (
                   <Badge variant="outline">
                     <Lock className="size-3" aria-hidden /> HTTPS
@@ -585,22 +655,39 @@ function SiteRow({
               }`}
             />
           </button>
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={removing}
-            onClick={onRemove}
-            aria-label={`Remove ${site.hostname}`}
-          >
-            {removing ? <Loader2 className="animate-spin" /> : <Trash2 />}
-          </Button>
+          <div className="flex shrink-0 items-center gap-1">
+            <PingButton hostname={site.hostname} />
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => void openInBrowser(siteUrl(site))}
+              aria-label={`Open ${site.hostname} in browser`}
+            >
+              <ExternalLink />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => void navigator.clipboard.writeText(siteUrl(site))}
+              aria-label={`Copy ${site.hostname} URL`}
+            >
+              <Copy />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={removing}
+              onClick={onRemove}
+              aria-label={`Remove ${site.hostname}`}
+            >
+              {removing ? <Loader2 className="animate-spin" /> : <Trash2 />}
+            </Button>
+          </div>
         </CardContent>
         {editing ? (
           <div className="animate-in fade-in slide-in-from-bottom-2 space-y-4 border-t border-border p-4 duration-300">
             <section className="space-y-3">
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Behavior
-              </h3>
+              <h3 className="text-xs font-semibold text-muted-foreground">Behavior</h3>
               <div className="grid gap-3 sm:grid-cols-2">
                 <DocrootField
                   id={`edit-docroot-${site.hostname}`}
@@ -620,6 +707,22 @@ function SiteRow({
                         {version}
                       </option>
                     ))}
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor={`edit-server-${site.hostname}`}>Web server</Label>
+                  <Select
+                    id={`edit-server-${site.hostname}`}
+                    value={draftServer}
+                    onChange={(event) =>
+                      setDraftServer(
+                        event.target.value as "Nginx" | "Caddy" | "FrankenPhp",
+                      )
+                    }
+                  >
+                    <option value="Nginx">nginx</option>
+                    <option value="Caddy">Caddy</option>
+                    <option value="FrankenPhp">FrankenPHP</option>
                   </Select>
                 </div>
                 <div className="space-y-1.5">
@@ -646,6 +749,7 @@ function SiteRow({
                     setDraftDocroot(site.docroot);
                     setDraftPhp(site.php_version);
                     setDraftHttps(site.https);
+                    setDraftServer(site.web_server);
                     setEditing(false);
                   }}
                 >
@@ -660,9 +764,7 @@ function SiteRow({
               ) : null}
             </section>
             <section className="space-y-2">
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Aliases
-              </h3>
+              <h3 className="text-xs font-semibold text-muted-foreground">Aliases</h3>
               <AliasPanel
                 site={site}
                 busy={aliasBusy}
@@ -671,10 +773,16 @@ function SiteRow({
               />
             </section>
             <section className="space-y-2">
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Environment
-              </h3>
+              <h3 className="text-xs font-semibold text-muted-foreground">Environment</h3>
               <EnvPanel site={site} />
+            </section>
+            <section className="space-y-2">
+              <h3 className="text-xs font-semibold text-muted-foreground">Basic auth</h3>
+              <AuthPanel site={site} />
+            </section>
+            <section className="space-y-2">
+              <h3 className="text-xs font-semibold text-muted-foreground">Requests</h3>
+              <RequestsPanel hostname={site.hostname} />
             </section>
           </div>
         ) : null}
@@ -777,7 +885,6 @@ function EnvPanel({ site }: { site: SiteStatus }) {
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ["sites"] });
   };
-
   const setEnv = useMutation({
     mutationFn: ({ key: k, value: v }: { key: string; value: string }) =>
       ipc.siteEnvSet(site.hostname, k, v),
@@ -884,6 +991,218 @@ function EnvPanel({ site }: { site: SiteStatus }) {
 }
 
 /**
+ * The site's recent requests, parsed live from its access log. Polls while
+ * the editor is open — it is an inspector, not a dashboard chart.
+ */
+function RequestsPanel({ hostname }: { hostname: string }) {
+  const [live, setLive] = useState(true);
+  const requests = useQuery({
+    queryKey: ["site-requests", hostname],
+    queryFn: () => ipc.siteRequests(hostname, 50),
+    refetchInterval: live ? 3000 : false,
+  });
+
+  const entries = requests.data ?? [];
+
+  return (
+    <div className="space-y-3 border-t border-border p-4">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm text-muted-foreground">
+          {entries.length > 0
+            ? `${entries.length} most recent request${entries.length === 1 ? "" : "s"}`
+            : "No requests logged yet. Load the site in a browser, then refresh."}
+        </p>
+        <label className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+          Live
+          <Switch
+            checked={live}
+            onCheckedChange={setLive}
+            aria-label={`Toggle live polling for ${hostname}`}
+          />
+        </label>
+      </div>
+
+      {requests.isPending ? (
+        <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
+          <Loader2 className="size-4 animate-spin" />
+          Reading access log…
+        </p>
+      ) : requests.isError ? (
+        <p className="flex items-center gap-2 text-sm text-destructive" role="alert">
+          <CircleAlert className="size-4" />
+          {requests.error.message}
+        </p>
+      ) : entries.length > 0 ? (
+        <div className="max-h-64 overflow-y-auto rounded-sm border border-border">
+          <table className="w-full text-left text-xs">
+            <thead className="sticky top-0 bg-muted/80 text-muted-foreground">
+              <tr>
+                <th className="px-2 py-1.5 font-medium">Time</th>
+                <th className="px-2 py-1.5 font-medium">Request</th>
+                <th className="px-2 py-1.5 font-medium">Status</th>
+                <th className="px-2 py-1.5 text-right font-medium">Size</th>
+                <th className="hidden px-2 py-1.5 font-medium sm:table-cell">User agent</th>
+              </tr>
+            </thead>
+            <tbody className="data-value">
+              {entries.map((entry, index) => (
+                <tr
+                  key={`${entry.time_unix ?? "t"}-${index}-${entry.path}`}
+                  className="border-t border-border/60"
+                >
+                  <td className="whitespace-nowrap px-2 py-1.5 text-muted-foreground">
+                    {formatRequestTime(entry.time_unix)}
+                  </td>
+                  <td className="max-w-48 truncate px-2 py-1.5 font-mono" title={`${entry.method} ${entry.path}`}>
+                    {entry.method} {entry.path}
+                  </td>
+                  <td className="px-2 py-1.5">
+                    <Badge variant={entry.status < 400 ? "success" : entry.status < 500 ? "warning" : "warning"}>
+                      {entry.status || "—"}
+                    </Badge>
+                  </td>
+                  <td className="whitespace-nowrap px-2 py-1.5 text-right text-muted-foreground">
+                    {entry.bytes !== null ? formatBytes(entry.bytes) : "—"}
+                  </td>
+                  <td
+                    className="hidden max-w-40 truncate px-2 py-1.5 text-muted-foreground sm:table-cell"
+                    title={entry.user_agent}
+                  >
+                    {entry.user_agent || "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** Formats a Unix-seconds timestamp as a local HH:MM:SS. */
+function formatRequestTime(timeUnix: number | null): string {
+  if (timeUnix === null) {
+    return "—";
+  }
+  return new Date(timeUnix * 1000).toLocaleTimeString();
+}
+
+/** Formats a byte count for the request table. */
+function formatBytes(bytes: number): string {
+  if (bytes >= 1024 ** 2) {
+    return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+  }
+  if (bytes >= 1024) {
+    return `${(bytes / 1024).toFixed(0)} KB`;
+  }
+  return `${bytes} B`;
+}
+
+/**
+ * Toggles HTTP Basic Auth on a site. The password is sent once to the
+ * backend, hashed to an htpasswd bcrypt hash, and never stored in plain
+ * text; only the user name and a locked/unlocked state appear in the UI.
+ */
+function AuthPanel({ site }: { site: SiteStatus }) {
+  const queryClient = useQueryClient();
+  const [username, setUsername] = useState(site.auth?.username ?? "");
+  const [password, setPassword] = useState("");
+
+  const invalidate = () => {
+    setPassword("");
+    void queryClient.invalidateQueries({ queryKey: ["sites"] });
+  };
+
+  const setAuth = useMutation({
+    mutationFn: (args: { user: string | null; pass: string | null }) =>
+      ipc.siteAuthSet(site.hostname, args.user, args.pass),
+    onSuccess: invalidate,
+  });
+
+  const error = setAuth.error instanceof Error ? setAuth.error : null;
+
+  return (
+    <div className="space-y-3 border-t border-border p-4">
+      {site.auth ? (
+        <p className="flex items-center gap-2 text-sm">
+          <Lock className="size-4 text-muted-foreground" aria-hidden />
+          <span>
+            Protected — user{" "}
+            <span className="font-mono text-xs" data-selectable>
+              {site.auth.username}
+            </span>
+          </span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="ml-auto"
+            disabled={setAuth.isPending}
+            onClick={() => setAuth.mutate({ user: null, pass: null })}
+          >
+            Remove protection
+          </Button>
+        </p>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          Public site. Add a user name and password to require HTTP Basic Auth
+          for every request.
+        </p>
+      )}
+
+      <form
+        className="flex flex-wrap items-end gap-2"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!username.trim() || !password) return;
+          setAuth.mutate({ user: username.trim(), pass: password });
+        }}
+      >
+        <div className="space-y-1.5">
+          <Label htmlFor={`auth-user-${site.hostname}`}>User</Label>
+          <Input
+            id={`auth-user-${site.hostname}`}
+            value={username}
+            onChange={(event) => setUsername(event.target.value)}
+            placeholder="admin"
+            autoComplete="off"
+            className="w-40"
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor={`auth-pass-${site.hostname}`}>Password</Label>
+          <Input
+            id={`auth-pass-${site.hostname}`}
+            type="password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            placeholder={site.auth ? "Replace password" : "Choose a password"}
+            autoComplete="new-password"
+            className="w-48"
+          />
+        </div>
+        <Button
+          type="submit"
+          size="sm"
+          disabled={setAuth.isPending || !username.trim() || !password}
+        >
+          {setAuth.isPending ? <Loader2 className="animate-spin" /> : <ShieldCheck />}
+          {site.auth ? "Replace" : "Protect site"}
+        </Button>
+      </form>
+
+      {error ? (
+        <p className="flex items-center gap-2 text-sm text-destructive" role="alert">
+          <CircleAlert className="size-4" />
+          {error.message}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
  * New site from template: scaffold the docroot and register the site in one
  * step. Download-based templates (WordPress, Laravel) return a suggested
  * terminal command instead of fetching anything without a checksum.
@@ -896,10 +1215,18 @@ function TemplatesCard({ phpChoices }: { phpChoices: string[] }) {
   const [hostname, setHostname] = useState("");
   const [docroot, setDocroot] = useState("");
   const [phpVersion, setPhpVersion] = useState("");
+  const [gitUrl, setGitUrl] = useState("");
 
   const create = useMutation({
     mutationFn: () =>
-      ipc.templateCreate(templateId, hostname.trim(), docroot.trim(), phpVersion, false),
+      ipc.templateCreate(
+        templateId,
+        hostname.trim(),
+        docroot.trim(),
+        phpVersion,
+        false,
+        templateId === "git" ? gitUrl.trim() || null : null,
+      ),
     onSuccess: () => {
       setHostname("");
       setDocroot("");
@@ -951,6 +1278,19 @@ function TemplatesCard({ phpChoices }: { phpChoices: string[] }) {
             />
           </div>
           <DocrootField id="template-docroot" label="Document root (new folder)" value={docroot} onChange={setDocroot} />
+          {templateId === "git" ? (
+            <div className="space-y-1.5">
+              <Label htmlFor="template-git-url">Repository URL</Label>
+              <Input
+                id="template-git-url"
+                value={gitUrl}
+                onChange={(event) => setGitUrl(event.target.value)}
+                placeholder="https://github.com/user/repo.git"
+                spellCheck={false}
+                autoComplete="off"
+              />
+            </div>
+          ) : null}
           <div className="space-y-1.5">
             <Label htmlFor="template-php">PHP version</Label>
             <Select
@@ -970,7 +1310,12 @@ function TemplatesCard({ phpChoices }: { phpChoices: string[] }) {
           <Button
             type="submit"
             size="sm"
-            disabled={create.isPending || hostname.trim().length === 0 || docroot.trim().length === 0}
+            disabled={
+              create.isPending ||
+              hostname.trim().length === 0 ||
+              docroot.trim().length === 0 ||
+              (templateId === "git" && gitUrl.trim().length === 0)
+            }
           >
             {create.isPending ? <Loader2 className="animate-spin" /> : <Plus />}
             Create site

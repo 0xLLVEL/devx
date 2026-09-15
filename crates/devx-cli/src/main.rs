@@ -65,6 +65,16 @@ enum Command {
     },
     /// List installed component versions.
     Installed,
+    /// Pin an installed version on PATH via shims (or unset with `--unset`).
+    Use {
+        /// Component id from the catalog, e.g. `php`.
+        component_id: String,
+        /// Version to pin; ignored with `--unset`.
+        version: Option<String>,
+        /// Remove this component's shims instead of pinning a version.
+        #[arg(long)]
+        unset: bool,
+    },
 }
 
 /// Site management subcommands.

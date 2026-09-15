@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 
-import { HeroBand } from "@/components/hero-band";
+import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -63,6 +63,27 @@ export function ComponentsPage() {
   const install = useInstall();
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
+  if (catalog.isPending) {
+    return (
+      <div className="p-5">
+        <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
+          <Loader2 className="size-4 animate-spin" />
+          Loading catalog…
+        </p>
+      </div>
+    );
+  }
+  if (catalog.isError) {
+    return (
+      <div className="p-5">
+        <p className="flex items-center gap-2 text-sm text-destructive" role="alert">
+          <CircleAlert className="size-4" />
+          {catalog.error.message}
+        </p>
+      </div>
+    );
+  }
+
   const selected =
     catalog.data?.find((component) => component.id === selectedId) ??
     catalog.data?.[0] ??
@@ -70,41 +91,24 @@ export function ComponentsPage() {
   const installedVersions = (install.installed.data ?? []).length;
 
   return (
-    <>
+    <div className="space-y-4 p-5">
+      <PageHeader
+        title="Component catalog"
+        description={`${catalog.data.length} components · ${installedVersions} version${installedVersions === 1 ? "" : "s"} installed on this machine.`}
+        right={
+          <span className="text-xs text-muted-foreground">
+            Every download is checksum-verified before it lands.
+          </span>
+        }
+      />
 
-      {catalog.isPending ? (
-        <div className="p-6">
-          <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
-            <Loader2 className="size-4 animate-spin" />
-            Loading catalog…
-          </p>
-        </div>
-      ) : catalog.isError ? (
-        <div className="p-6">
-          <p className="flex items-center gap-2 text-sm text-destructive" role="alert">
-            <CircleAlert className="size-4" />
-            {catalog.error.message}
-          </p>
-        </div>
-      ) : (
-        <div className="space-y-4 p-6">
-          <HeroBand
-            title="Component catalog"
-            description={`${catalog.data.length} components · ${installedVersions} version${installedVersions === 1 ? "" : "s"} installed on this machine.`}
-            right={
-              <span className="text-xs text-muted-foreground">
-                Every download is checksum-verified before it lands.
-              </span>
-            }
-          />
-
-          <div className="grid gap-6 lg:grid-cols-[18rem_1fr]">
+      <div className="grid gap-6 lg:grid-cols-[18rem_1fr]">
             <nav aria-label="Components" className="space-y-4">
               {KIND_ORDER.filter((kind) =>
                 catalog.data.some((component) => component.kind === kind),
               ).map((kind) => (
                 <div key={kind} className="space-y-1">
-                  <h2 className="px-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  <h2 className="px-1 text-xs font-semibold text-muted-foreground">
                     {KIND_LABELS[kind]}
                   </h2>
                   {catalog.data
@@ -145,11 +149,9 @@ export function ComponentsPage() {
               ))}
             </nav>
 
-            {selected ? <ComponentDetail component={selected} install={install} /> : null}
-          </div>
-        </div>
-      )}
-    </>
+          {selected ? <ComponentDetail component={selected} install={install} /> : null}
+      </div>
+    </div>
   );
 }
 

@@ -33,6 +33,7 @@ pub mod service;
 pub mod service_defs;
 pub mod sites;
 pub mod tunnel;
+pub mod use_shim;
 pub mod verify;
 pub mod version;
 pub mod worker;
@@ -55,8 +56,9 @@ pub use resolver::{Endpoints, Resolver, VersionListing};
 pub use service::{LaunchPlan, Readiness, RenderContext, ServiceDefinition};
 pub use service_defs::{definition_for, is_service, service_ids};
 pub use sites::{
-    pool_endpoint_for, prune_stale_blocks, remove_site_block, render_server_block, validate_spec,
-    write_fastcgi_params, write_site_block, SiteSpec, SiteSyncReport,
+    pool_endpoint_for, prune_stale_blocks, remove_site_block, render_server_block,
+    sync_site_blocks, validate_spec, write_fastcgi_params, write_site_block, SiteSpec,
+    SiteSyncReport, SyncContext, SyncSite,
 };
 pub use version::{Artifact, Checksum, ComponentVersion, ReleaseChannel};
 pub use worker::{is_worker_id, plan_worker, plan_worker_instances, worker_id, WorkerPlan};

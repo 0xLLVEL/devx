@@ -74,7 +74,7 @@ describe("MailPage", () => {
     expect(
       await screen.findByText(/127\.0\.0\.1:1025/),
     ).toBeInTheDocument();
-    expect(screen.getByText(/1 unread of 2/)).toBeInTheDocument();
+    expect(screen.getByText(/1 unread · 2 captured/)).toBeInTheDocument();
   });
 
   it("tells the user to start the service when stopped", async () => {

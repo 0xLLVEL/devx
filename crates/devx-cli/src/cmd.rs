@@ -47,6 +47,11 @@ pub async fn dispatch(cli: &Cli) -> anyhow::Result<ExitCode> {
             version,
         } => uninstall_cmd(&paths, component_id, version)?,
         Command::Installed => installed_cmd(&paths)?,
+        Command::Use {
+            component_id,
+            version,
+            unset,
+        } => use_cmd(&paths, component_id, version.as_deref(), *unset)?,
     };
 
     Ok(exit_code(code))
@@ -156,6 +161,8 @@ fn sites_add(
         php_version: php.map(str::to_owned),
         env: Vec::new(),
         aliases: Vec::new(),
+        web_server: devx_provision::sites::WebServerKind::Nginx,
+        auth: None,
     };
 
     devx_provision::validate_spec(&spec, &paths.service_config_dir())
@@ -167,8 +174,10 @@ fn sites_add(
         docroot: docroot.to_string_lossy().into_owned(),
         php_version: spec.php_version.clone().unwrap_or_default(),
         https,
+        web_server: devx_core::config::WebServer::Nginx,
         env: Default::default(),
         aliases: Vec::new(),
+        auth: None,
     };
     store
         .update(|config| {
@@ -222,42 +231,35 @@ fn sites_remove(paths: &AppPaths, hostname: &str) -> anyhow::Result<u8> {
 fn sync_site_blocks(paths: &AppPaths, store: &ConfigStore) -> anyhow::Result<()> {
     let sites_dir = sites_dir(paths);
 
-    for site in &store.config().sites {
-        let spec = SiteSpec {
-            hostname: site.hostname.clone(),
-            docroot: std::path::PathBuf::from(&site.docroot),
-            php_version: site.php().map(str::to_owned),
-            env: site.env.clone().into_iter().collect(),
-            aliases: site.aliases.clone(),
-        };
-        let endpoint = match &spec.php_version {
-            Some(version) => Some(
-                devx_provision::pool_endpoint_for(&paths.service_config_dir(), version)
-                    .context("resolving the PHP pool endpoint")?,
-            ),
-            None => None,
-        };
-        let tls = if site.https {
-            Some(devx_provision::tls_listen_snippet(
-                &site.hostname,
-                store.config().network.https_port,
-                &paths.certs_dir(),
-            ))
-        } else {
-            None
-        };
-
-        devx_provision::write_site_block(&sites_dir, &spec, endpoint.as_deref(), tls.as_deref())
-            .context("writing the nginx block")?;
-    }
-
-    let live: Vec<String> = store
+    // The whole render pipeline lives in `devx-provision::sites`, mirroring
+    // the desktop app: one sync per mutation keeps both frontends converged
+    // on the same on-disk result without coordination.
+    let sync_sites: Vec<devx_provision::SyncSite> = store
         .config()
         .sites
         .iter()
-        .map(|s| s.hostname.clone())
+        .map(|site| devx_provision::SyncSite {
+            hostname: site.hostname.clone(),
+            docroot: std::path::PathBuf::from(&site.docroot),
+            php_version: site.php().map(str::to_owned),
+            https: site.https,
+            env: site.env.clone().into_iter().collect(),
+            aliases: site.aliases.clone(),
+            web_server: site.web_server.into(),
+            auth: site.auth.clone(),
+        })
         .collect();
-    devx_provision::prune_stale_blocks(&sites_dir, &live).context("pruning stale blocks")?;
+
+    devx_provision::sync_site_blocks(
+        &sites_dir,
+        &sync_sites,
+        devx_provision::SyncContext {
+            service_config_dir: &paths.service_config_dir(),
+            certs_dir: &paths.certs_dir(),
+            https_port: store.config().network.https_port,
+        },
+    )
+    .context("syncing the site blocks")?;
 
     Ok(())
 }
@@ -316,6 +318,43 @@ fn uninstall_cmd(paths: &AppPaths, component_id: &str, version: &str) -> anyhow:
     let installer = Installer::new(paths.clone(), HttpClient::new(http_dir)?)?;
     installer.uninstall(component_id, version)?;
     println!("removed {component_id} {version}");
+    Ok(0)
+}
+
+/// `devx use` — pin a version's binaries on PATH via shims, or unset them.
+fn use_cmd(
+    paths: &AppPaths,
+    component_id: &str,
+    version: Option<&str>,
+    unset: bool,
+) -> anyhow::Result<u8> {
+    if unset {
+        let removed = devx_provision::use_shim::unset_version(paths, component_id)?;
+        println!(
+            "removed {} shim(s) for {component_id}",
+            removed.len()
+        );
+        return Ok(0);
+    }
+
+    let Some(version) = version else {
+        anyhow::bail!("a version is required unless --unset is passed");
+    };
+
+    let outcome = devx_provision::use_shim::use_version(paths, component_id, version)?;
+    for entry in &outcome.written {
+        writeln!(
+            std::io::stdout(),
+            "{} -> {}",
+            entry.name,
+            entry.target.display()
+        )?;
+    }
+    println!(
+        "{component_id} {version} pinned; add {} ahead of PATH to use it",
+        devx_provision::use_shim::shims_dir(paths).display()
+    );
+
     Ok(0)
 }
 
@@ -442,6 +481,8 @@ mod tests {
         let docroot = paths.data_dir.join("docroot");
         std::fs::create_dir_all(&docroot).unwrap();
 
+        // HTTPS needs the local CA; the sync mints the site cert from it.
+        devx_provision::ensure_ca(&paths.certs_dir()).unwrap();
         sites_add(&paths, "myapp.test", &docroot, None, false).unwrap();
         sites_add(&paths, "MYAPP.TEST", &docroot, None, true).unwrap();
 

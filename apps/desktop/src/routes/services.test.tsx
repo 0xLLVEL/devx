@@ -29,6 +29,7 @@ describe("ServicesPage", () => {
     for (const mock of Object.values(mocks)) {
       mock.mockReset();
     }
+    mocks.installedVersions.mockResolvedValue([]);
     mocks.serviceLogs.mockResolvedValue([]);
     mocks.serviceStatus.mockResolvedValue({ id: "mailpit", state: "stopped" });
     mocks.phpPoolList.mockResolvedValue([]);
@@ -62,7 +63,7 @@ describe("ServicesPage", () => {
     renderWithProviders(<ServicesPage />);
 
     expect(await screen.findByText("mailpit")).toBeInTheDocument();
-    expect(screen.getByText("Stopped")).toBeInTheDocument();
+    expect(screen.getByText(/stopped/i, { selector: "span" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /start/i })).toBeInTheDocument();
   });
 
@@ -114,7 +115,7 @@ describe("ServicesPage", () => {
     renderWithProviders(<ServicesPage />);
 
     expect(await screen.findByText("PHP 8.4.25")).toBeInTheDocument();
-    expect(screen.getByText(/fastcgi pool · 4 workers/i)).toBeInTheDocument();
+    expect(screen.getByText(/fastcgi · 4 workers/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /start/i })).toBeInTheDocument();
   });
 

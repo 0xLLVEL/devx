@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Bug,
   CalendarClock,
   CircleAlert,
   Loader2,
@@ -11,6 +12,8 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+import { PageHeader } from "@/components/page-header";
+import { StatusBadge } from "@/components/status-dot";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -23,210 +26,135 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
-import { HeroBand } from "@/components/hero-band";
+import { usePhpPools, useInstalledVersions, useServiceComponentIds } from "@/lib/queries";
 import { EmptyState } from "@/components/ui/empty-state";
-import { StatTile } from "@/components/ui/stat-tile";
 import { Switch } from "@/components/ui/switch";
 import {
   ipc,
   type InstalledVersion,
   type LogEntry,
   type PhpPoolStatus,
-  type ServiceMetrics,
   type ServiceState,
   type WorkerStatus,
 } from "@/lib/ipc";
-
-const STATE_BADGE: Record<
-  ServiceState,
-  { label: string; variant: "success" | "warning" | "destructive" | "outline" | "secondary" }
-> = {
-  running: { label: "Running", variant: "success" },
-  starting: { label: "Starting", variant: "warning" },
-  stopping: { label: "Stopping", variant: "warning" },
-  failed: { label: "Failed", variant: "destructive" },
-  stopped: { label: "Stopped", variant: "outline" },
-};
+import { cn } from "@/lib/utils";
 
 /**
- * Shared live metrics for every supervised service.
- *
- * One page-level query backs all cards; state-change events also invalidate
- * it, so a badge never lags a crash.
+ * Services page — a tabbed Real-Time Monitor (MASTER.md): Services, Workers
+ * and Scheduled tasks share one page because they answer one question
+ * ("what is running and how do I act on it"). Each monitor row keeps its
+ * inline start/stop; ports, versions and commands render in the data face.
  */
-function useMetrics() {
-  return useQuery({
-    queryKey: ["service-metrics"],
-    queryFn: ipc.serviceMetrics,
-    refetchInterval: 2000,
-    refetchIntervalInBackground: false,
-  });
-}
-
-/** Compact CPU and memory readout for one service. */
-function MetricBadges({
-  metrics,
-  id,
-}: {
-  metrics: ServiceMetrics[] | undefined;
-  id: string;
-}) {
-  const entry = metrics?.find((m) => m.id === id);
-  if (!entry || entry.state !== "running" || entry.memory_bytes === 0) {
-    return null;
-  }
-  return (
-    <span className="text-xs font-normal text-muted-foreground">
-      {(entry.cpu_percent ?? 0).toFixed(0)}% CPU · {formatBytes(entry.memory_bytes)}
-    </span>
-  );
-}
-
-/** Formats a byte count for a badge. */
-function formatBytes(bytes: number): string {
-  if (bytes >= 1024 ** 3) {
-    return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
-  }
-  if (bytes >= 1024 ** 2) {
-    return `${(bytes / 1024 ** 2).toFixed(0)} MB`;
-  }
-  return `${(bytes / 1024).toFixed(0)} KB`;
-}
-
-/** Services page: start, stop and tail supervised background services. */
 export function ServicesPage() {
-  const installed = useQuery({
-    queryKey: ["installed-versions"],
-    queryFn: ipc.installedVersions,
-  });
+  const installed = useInstalledVersions();
   // Which installed components DevX knows how to supervise comes from the
   // backend, so the two never drift.
-  const serviceIds = useQuery({
-    queryKey: ["service-component-ids"],
-    queryFn: ipc.serviceComponentIds,
-    staleTime: Infinity,
-  });
-  // One FastCGI pool per installed PHP version, planned by the backend.
-  const phpPools = useQuery({
-    queryKey: ["php-pools"],
-    queryFn: ipc.phpPoolList,
-  });
-  // Live CPU/RAM for every supervised process, shared by all cards below.
-  const metrics = useMetrics();
-  // Section data also feeds the summary tiles; same cache keys, one fetch.
-  const workers = useQuery({ queryKey: ["worker-list"], queryFn: ipc.workerList });
-  const cron = useQuery({ queryKey: ["cron-list"], queryFn: ipc.cronList });
+  const serviceIds = useServiceComponentIds();
+  const phpPools = usePhpPools();
+  const [tab, setTab] = useState<"services" | "workers" | "scheduler">("services");
 
+  const pending = installed.isPending || phpPools.isPending || serviceIds.isPending;
   const supervisable = new Set(serviceIds.data ?? []);
   const startable = (installed.data ?? []).filter((entry) =>
     supervisable.has(entry.component_id),
   );
-
-  const pending = installed.isPending || serviceIds.isPending || phpPools.isPending;
-  const empty =
-    startable.length === 0 && (phpPools.data ?? []).length === 0;
-  const runningCount = (metrics.data ?? []).filter(
-    (entry) => entry.state === "running" || entry.state === "starting",
-  ).length;
-  const supervisedCount = (metrics.data ?? []).length;
-  const poolCount = (phpPools.data ?? []).length;
-  const workerCount = (workers.data ?? []).length;
-  const workerRunning = (workers.data ?? []).reduce(
-    (sum, worker) =>
-      sum + worker.live.filter((entry) => entry.state === "running").length,
-    0,
-  );
-  const cronCount = (cron.data ?? []).length;
-  const allUp = !pending && supervisedCount > 0 && runningCount === supervisedCount;
+  const empty = startable.length === 0 && (phpPools.data ?? []).length === 0;
 
   return (
-    <>
-      <div className="space-y-4 p-6">
-        {!pending && !empty ? (
-          <>
-            <HeroBand
-              title={
-                allUp
-                  ? "Everything is running."
-                  : runningCount > 0
-                    ? `${runningCount} of ${supervisedCount} services running.`
-                    : "No services are running."
-              }
-              description="Supervised background services, PHP pools, workers and scheduled tasks — all in one place."
-            />
+    <div className="space-y-4 p-5">
+      <PageHeader
+        title="Services"
+        description="Supervised background services, PHP pools, workers and scheduled tasks."
+      />
 
-            <div className="animate-in fade-in slide-in-from-bottom-2 grid gap-4 duration-300 sm:grid-cols-2 xl:grid-cols-4">
-              <StatTile
-                icon={<Puzzle className="size-4" />}
-                label="Services"
-                value={`${runningCount}/${supervisedCount}`}
-                sub={
-                  runningCount === supervisedCount && supervisedCount > 0
-                    ? "all running"
-                    : "running"
-                }
-                tone={allUp ? "success" : "neutral"}
-              />
-              <StatTile
-                icon={<Square className="size-4" />}
-                label="PHP pools"
-                value={String(poolCount)}
-                sub="installed versions"
-              />
-              <StatTile
-                icon={<Play className="size-4" />}
-                label="Workers"
-                value={String(workerCount)}
-                sub={`${workerRunning} instance${workerRunning === 1 ? "" : "s"} running`}
-              />
-              <StatTile
-                icon={<CalendarClock className="size-4" />}
-                label="Scheduled tasks"
-                value={String(cronCount)}
-                sub="registered with Windows"
-              />
-            </div>
-          </>
-        ) : null}
-
-        {pending ? (
-          <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
-            <Loader2 className="size-4 animate-spin" />
-            Loading installed components…
-          </p>
-        ) : empty ? (
-          <EmptyState
-            title="No supervisable service is installed yet."
-            description="Install Mailpit or PHP from the Components page to start one here."
+      {pending ? (
+        <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
+          <Loader2 className="size-4 animate-spin" />
+          Loading installed components…
+        </p>
+      ) : empty ? (
+        <EmptyState
+          title="No supervisable service is installed yet."
+          description="Install Mailpit or PHP from the Components page to start one here."
+        />
+      ) : (
+        <>
+          <TabBar
+            tabs={[
+              { id: "services", label: "Services" },
+              { id: "workers", label: "Workers" },
+              { id: "scheduler", label: "Scheduled tasks" },
+            ]}
+            active={tab}
+            onSelect={setTab}
           />
-        ) : (
-          <>
-            {(phpPools.data ?? []).map((pool) => (
-              <PhpPoolCard key={pool.id} pool={pool} metrics={metrics.data} />
-            ))}
-            {startable.map((entry) => (
-              <ServiceCard key={entry.component_id} installed={entry} metrics={metrics.data} />
-            ))}
-          </>
-        )}
 
-        <WorkersSection phpVersions={(phpPools.data ?? []).map((pool) => pool.version)} />
-        <SchedulerSection phpVersions={(phpPools.data ?? []).map((pool) => pool.version)} />
-      </div>
-    </>
+          {tab === "services" ? (
+            <div className="space-y-3">
+              {(phpPools.data ?? []).map((pool) => (
+                <PhpPoolCard key={pool.id} pool={pool} />
+              ))}
+              {startable.map((entry) => (
+                <ServiceCard key={entry.component_id} installed={entry} />
+              ))}
+            </div>
+          ) : null}
+
+          {tab === "workers" ? (
+            <WorkersSection phpVersions={(phpPools.data ?? []).map((pool) => pool.version)} />
+          ) : null}
+
+          {tab === "scheduler" ? (
+            <SchedulerSection phpVersions={(phpPools.data ?? []).map((pool) => pool.version)} />
+          ) : null}
+        </>
+      )}
+    </div>
+  );
+}
+
+/** Border-bottom tab row; the active tab carries the amber marker. */
+export function TabBar<T extends string>({
+  tabs,
+  active,
+  onSelect,
+}: {
+  tabs: { id: T; label: string }[];
+  active: T;
+  onSelect: (id: T) => void;
+}) {
+  return (
+    <div role="tablist" aria-label="Sections" className="flex gap-1 border-b border-border">
+      {tabs.map((item) => (
+        <button
+          key={item.id}
+          role="tab"
+          type="button"
+          aria-selected={active === item.id}
+          onClick={() => onSelect(item.id)}
+          className={cn(
+            "relative cursor-pointer px-3 py-2 text-sm transition-colors duration-150",
+            active === item.id
+              ? "font-medium text-foreground after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full after:bg-primary"
+              : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          {item.label}
+        </button>
+      ))}
+    </div>
   );
 }
 
 /** One PHP FastCGI pool: start, stop, and its FastCGI endpoint. */
 function PhpPoolCard({
   pool,
-  metrics,
 }: {
   pool: PhpPoolStatus;
-  metrics: ServiceMetrics[] | undefined;
 }) {
   const queryClient = useQueryClient();
   const [showExtensions, setShowExtensions] = useState(false);
+  const [showXdebug, setShowXdebug] = useState(false);
 
   // The pool may have been started from elsewhere; poll to keep the badge live.
   const status = useQuery({
@@ -250,7 +178,6 @@ function PhpPoolCard({
       queryClient.invalidateQueries({ queryKey: ["php-pool-status", pool.version] }),
   });
 
-  const badge = STATE_BADGE[state];
   const busy = start.isPending || stop.isPending;
   const error =
     start.error instanceof Error
@@ -261,40 +188,25 @@ function PhpPoolCard({
 
   return (
     <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <CardTitle className="flex items-center gap-2">
-              PHP {pool.version}
-              <Badge variant={badge.variant}>{badge.label}</Badge>
-              <MetricBadges metrics={metrics} id={pool.id} />
+      <CardHeader className="pb-2">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            <CardTitle className="flex items-center gap-2 text-sm font-medium">
+              <span className="data-value text-base">PHP {pool.version}</span>
+              <StatusBadge state={state} />
             </CardTitle>
-            <CardDescription>
-              FastCGI pool · {pool.workers} workers · 127.0.0.1:{status.data?.port ?? pool.port}
+            <CardDescription className="data-value">
+              fastcgi · {pool.workers} workers · 127.0.0.1:{status.data?.port ?? pool.port}
             </CardDescription>
           </div>
-          <div className="flex items-center gap-2">
-            {running ? (
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={busy}
-                onClick={() => stop.mutate()}
-              >
-                {stop.isPending ? <Loader2 className="animate-spin" /> : <Square />}
-                Stop
-              </Button>
-            ) : (
-              <Button
-                size="sm"
-                disabled={busy}
-                onClick={() => start.mutate()}
-              >
-                {start.isPending ? <Loader2 className="animate-spin" /> : <Play />}
-                Start
-              </Button>
-            )}
-          </div>
+          <StartStopButton
+            running={running}
+            busy={busy}
+            onStart={() => start.mutate()}
+            onStop={() => stop.mutate()}
+            startPending={start.isPending}
+            stopPending={stop.isPending}
+          />
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -304,7 +216,7 @@ function PhpPoolCard({
             {error.message}
           </p>
         ) : null}
-        <div className="flex items-center gap-2">
+        <div>
           <Button
             variant="ghost"
             size="sm"
@@ -313,11 +225,172 @@ function PhpPoolCard({
             <Puzzle />
             {showExtensions ? "Hide extensions" : "Extensions"}
           </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowXdebug((open) => !open)}
+          >
+            <Bug />
+            {showXdebug ? "Hide Xdebug" : "Xdebug"}
+          </Button>
         </div>
+        {showXdebug ? <XdebugPanel version={pool.version} /> : null}
         {showExtensions ? <ExtensionsPanel version={pool.version} /> : null}
         <LogTail id={pool.id} active={running} />
       </CardContent>
     </Card>
+  );
+}
+
+/** Shared inline start/stop control with its loading state. */
+function StartStopButton({
+  running,
+  busy,
+  onStart,
+  onStop,
+  startPending,
+  stopPending,
+}: {
+  running: boolean;
+  busy: boolean;
+  onStart: () => void;
+  onStop: () => void;
+  startPending: boolean;
+  stopPending: boolean;
+}) {
+  if (running) {
+    return (
+      <Button variant="outline" size="sm" disabled={busy} onClick={onStop}>
+        {stopPending ? <Loader2 className="animate-spin" /> : <Square />}
+        Stop
+      </Button>
+    );
+  }
+  return (
+    <Button size="sm" disabled={busy} onClick={onStart}>
+      {startPending ? <Loader2 className="animate-spin" /> : <Play />}
+      Start
+    </Button>
+  );
+}
+
+/**
+ * Xdebug controls for one PHP version: a master switch plus mode and IDE
+ * port fields. Enabling requires the installed PHP to ship xdebug; the
+ * backend validates that and the pool restarts on change.
+ */
+function XdebugPanel({ version }: { version: string }) {
+  const queryClient = useQueryClient();
+
+  const info = useQuery({
+    queryKey: ["php-xdebug", version],
+    queryFn: () => ipc.phpXdebugGet(version),
+  });
+
+  const set = useMutation({
+    mutationFn: ({
+      enabled,
+      mode,
+      clientPort,
+    }: {
+      enabled: boolean;
+      mode: string;
+      clientPort: number;
+    }) => ipc.phpXdebugSet(version, enabled, mode, clientPort),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(["php-xdebug", version], updated);
+      // The pool's ini changed; its live status card re-renders on poll.
+    },
+  });
+
+  if (info.isPending) {
+    return (
+      <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
+        <Loader2 className="size-4 animate-spin" />
+        Loading Xdebug settings…
+      </p>
+    );
+  }
+  if (info.isError) {
+    return (
+      <p className="flex items-center gap-2 text-sm text-destructive" role="alert">
+        <CircleAlert className="size-4" />
+        {info.error.message}
+      </p>
+    );
+  }
+
+  const current = info.data;
+  const [mode, setMode] = useState(current.mode || "debug");
+  const [port, setPort] = useState(current.client_port ? String(current.client_port) : "9003");
+
+  const save = (enabled: boolean) => {
+    set.mutate({
+      enabled,
+      mode: enabled ? mode.trim() : "",
+      clientPort: enabled ? Number(port) || 0 : 0,
+    });
+  };
+
+  return (
+    <div className="space-y-2 rounded-sm border border-border p-3">
+      <label className="flex items-center justify-between gap-3 text-sm">
+        <span>Xdebug debugger</span>
+        <Switch
+          checked={current.enabled}
+          disabled={set.isPending}
+          onCheckedChange={(checked) => save(checked)}
+          aria-label={`${current.enabled ? "Disable" : "Enable"} Xdebug`}
+        />
+      </label>
+      {current.enabled ? (
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="space-y-1.5">
+            <Label htmlFor={`xdebug-mode-${version}`}>Mode</Label>
+            <Input
+              id={`xdebug-mode-${version}`}
+              value={mode}
+              placeholder="debug"
+              className="w-40 font-mono text-xs"
+              onChange={(event) => setMode(event.target.value)}
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor={`xdebug-port-${version}`}>IDE port</Label>
+            <Input
+              id={`xdebug-port-${version}`}
+              value={port}
+              placeholder="9003"
+              className="w-24 font-mono text-xs"
+              onChange={(event) => setPort(event.target.value.replace(/\D/g, ""))}
+              inputMode="numeric"
+              autoComplete="off"
+            />
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={
+              set.isPending ||
+              (mode.trim() === (current.mode || "debug") &&
+                (Number(port) || 0) === current.client_port)
+            }
+            onClick={() => save(true)}
+          >
+            {set.isPending ? <Loader2 className="animate-spin" /> : null}
+            Apply
+          </Button>
+        </div>
+      ) : null}
+      {set.error instanceof Error ? (
+        <p className="flex items-center gap-2 text-sm text-destructive" role="alert">
+          <CircleAlert className="size-4" />
+          {set.error.message}
+        </p>
+      ) : null}
+    </div>
   );
 }
 
@@ -378,9 +451,9 @@ function ExtensionsPanel({ version }: { version: string }) {
           return (
             <label
               key={extension}
-              className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-1.5 text-sm"
+              className="flex items-center justify-between gap-3 rounded-sm border border-border px-3 py-1.5 text-sm"
             >
-              <span className="min-w-0 truncate font-mono text-xs" data-selectable>
+              <span className="data-value min-w-0 truncate" data-selectable>
                 {extension}
               </span>
               <Switch
@@ -407,10 +480,8 @@ function ExtensionsPanel({ version }: { version: string }) {
 
 function ServiceCard({
   installed,
-  metrics,
 }: {
   installed: InstalledVersion;
-  metrics: ServiceMetrics[] | undefined;
 }) {
   const queryClient = useQueryClient();
   const id = installed.component_id;
@@ -435,7 +506,6 @@ function ServiceCard({
       queryClient.invalidateQueries({ queryKey: ["service-status", id] }),
   });
 
-  const badge = STATE_BADGE[state];
   const busy = start.isPending || stop.isPending;
   const error =
     start.error instanceof Error
@@ -446,38 +516,23 @@ function ServiceCard({
 
   return (
     <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <CardTitle className="flex items-center gap-2">
-              {id}
-              <Badge variant={badge.variant}>{badge.label}</Badge>
-              <MetricBadges metrics={metrics} id={id} />
+      <CardHeader className="pb-2">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            <CardTitle className="flex items-center gap-2 text-sm font-medium">
+              <span className="data-value text-base">{id}</span>
+              <StatusBadge state={state} />
             </CardTitle>
-            <CardDescription>version {installed.version}</CardDescription>
+            <CardDescription className="data-value">v{installed.version}</CardDescription>
           </div>
-          <div className="flex items-center gap-2">
-            {running ? (
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={busy}
-                onClick={() => stop.mutate()}
-              >
-                {stop.isPending ? <Loader2 className="animate-spin" /> : <Square />}
-                Stop
-              </Button>
-            ) : (
-              <Button
-                size="sm"
-                disabled={busy}
-                onClick={() => start.mutate()}
-              >
-                {start.isPending ? <Loader2 className="animate-spin" /> : <Play />}
-                Start
-              </Button>
-            )}
-          </div>
+          <StartStopButton
+            running={running}
+            busy={busy}
+            onStart={() => start.mutate()}
+            onStop={() => stop.mutate()}
+            startPending={start.isPending}
+            stopPending={stop.isPending}
+          />
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -512,10 +567,10 @@ function WorkersSection({ phpVersions }: { phpVersions: string[] }) {
 
   return (
     <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between gap-4">
+      <CardHeader className="pb-2">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <CardTitle>Queue workers</CardTitle>
+            <CardTitle className="text-sm font-medium">Queue workers</CardTitle>
             <CardDescription>
               Long-running commands supervised like any other service — each
               instance restarts with backoff when it exits.
@@ -542,8 +597,8 @@ function WorkersSection({ phpVersions }: { phpVersions: string[] }) {
           </p>
         ) : configured.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            No workers configured. Add one to run e.g.{" "}
-            <code>php artisan queue:work</code> under DevX's supervisor.
+            No workers configured. Add one to run e.g.{""}
+            <code> php artisan queue:work </code> under DevX's supervisor.
           </p>
         ) : (
           <ul className="space-y-2">
@@ -597,10 +652,10 @@ function WorkerCard({
     : (worker.program ?? "");
 
   return (
-    <div className="flex items-center justify-between gap-4 rounded-md border border-border p-3">
-      <div className="min-w-0 space-y-1">
+    <div className="flex items-center justify-between gap-4 rounded-sm border border-border px-3 py-2.5">
+      <div className="min-w-0 space-y-0.5">
         <p className="flex items-center gap-2 text-sm font-medium">
-          {worker.name}
+          <span className="data-value text-sm text-foreground">{worker.name}</span>
           {runningCount > 0 ? (
             <Badge variant="success">
               {runningCount}/{worker.instances} running
@@ -612,7 +667,7 @@ function WorkerCard({
             <Badge variant="destructive">failed</Badge>
           ) : null}
         </p>
-        <p className="truncate font-mono text-xs text-muted-foreground" data-selectable>
+        <p className="data-value truncate text-muted-foreground" data-selectable>
           {label} {worker.args.join(" ")} · {worker.working_dir}
         </p>
       </div>
@@ -673,13 +728,13 @@ function AddWorkerForm({
 
   return (
     <form
-      className="space-y-3 rounded-md border border-border p-3"
+      className="space-y-4 rounded-sm border border-border p-4"
       onSubmit={(event) => {
         event.preventDefault();
         add.mutate();
       }}
     >
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-1.5">
           <Label htmlFor="worker-name">Name</Label>
           <Input
@@ -831,16 +886,19 @@ function LogTail({ id, active }: { id: string; active: boolean }) {
   return (
     <div
       ref={containerRef}
-      className="max-h-48 overflow-y-auto rounded-md border border-border bg-background/50 p-2 font-mono text-xs"
+      className="max-h-48 overflow-y-auto rounded-sm border border-border bg-background/60 p-2"
       data-selectable
     >
       {lines.length === 0 ? (
-        <p className="text-muted-foreground">Waiting for output…</p>
+        <p className="data-value text-muted-foreground">Waiting for output…</p>
       ) : (
         lines.map((line) => (
           <div
             key={line.seq}
-            className={line.stream === "stderr" ? "text-destructive" : undefined}
+            className={cn(
+              "data-value",
+              line.stream === "stderr" ? "text-destructive" : "text-foreground",
+            )}
           >
             {line.text}
           </div>
@@ -869,13 +927,13 @@ function SchedulerSection({ phpVersions }: { phpVersions: string[] }) {
 
   return (
     <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between gap-4">
+      <CardHeader className="pb-2">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <CardTitle>Scheduled tasks</CardTitle>
+            <CardTitle className="text-sm font-medium">Scheduled tasks</CardTitle>
             <CardDescription>
-              Windows scheduled tasks DevX creates for you — e.g.{" "}
-              <code>php artisan schedule:run</code> every minute for a site.
+              Windows scheduled tasks DevX creates for you — e.g.{""}
+              <code> php artisan schedule:run </code> every minute for a site.
             </CardDescription>
           </div>
           <Button size="sm" onClick={() => setAdding((open) => !open)}>
@@ -904,23 +962,31 @@ function SchedulerSection({ phpVersions }: { phpVersions: string[] }) {
             {configured.map((job) => (
               <li
                 key={job.name}
-                className="flex items-center justify-between gap-4 rounded-md border border-border p-3"
+                className="flex items-center justify-between gap-4 rounded-sm border border-border px-3 py-2.5"
               >
                 <div className="min-w-0">
                   <p className="flex items-center gap-2 text-sm font-medium">
                     <CalendarClock className="size-4 text-muted-foreground" aria-hidden />
-                    {job.name}
+                    <span className="data-value text-sm text-foreground">{job.name}</span>
                     <Badge variant={job.registered ? "success" : "outline"}>
                       {job.registered ? "every " + job.every_minutes + " min" : "missing in Windows"}
                     </Badge>
                   </p>
-                  <p className="truncate font-mono text-xs text-muted-foreground" data-selectable>
+                  <p className="data-value truncate text-muted-foreground" data-selectable>
                     {(job.php_version ? `php ${job.php_version}` : (job.program ?? "")) +
                       " " +
                       job.args.join(" ") +
                       " · " +
                       job.working_dir}
                   </p>
+                  {job.registered ? (
+                    <p className="text-xs text-muted-foreground">
+                      Next run:{" "}
+                      <span className="data-value">
+                        {job.next_run ?? "unknown (Task Scheduler did not report one)"}
+                      </span>
+                    </p>
+                  ) : null}
                 </div>
                 <Button
                   variant="ghost"
@@ -987,13 +1053,13 @@ function AddCronForm({
 
   return (
     <form
-      className="space-y-3 rounded-md border border-border p-3"
+      className="space-y-4 rounded-sm border border-border p-4"
       onSubmit={(event) => {
         event.preventDefault();
         add.mutate();
       }}
     >
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-1.5">
           <Label htmlFor="cron-name">Name</Label>
           <Input

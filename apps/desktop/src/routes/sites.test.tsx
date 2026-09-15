@@ -63,6 +63,7 @@ describe("SitesPage", () => {
         php_version: "8.4.25",
         php_endpoint: "127.0.0.1:9100",
         https: false,
+        web_server: "Nginx",
         env: {},
         aliases: [],
       },
@@ -72,6 +73,7 @@ describe("SitesPage", () => {
         php_version: "",
         php_endpoint: null,
         https: false,
+        web_server: "Nginx",
         env: {},
         aliases: [],
       },
@@ -94,6 +96,7 @@ describe("SitesPage", () => {
         php_version: "",
         php_endpoint: null,
         https: true,
+        web_server: "Nginx",
         env: {},
         aliases: [],
       },
@@ -117,6 +120,7 @@ describe("SitesPage", () => {
         php_version: "8.4.25",
         php_endpoint: "127.0.0.1:9100",
         https: false,
+        web_server: "Nginx",
         env: {},
         aliases: [],
       },
@@ -128,6 +132,7 @@ describe("SitesPage", () => {
         php_version: "8.4.25",
         php_endpoint: "127.0.0.1:9100",
         https: false,
+        web_server: "Nginx",
         env: {},
         aliases: [],
       },
@@ -147,6 +152,7 @@ describe("SitesPage", () => {
       "C:\\dev\\myapp\\public",
       "8.4.25",
       false,
+      "Nginx",
     );
   });
 
@@ -169,6 +175,7 @@ describe("SitesPage", () => {
       "C:\\dev\\secure",
       "",
       true,
+      "Nginx",
     );
   });
 
@@ -199,6 +206,7 @@ describe("SitesPage", () => {
         php_version: "8.4.25",
         php_endpoint: "127.0.0.1:9100",
         https: false,
+        web_server: "Nginx",
         env: {},
         aliases: [],
       },
@@ -223,6 +231,7 @@ describe("SitesPage", () => {
         php_version: "8.4.25",
         php_endpoint: "127.0.0.1:9100",
         https: false,
+        web_server: "Nginx",
         env: {},
         aliases: [],
       },
@@ -244,6 +253,7 @@ describe("SitesPage", () => {
         "C:\\dev\\myapp\\public",
         "8.4.25",
         false,
+        "Nginx",
       );
     });
   });

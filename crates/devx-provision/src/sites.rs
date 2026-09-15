@@ -18,15 +18,21 @@ use std::path::{Path, PathBuf};
 use devx_core::{Error, ErrorCode, Result};
 use serde::Serialize;
 
+use crate::pki::{ensure_site_cert, tls_listen_snippet};
+
 /// Maximum sites DevX manages; guards against runaway config generation.
 pub const MAX_SITES: usize = 256;
 
 /// The hostname a site serves on.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SiteHostname(pub String);
 
 /// A user-configured site.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
+///
+/// Internal to the render pipeline: the desktop command layer constructs it
+/// from the stored config, and neither it nor its `WebServerKind` appears
+/// on the IPC surface, so no serde or specta derives are needed.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SiteSpec {
     /// Host name served, e.g. `myapp.test`. Validated by [`validate_hostname`].
     pub hostname: String,
@@ -41,6 +47,38 @@ pub struct SiteSpec {
     pub env: Vec<(String, String)>,
     /// Additional host names the site answers to, appended to `server_name`.
     pub aliases: Vec<String>,
+    /// Which web server serves this site. Only nginx has a sites-include
+    /// pipeline today; Caddy and FrankenPHP render into their own
+    /// per-server include directories.
+    pub web_server: WebServerKind,
+    /// Basic-auth credentials, `None` for a public site.
+    pub auth: Option<devx_core::config::SiteAuth>,
+}
+
+/// Which web server serves a site — the render-side mirror of
+/// `devx_core::config::WebServer`, kept separate so the sync pipeline never
+/// depends on the caller's storage type (same split as `SyncSite`). It is
+/// an internal render detail, not an IPC type, so it carries no serde or
+/// specta derives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WebServerKind {
+    /// nginx server blocks under `service-config/nginx/sites`.
+    #[default]
+    Nginx,
+    /// Caddy site entries under `service-config/caddy/sites`.
+    Caddy,
+    /// FrankenPHP (no pool; PHP served by the binary itself).
+    FrankenPhp,
+}
+
+impl From<devx_core::config::WebServer> for WebServerKind {
+    fn from(value: devx_core::config::WebServer) -> Self {
+        match value {
+            devx_core::config::WebServer::Nginx => WebServerKind::Nginx,
+            devx_core::config::WebServer::Caddy => WebServerKind::Caddy,
+            devx_core::config::WebServer::FrankenPhp => WebServerKind::FrankenPhp,
+        }
+    }
 }
 
 /// What sync produced, for the UI.
@@ -128,6 +166,7 @@ pub fn render_server_block(
     let docroot = slash(&spec.docroot);
 
     let env_lines = render_env_params(&spec.env);
+    let auth_lines = render_nginx_auth(&spec.auth, &spec.hostname);
 
     let php_location = match php_endpoint {
         Some(endpoint) => format!(
@@ -161,7 +200,7 @@ server {{
     access_log  logs/{hostname}.access.log;
     error_log   logs/{hostname}.error.log;
 
-{php_location}    location / {{
+{php_location}{auth_lines}    location / {{
         try_files $uri $uri/ /index.php?$query_string;
     }}
 }}
@@ -171,7 +210,50 @@ server {{
         index = index,
         php_location = php_location,
         tls = tls.unwrap_or_default(),
+        auth_lines = auth_lines,
     )
+}
+
+/// Renders the nginx basic-auth directives for one site.
+///
+/// The `auth_basic` plus `auth_basic_user_file` pair sits at `server` level
+/// so every location inherits it; the htpasswd file lives next to the site
+/// blocks under `service-config/nginx/auth`.
+fn render_nginx_auth(
+    auth: &Option<devx_core::config::SiteAuth>,
+    hostname: &str,
+) -> String {
+    if auth.is_none() {
+        return String::new();
+    };
+    let _ = auth;
+    format!(
+        "\n    auth_basic            \"restricted\";\n    auth_basic_user_file  auth/{hostname}.htpasswd;\n"
+    )
+}
+
+/// Writes the htpasswd file for one site's basic auth.
+///
+/// Called by the sync pipeline whenever a site carries credentials, so the
+/// rendered block never references a file that does not exist.
+pub fn write_htpasswd(
+    auth_dir: &Path,
+    hostname: &str,
+    auth: &devx_core::config::SiteAuth,
+) -> Result<()> {
+    std::fs::create_dir_all(auth_dir).map_err(|err| {
+        Error::new(
+            ErrorCode::Io,
+            format!("failed to create {}: {err}", auth_dir.display()),
+        )
+    })?;
+    let line = format!("{}:{}\n", auth.username, auth.password_hash);
+    devx_core::fsx::write_atomic(auth_dir.join(format!("{hostname}.htpasswd")), line)
+}
+
+/// Removes the htpasswd file for a site that no longer has auth.
+pub fn remove_htpasswd(auth_dir: &Path, hostname: &str) {
+    let _ = std::fs::remove_file(auth_dir.join(format!("{hostname}.htpasswd")));
 }
 
 /// The full `server_name` value: the primary host name plus its aliases.
@@ -179,6 +261,98 @@ fn spec_hostname(spec: &SiteSpec) -> String {
     let mut names = vec![spec.hostname.clone()];
     names.extend(spec.aliases.iter().cloned());
     names.join(" ")
+}
+
+/// Renders one site as a Caddyfile site entry.
+///
+/// Caddy's file-server + `php_fastcgi` pair covers everything the nginx
+/// block did: static serving, PHP proxying to the pool, and index files.
+/// TLS is left to Caddy's own internal CA on `https_port` — the DevX local
+/// CA handles sites it proxies, but Caddy re-terminates its own listener.
+pub fn render_caddy_site(
+    spec: &SiteSpec,
+    php_endpoint: Option<&str>,
+    tls: Option<&str>,
+) -> String {
+    let docroot = slash(&spec.docroot);
+    let names = spec_hostname(spec);
+
+    let php_block = match php_endpoint {
+        Some(endpoint) => format!("\n\tphp_fastcgi {endpoint}"),
+        None => String::new(),
+    };
+
+    let auth_block = match &spec.auth {
+        Some(auth) => format!(
+            "\n\tbasic_auth {{\n\t\t{} {}\n\t}}",
+            auth.username, auth.password_hash
+        ),
+        None => String::new(),
+    };
+
+    // `tls internal` keeps Caddy self-signing instead of ACME; when DevX
+    // passes a TLS snippet (the local CA pair) we use that instead.
+    let tls_line = match tls {
+        Some(snippet) => format!("\n\t{snippet}"),
+        None => String::new(),
+    };
+
+    format!(
+        r##"# devx-managed site: {names}
+{names} {{
+	root * {docroot}{tls_line}
+	file_server{auth_block}{php_block}
+	log {{
+		output file {{log_dir}}/{hostname}.access.log
+	}}
+}}
+"##,
+        names = names,
+        docroot = docroot,
+        php_block = php_block,
+        tls_line = tls_line,
+        auth_block = auth_block,
+        hostname = spec.hostname,
+    )
+}
+
+/// Renders one site for FrankenPHP.
+///
+/// FrankenPHP serves PHP directly (no pool), so the entry is a plain
+/// document root plus the listen address. Environment variables reach PHP
+/// through FrankenPHP's own `php.ini` env passthrough, which reads the
+/// process environment — DevX renders them as directives in the site file
+/// via Caddy's `env` adapter is not needed, so they ride on the worker
+/// definition instead. Static and PHP sites are identical here.
+pub fn render_frankenphp_site(spec: &SiteSpec, tls: Option<&str>) -> String {
+    let docroot = slash(&spec.docroot);
+    let names = spec_hostname(spec);
+
+    let tls_line = match tls {
+        Some(snippet) => format!("\n\t{snippet}"),
+        None => String::new(),
+    };
+
+    let auth_block = match &spec.auth {
+        Some(auth) => format!(
+            "\n\tbasic_auth {{\n\t\t{} {}\n\t}}",
+            auth.username, auth.password_hash
+        ),
+        None => String::new(),
+    };
+
+    format!(
+        r##"# devx-managed site: {names}
+{names} {{
+	root * {docroot}{tls_line}
+	file_server{auth_block}
+}}
+"##,
+        names = names,
+        docroot = docroot,
+        tls_line = tls_line,
+        auth_block = auth_block,
+    )
 }
 
 /// Renders the site's environment variables as `fastcgi_param` lines.
@@ -287,6 +461,132 @@ pub fn remove_site_block(sites_dir: &Path, hostname: &str) -> Result<()> {
     }
 }
 
+/// One configured site, as the sync pipeline consumes it.
+///
+/// A thin projection of the stored `ConfigSite` (both frontends keep the
+/// config shape, this module keeps the render shape), so the sync never
+/// depends on the caller's storage type.
+#[derive(Debug, Clone)]
+pub struct SyncSite {
+    /// Host name served.
+    pub hostname: String,
+    /// Absolute document root.
+    pub docroot: PathBuf,
+    /// PHP version whose pool serves the site; `None` for static.
+    pub php_version: Option<String>,
+    /// Whether the site serves HTTPS alongside HTTP.
+    pub https: bool,
+    /// Environment variables exposed as `fastcgi_param` lines, pre-sorted.
+    pub env: Vec<(String, String)>,
+    /// Additional host names on the `server_name` line.
+    pub aliases: Vec<String>,
+    /// Which web server serves this site.
+    pub web_server: WebServerKind,
+    /// Basic-auth credentials, `None` for a public site.
+    pub auth: Option<devx_core::config::SiteAuth>,
+}
+
+/// Inputs the sync needs that vary per frontend.
+#[derive(Debug, Clone, Copy)]
+pub struct SyncContext<'a> {
+    /// The nginx service-config root (each pool's `pool.conf` lives under it).
+    pub service_config_dir: &'a Path,
+    /// Where per-site certificates are minted and read.
+    pub certs_dir: &'a Path,
+    /// The configured HTTPS port for `listen 443` blocks.
+    pub https_port: u16,
+}
+
+/// (Re)writes every configured site's nginx block and prunes stale ones.
+///
+/// One sync per mutation keeps the include directory exactly equal to the
+/// configured set, which is what makes nginx restarts deterministic. The
+/// whole pipeline lives here — endpoint resolution, certificate minting,
+/// block rendering, pruning — so the desktop app and the CLI cannot drift:
+/// both call this and neither owns ordering rules.
+pub fn sync_site_blocks(
+    sites_dir: &Path,
+    sites: &[SyncSite],
+    ctx: SyncContext<'_>,
+) -> Result<SiteSyncReport> {
+    std::fs::create_dir_all(sites_dir).map_err(|err| {
+        Error::new(
+            ErrorCode::Io,
+            format!("failed to create {}: {err}", sites_dir.display()),
+        )
+    })?;
+
+    let mut written = Vec::with_capacity(sites.len());
+
+    for site in sites {
+        let spec = SiteSpec {
+            hostname: site.hostname.clone(),
+            docroot: site.docroot.clone(),
+            php_version: site.php_version.clone(),
+            env: site.env.clone(),
+            aliases: site.aliases.clone(),
+            web_server: site.web_server,
+            auth: site.auth.clone(),
+        };
+
+        let endpoint = match (&spec.php_version, site.web_server) {
+            (Some(version), WebServerKind::Nginx) => {
+                Some(pool_endpoint_for(ctx.service_config_dir, version)?)
+            }
+            (Some(version), WebServerKind::Caddy) => {
+                Some(pool_endpoint_for(ctx.service_config_dir, version)?)
+            }
+            // FrankenPHP serves PHP directly; there is no pool to find.
+            (_, WebServerKind::FrankenPhp) => None,
+            (None, _) => None,
+        };
+
+        // HTTPS sites get their certificate minted (or reused) during the
+        // sync, so the server never references a cert file that does not
+        // exist.
+        let tls = if site.https {
+            ensure_site_cert(ctx.certs_dir, &site.hostname)?;
+            Some(tls_listen_snippet(
+                &site.hostname,
+                ctx.https_port,
+                ctx.certs_dir,
+            ))
+        } else {
+            None
+        };
+
+        // Auth files live beside the blocks: nginx under `auth/`, Caddy
+        // carries the hash inline so it needs no file at all.
+        let auth_dir = sites_dir.join("auth");
+        match &site.auth {
+            Some(auth) => write_htpasswd(&auth_dir, &site.hostname, auth)?,
+            None => remove_htpasswd(&auth_dir, &site.hostname),
+        }
+
+        match site.web_server {
+            WebServerKind::Nginx => {
+                write_site_block(sites_dir, &spec, endpoint.as_deref(), tls.as_deref())?;
+            }
+            WebServerKind::Caddy => {
+                let body = render_caddy_site(&spec, endpoint.as_deref(), tls.as_deref());
+                let path = sites_dir.join(block_file_name(&spec.hostname));
+                devx_core::fsx::write_atomic(&path, body)?;
+            }
+            WebServerKind::FrankenPhp => {
+                let body = render_frankenphp_site(&spec, tls.as_deref());
+                let path = sites_dir.join(block_file_name(&spec.hostname));
+                devx_core::fsx::write_atomic(&path, body)?;
+            }
+        }
+        written.push(site.hostname.clone());
+    }
+
+    let live: Vec<String> = sites.iter().map(|s| s.hostname.clone()).collect();
+    let pruned = prune_stale_blocks(sites_dir, &live)?;
+
+    Ok(SiteSyncReport { written, pruned })
+}
+
 /// Removes blocks whose hostname is not in `live_hostnames`.
 ///
 /// Called after every config save so a removed site never leaves a stale
@@ -355,6 +655,8 @@ mod tests {
             php_version: php.map(str::to_owned),
             env: Vec::new(),
             aliases: Vec::new(),
+            web_server: WebServerKind::Nginx,
+            auth: None,
         }
     }
 
@@ -397,6 +699,30 @@ mod tests {
         assert!(block.contains("SCRIPT_FILENAME  $document_root$fastcgi_script_name;"));
         assert!(block.contains("index.php"), "{block}");
         assert!(block.contains("try_files $uri $uri/ /index.php?$query_string;"));
+    }
+
+    #[test]
+    fn caddy_site_renders_root_file_server_and_fastcgi() {
+        let mut site = spec("app.test", Some("8.4.25"));
+        site.web_server = WebServerKind::Caddy;
+        let block = render_caddy_site(&site, Some("127.0.0.1:9100"), None);
+
+        assert!(block.contains("app.test {"), "{block}");
+        assert!(block.contains(&format!("root * {}", slash(&site.docroot))), "{block}");
+        assert!(block.contains("file_server"), "{block}");
+        assert!(block.contains("php_fastcgi 127.0.0.1:9100"), "{block}");
+    }
+
+    #[test]
+    fn frankenphp_site_needs_no_pool_endpoint() {
+        let mut site = spec("app.test", Some("8.4.25"));
+        site.web_server = WebServerKind::FrankenPhp;
+        let block = render_frankenphp_site(&site, None);
+
+        assert!(block.contains("app.test {"), "{block}");
+        assert!(block.contains("file_server"), "{block}");
+        // No FastCGI: FrankenPHP executes PHP itself.
+        assert!(!block.contains("php_fastcgi"), "{block}");
     }
 
     #[test]
@@ -522,5 +848,65 @@ mod tests {
 
         // Static site: no pool needed.
         assert!(validate_spec(&spec("app.test", None), &config_root).is_ok());
+    }
+
+    #[test]
+    fn sync_writes_blocks_prunes_stale_and_mints_certs_for_https() {
+        let dir = tempfile::tempdir().expect("temp");
+        let certs = dir.path().join("certs");
+        // The CA signs every site certificate; the sync assumes it exists.
+        crate::pki::ensure_ca(&certs).expect("local CA");
+        let sites_dir = dir.path().join("nginx").join("sites");
+        let docroot = dir.path().join("www");
+        std::fs::create_dir_all(&docroot).expect("docroot");
+
+        // A pre-existing block for a site that is no longer configured.
+        std::fs::create_dir_all(&sites_dir).expect("sites dir");
+        std::fs::write(sites_dir.join("old.test.conf"), "# stale").expect("stale block");
+
+        let sites = vec![
+            SyncSite {
+                hostname: "app.test".into(),
+                docroot: docroot.clone(),
+                php_version: None,
+                https: true,
+                env: Vec::new(),
+                aliases: vec!["www.app.test".into()],
+                web_server: WebServerKind::Nginx,
+                auth: None,
+            },
+            SyncSite {
+                hostname: "plain.test".into(),
+                docroot,
+                php_version: None,
+                https: false,
+                env: Vec::new(),
+                aliases: Vec::new(),
+                web_server: WebServerKind::Nginx,
+                auth: None,
+            },
+        ];
+
+        let report = sync_site_blocks(
+            &sites_dir,
+            &sites,
+            SyncContext {
+                service_config_dir: dir.path(),
+                certs_dir: &certs,
+                https_port: 443,
+            },
+        )
+        .expect("sync");
+
+        assert!(report.written.contains(&"app.test".to_owned()));
+        assert!(report.pruned.contains(&"old.test".to_owned()));
+        assert!(sites_dir.join("app.test.conf").is_file());
+        assert!(sites_dir.join("plain.test.conf").is_file());
+        assert!(!sites_dir.join("old.test.conf").exists());
+
+        // Certificate minting is part of the sync, so an HTTPS block never
+        // references a cert that does not exist.
+        assert!(certs.join("sites").join("app.test").is_dir());
+        assert!(!certs.join("sites").join("plain.test").exists());
     }
 }

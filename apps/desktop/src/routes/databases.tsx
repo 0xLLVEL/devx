@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CircleAlert,
   Database,
+  Download,
   HardDrive,
   Loader2,
   Play,
@@ -9,6 +10,7 @@ import {
   Table2,
   Trash2,
   Undo2,
+  Upload,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -25,8 +27,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Select } from "@/components/ui/select";
-import { HeroBand } from "@/components/hero-band";
-import { StatTile } from "@/components/ui/stat-tile";
+import { PageHeader } from "@/components/page-header";
+import { pickCsvSavePath, pickSqlFile } from "@/lib/pick-file";
 import { ipc, type DbResult, type DbServer, type DbValue } from "@/lib/ipc";
 
 /** Databases page: browse schemas and run read-only queries. */
@@ -84,52 +86,51 @@ export function DatabasesPage() {
   });
 
   const run = useMutation({ mutationFn: () => ipc.dbQuery(params!, statement) });
+  const importSql = useMutation({
+    mutationFn: async () => {
+      const path = await pickSqlFile();
+      // Cancelled dialog: nothing to do.
+      if (!path) {
+        return;
+      }
+      await ipc.dbImportSql(chosen!.service_id, path);
+    },
+  });
+  const exportCsv = useMutation({
+    mutationFn: async () => {
+      const path = await pickCsvSavePath("query-result.csv");
+      if (!path) {
+        return 0;
+      }
+      return ipc.dbExportCsv(params!, statement, path);
+    },
+  });
 
   const busy = run.isPending;
   const error =
     run.error instanceof Error
       ? run.error
-      : databases.error instanceof Error
-        ? databases.error
-        : tables.error instanceof Error
-          ? tables.error
-          : null;
+      : importSql.error instanceof Error
+        ? importSql.error
+        : exportCsv.error instanceof Error
+          ? exportCsv.error
+          : databases.error instanceof Error
+            ? databases.error
+            : tables.error instanceof Error
+              ? tables.error
+              : null;
 
   return (
-    <>
-
-      <div className="mx-auto w-full max-w-4xl space-y-4 p-6">
+    <div className="mx-auto w-full max-w-4xl space-y-4 p-5">
         {servers.data && servers.data.length > 0 ? (
-          <>
-            <HeroBand
-              title={
-                servers.data.every((server) => !server.reachable)
-                  ? "No database engines are running."
-                  : `${servers.data.filter((server) => server.reachable).length} of ${servers.data.length} engines reachable.`
-              }
-              description="DevX targets the running service's actual port; reachability is checked live."
-            />
-            <div className="animate-in fade-in slide-in-from-bottom-2 grid gap-4 duration-300 sm:grid-cols-3">
-              <StatTile
-                icon={<Database className="size-4" />}
-                label="Engines"
-                value={`${servers.data.filter((server) => server.reachable).length}/${servers.data.length}`}
-                sub="reachable right now"
-              />
-              <StatTile
-                icon={<HardDrive className="size-4" />}
-                label="Backups"
-                value={String(backupCount)}
-                sub="across all services"
-              />
-              <StatTile
-                icon={<Play className="size-4" />}
-                label="Queries"
-                value="read-only"
-                sub="the browser never writes"
-              />
-            </div>
-          </>
+          <PageHeader
+            title={
+              servers.data.every((server) => !server.reachable)
+                ? "No database engines are running."
+                : `${servers.data.filter((server) => server.reachable).length} of ${servers.data.length} engines reachable.`
+            }
+            description={`${backupCount} backup${backupCount === 1 ? "" : "s"} across all services · the query browser never writes.`}
+          />
         ) : null}
 
         {servers.isPending ? (
@@ -231,13 +232,14 @@ export function DatabasesPage() {
               </CardHeader>
               <CardContent>
                 <form
-                  className="flex flex-wrap items-end gap-3"
+                  className="space-y-3"
                   onSubmit={(event) => {
                     event.preventDefault();
                     run.mutate();
                   }}
                 >
-                  <div className="min-w-64 flex-1 space-y-1.5">
+                  <div className="flex flex-wrap items-end gap-3">
+                  <div className="w-full">
                     <Label htmlFor="db-statement">Statement</Label>
                     <Input
                       id="db-statement"
@@ -252,6 +254,39 @@ export function DatabasesPage() {
                     {busy ? <Loader2 className="animate-spin" /> : <Play />}
                     Run
                   </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={
+                      chosen?.engine === "redis" ||
+                      !chosen?.reachable ||
+                      importSql.isPending
+                    }
+                    onClick={() => importSql.mutate()}
+                  >
+                    {importSql.isPending ? (
+                      <Loader2 className="animate-spin" />
+                    ) : (
+                      <Upload />
+                    )}
+                    Import .sql
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={busy || statement.trim() === "" || exportCsv.isPending}
+                    onClick={() => exportCsv.mutate()}
+                  >
+                    {exportCsv.isPending ? (
+                      <Loader2 className="animate-spin" />
+                    ) : (
+                      <Download />
+                    )}
+                    Export CSV
+                  </Button>
+                  </div>
                 </form>
 
                 {error ? (
@@ -267,11 +302,10 @@ export function DatabasesPage() {
               </CardContent>
             </Card>
 
-            {chosen ? <BackupsCard server={chosen} /> : null}
+          {chosen ? <BackupsCard server={chosen} /> : null}
           </>
         )}
-      </div>
-    </>
+    </div>
   );
 }
 

@@ -1,11 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Bookmark,
   CircleAlert,
   CircleCheck,
   Download,
   FolderOpen,
   Loader2,
   RefreshCw,
+  Trash2,
   Upload,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -19,12 +21,166 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { HeroBand } from "@/components/hero-band";
+import { PageHeader } from "@/components/page-header";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { IpcError, ipc, type AppInfo, type Config } from "@/lib/ipc";
+
+/**
+ * Saved configuration profiles: named snapshots of the whole config that
+ * can be applied again later. Applying runs the same validation path as
+ * import, so a stale or hand-edited profile cannot break the live config.
+ */
+function ProfilesCard() {
+  const queryClient = useQueryClient();
+  const [name, setName] = useState("");
+  const [confirmApply, setConfirmApply] = useState<string | null>(null);
+
+  const profiles = useQuery({ queryKey: ["profiles"], queryFn: ipc.profileList });
+
+  const invalidate = () => {
+    void queryClient.invalidateQueries({ queryKey: ["profiles"] });
+    void queryClient.invalidateQueries({ queryKey: ["config"] });
+    setConfirmApply(null);
+  };
+
+  const save = useMutation({
+    mutationFn: () => ipc.profileSave(name.trim()),
+    onSuccess: () => {
+      setName("");
+      invalidate();
+    },
+  });
+  const apply = useMutation({
+    mutationFn: (profile: string) => ipc.profileApply(profile),
+    onSuccess: invalidate,
+  });
+  const remove = useMutation({
+    mutationFn: (profile: string) => ipc.profileDelete(profile),
+    onSuccess: invalidate,
+  });
+
+  const entries = profiles.data ?? [];
+  const error =
+    save.error instanceof Error
+      ? save.error
+      : apply.error instanceof Error
+        ? apply.error
+        : remove.error instanceof Error
+          ? remove.error
+          : null;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Profiles</CardTitle>
+        <CardDescription>
+          Snapshot the current sites, workers and settings under a name, and
+          restore that snapshot later. Applying replaces the whole active
+          configuration.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {entries.length > 0 ? (
+          <ul className="space-y-1.5">
+            {entries.map((profile) => (
+              <li key={profile.name} className="flex items-center justify-between gap-3">
+                <span className="flex min-w-0 items-center gap-2">
+                  <Bookmark className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+                  <span className="truncate font-mono text-sm" data-selectable>
+                    {profile.name}
+                  </span>
+                </span>
+                <span className="flex shrink-0 items-center gap-1">
+                  {confirmApply === profile.name ? (
+                    <>
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        disabled={apply.isPending}
+                        onClick={() => apply.mutate(profile.name)}
+                      >
+                        {apply.isPending ? <Loader2 className="animate-spin" /> : null}
+                        Replace current config
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setConfirmApply(null)}
+                      >
+                        Cancel
+                      </Button>
+                    </>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={apply.isPending}
+                      onClick={() => setConfirmApply(profile.name)}
+                    >
+                      Apply
+                    </Button>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={remove.isPending}
+                    onClick={() => remove.mutate(profile.name)}
+                    aria-label={`Delete profile ${profile.name}`}
+                  >
+                    <Trash2 />
+                  </Button>
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            No saved profiles yet. Set everything up the way you like it, then
+            save it under a name below.
+          </p>
+        )}
+
+        <form
+          className="flex flex-wrap items-end gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (name.trim()) save.mutate();
+          }}
+        >
+          <div className="space-y-1.5">
+            <Label htmlFor="profile-name">New profile name</Label>
+            <Input
+              id="profile-name"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="my-setup"
+              autoComplete="off"
+              className="w-56"
+            />
+          </div>
+          <Button
+            type="submit"
+            size="sm"
+            disabled={save.isPending || !name.trim()}
+          >
+            {save.isPending ? <Loader2 className="animate-spin" /> : <Bookmark />}
+            Save current configuration
+          </Button>
+        </form>
+
+        {error ? (
+          <p className="flex items-center gap-2 text-sm text-destructive" role="alert">
+            <CircleAlert className="size-4" />
+            {error.message}
+          </p>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
 
 /** Settings page: data locations plus everything in `config.toml`. */
 export function SettingsPage() {
@@ -94,9 +250,8 @@ export function SettingsPage() {
     setDraft((current) => (current ? update(structuredClone(current)) : current));
 
   return (
-    <>
-      <div className="space-y-4 p-6">
-        <HeroBand
+    <div className="space-y-5 p-5">
+      <PageHeader
           title="Settings"
           description="Stored in config.toml and validated before every save."
           right={
@@ -437,11 +592,11 @@ export function SettingsPage() {
           </CardContent>
         </Card>
 
+        <ProfilesCard />
         <TransferCard />
 
         <UpdatesCard appInfo={appInfoQuery.data ?? null} />
-      </div>
-    </>
+    </div>
   );
 }
 

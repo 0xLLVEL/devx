@@ -32,6 +32,7 @@ export function configFixture(overrides: Partial<Config> = {}): Config {
     },
     php_pools: {},
     php_extensions: {},
+    php_xdebug: {},
     sites: [],
     workers: [],
     cron: [],

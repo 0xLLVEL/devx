@@ -230,6 +230,7 @@ async fn start_pool(state: &AppState, version: &str) -> Result<()> {
         port,
         workers,
         &state.with_config(|store| store.config().php_extensions.get(version).to_vec()),
+        state.with_config(|store| store.config().php_xdebug.get(version).cloned()),
     )?;
     let supervisor = match state.services.get(&plan.id) {
         Some(existing) if existing.state().is_active() => existing,

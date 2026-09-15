@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 
-import { HeroBand } from "@/components/hero-band";
+import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -63,7 +63,7 @@ export function SharePage() {
 
       <div className="mx-auto w-full max-w-3xl space-y-4 p-6">
         {allSites.length > 0 ? (
-          <HeroBand
+          <PageHeader
             title={
               sharedCount === 0
                 ? "Everything is local only."

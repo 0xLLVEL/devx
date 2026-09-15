@@ -63,6 +63,41 @@ impl ServiceRegistry {
         Ok(supervisor)
     }
 
+    /// Replaces the supervisor for `spec.id` with one built from `spec`,
+    /// absorbing the dance every re-registration needs: an active supervisor
+    /// is stopped first, because [`ServiceRegistry::register`] refuses to
+    /// swap one out from under itself.
+    ///
+    /// The returned supervisor is registered but **not** started; callers
+    /// decide whether to launch immediately (a config change that restarts a
+    /// running service) or leave it stopped (a re-plan before the next start).
+    pub async fn replace(&self, spec: ProcessSpec) -> Result<Arc<Supervisor>> {
+        if let Some(existing) = self.get(&spec.id) {
+            if existing.state().is_active() {
+                existing.stop().await;
+            }
+        }
+        self.register(spec)
+    }
+
+    /// Registers and starts a service, or reuses the registered supervisor
+    /// when it is already active.
+    ///
+    /// This is the idempotent start every start command wants: an active
+    /// supervisor is returned as-is (its spec is not refreshed), a stopped or
+    /// failed one is replaced from `spec` and launched. One-time init steps
+    /// remain the caller's job, since they precede planning.
+    pub async fn register_or_active(&self, spec: ProcessSpec) -> Result<Arc<Supervisor>> {
+        if let Some(existing) = self.get(&spec.id) {
+            if existing.state().is_active() {
+                return Ok(existing);
+            }
+        }
+        let supervisor = self.register(spec)?;
+        supervisor.start().await?;
+        Ok(supervisor)
+    }
+
     /// Subscribes to state transitions of every registered service.
     ///
     /// The returned receiver lags (not errors) if it falls behind the bus
@@ -162,6 +197,18 @@ mod tests {
         registry.register(spec("redis")).expect("first");
         // Not started, so replacing is allowed.
         registry.register(spec("redis")).expect("replace");
+        assert_eq!(registry.ids().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn replace_on_an_inactive_service_never_stops_it() {
+        let registry = ServiceRegistry::new();
+        registry.register(spec("redis")).expect("first");
+
+        // The replaced supervisor is registered but not started, so `replace`
+        // must not need a stop to get there.
+        let replacement = registry.replace(spec("redis")).await.expect("replace");
+        assert_eq!(replacement.state(), ServiceState::Stopped);
         assert_eq!(registry.ids().len(), 1);
     }
 

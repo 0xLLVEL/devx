@@ -5,70 +5,76 @@
 
 /*
  * Design tokens follow the shadcn/ui contract so generated components work
- * unchanged. DevX defaults to the dark theme: this is a tool that sits open
- * next to an editor all day.
+ * unchanged. The palette implements apps/desktop/DESIGN.md ("warm utility")
+ * as re-tuned by design-system/devx/MASTER.md: warm surfaces at OLED depth,
+ * warm umber ink, and one amber accent lightened for 4.5:1 contrast on the
+ * deep background. DevX defaults to the dark theme: this is a tool that sits
+ * open next to an editor all day.
  */
 :root {
-  --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.55 0.19 258);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --destructive-foreground: oklch(0.985 0 0);
-  --success: oklch(0.62 0.17 148);
-  --success-foreground: oklch(0.985 0 0);
-  --warning: oklch(0.75 0.16 78);
-  --warning-foreground: oklch(0.205 0 0);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
+  --radius: 0.375rem;
+  --background: oklch(0.972 0.006 80);
+  --foreground: oklch(0.24 0.015 70);
+  --card: oklch(0.99 0.003 80);
+  --card-foreground: oklch(0.24 0.015 70);
+  --popover: oklch(0.99 0.003 80);
+  --popover-foreground: oklch(0.24 0.015 70);
+  --primary: oklch(0.62 0.14 65);
+  --primary-foreground: oklch(0.985 0.005 80);
+  --secondary: oklch(0.945 0.008 80);
+  --secondary-foreground: oklch(0.3 0.02 70);
+  --muted: oklch(0.945 0.008 80);
+  --muted-foreground: oklch(0.5 0.02 70);
+  --accent: oklch(0.93 0.02 75);
+  --accent-foreground: oklch(0.3 0.02 70);
+  --destructive: oklch(0.55 0.21 28);
+  --destructive-foreground: oklch(0.985 0.005 80);
+  --success: oklch(0.58 0.13 150);
+  --success-foreground: oklch(0.985 0.005 80);
+  --warning: oklch(0.72 0.14 70);
+  --warning-foreground: oklch(0.25 0.02 70);
+  --border: oklch(0.9 0.01 80);
+  --input: oklch(0.88 0.012 80);
+  --ring: oklch(0.62 0.1 65);
+  --sidebar: oklch(0.95 0.008 80);
+  --sidebar-foreground: oklch(0.24 0.015 70);
+  --sidebar-accent: oklch(0.91 0.02 75);
+  --sidebar-accent-foreground: oklch(0.3 0.02 70);
+  --sidebar-border: oklch(0.89 0.01 80);
 }
 
 .dark {
-  --background: oklch(0.16 0.008 258);
-  --foreground: oklch(0.95 0.005 258);
-  --card: oklch(0.2 0.01 258);
-  --card-foreground: oklch(0.95 0.005 258);
-  --popover: oklch(0.2 0.01 258);
-  --popover-foreground: oklch(0.95 0.005 258);
-  --primary: oklch(0.68 0.16 254);
-  --primary-foreground: oklch(0.16 0.008 258);
-  --secondary: oklch(0.27 0.012 258);
-  --secondary-foreground: oklch(0.95 0.005 258);
-  --muted: oklch(0.27 0.012 258);
-  --muted-foreground: oklch(0.68 0.01 258);
-  --accent: oklch(0.3 0.015 258);
-  --accent-foreground: oklch(0.95 0.005 258);
-  --destructive: oklch(0.62 0.21 25);
-  --destructive-foreground: oklch(0.98 0 0);
-  --success: oklch(0.7 0.16 150);
-  --success-foreground: oklch(0.16 0.008 258);
-  --warning: oklch(0.8 0.15 80);
-  --warning-foreground: oklch(0.16 0.008 258);
-  --border: oklch(0.3 0.012 258);
-  --input: oklch(0.32 0.012 258);
-  --ring: oklch(0.55 0.05 258);
-  --sidebar: oklch(0.18 0.009 258);
-  --sidebar-foreground: oklch(0.95 0.005 258);
-  --sidebar-accent: oklch(0.27 0.012 258);
-  --sidebar-accent-foreground: oklch(0.95 0.005 258);
-  --sidebar-border: oklch(0.28 0.012 258);
+  /* OLED-depth retune (MASTER.md): background drops to near-black while
+     keeping the warm hue family; cards and borders lift just enough to
+     read as machined layers. The amber lamp lightens to hold 4.5:1. */
+  --background: oklch(0.145 0.008 70);
+  --foreground: oklch(0.95 0.006 80);
+  --card: oklch(0.19 0.01 70);
+  --card-foreground: oklch(0.95 0.006 80);
+  --popover: oklch(0.21 0.012 70);
+  --popover-foreground: oklch(0.95 0.006 80);
+  --primary: oklch(0.78 0.14 70);
+  --primary-foreground: oklch(0.145 0.008 70);
+  --secondary: oklch(0.25 0.012 70);
+  --secondary-foreground: oklch(0.95 0.006 80);
+  --muted: oklch(0.25 0.012 70);
+  --muted-foreground: oklch(0.7 0.014 75);
+  --accent: oklch(0.28 0.018 72);
+  --accent-foreground: oklch(0.95 0.006 80);
+  --destructive: oklch(0.64 0.2 25);
+  --destructive-foreground: oklch(0.98 0.005 80);
+  --success: oklch(0.72 0.14 150);
+  --success-foreground: oklch(0.145 0.008 70);
+  --warning: oklch(0.8 0.14 72);
+  --warning-foreground: oklch(0.145 0.008 70);
+  --border: oklch(0.27 0.012 70);
+  --input: oklch(0.29 0.012 70);
+  --ring: oklch(0.78 0.14 70);
+  --sidebar: oklch(0.16 0.009 70);
+  --sidebar-foreground: oklch(0.95 0.006 80);
+  --sidebar-accent: oklch(0.24 0.016 72);
+  --sidebar-accent-foreground: oklch(0.95 0.006 80);
+  --sidebar-border: oklch(0.24 0.012 70);
 }
 
 @theme inline {
@@ -100,11 +106,13 @@
   --color-sidebar-accent: var(--sidebar-accent);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-lg: 6px;
+  --radius-xl: 6px;
   --font-mono: "Cascadia Code", "JetBrains Mono", ui-monospace, monospace;
+  /* Density-8 spacing scale (MASTER.md): dense dashboard rhythm. */
+  --spacing-app: 1.25rem;
 }
 
 @layer base {
@@ -148,5 +156,25 @@
 
   ::-webkit-scrollbar-thumb:hover {
     @apply bg-muted-foreground/40;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer utilities {
+  /* The data face: ports, paths, hostnames, versions, metrics, log lines.
+     Numbers that ARE the content render mono; prose numbers do not. */
+  .data-value {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    letter-spacing: -0.01em;
   }
 }

@@ -192,6 +192,7 @@ pub fn plan_php_pool(
     port: u16,
     workers: u32,
     extensions: &[String],
+    xdebug: Option<devx_core::config::XdebugConfig>,
 ) -> Result<PhpPoolPlan> {
     validate_workers(workers)?;
 
@@ -210,7 +211,8 @@ pub fn plan_php_pool(
         &paths.logs_dir(),
         &PoolPlanOptions::new(port)
             .with_workers(workers)
-            .with_extensions(extensions.to_vec()),
+            .with_extensions(extensions.to_vec())
+            .with_xdebug(xdebug),
     )
 }
 
@@ -414,7 +416,7 @@ mod tests {
         let paths = AppPaths::rooted_at(dir.path());
         paths.ensure_dirs().expect("dirs");
 
-        let err = plan_php_pool(&paths, "8.4.25", 9100, 4, &[]).expect_err("not installed");
+        let err = plan_php_pool(&paths, "8.4.25", 9100, 4, &[], None).expect_err("not installed");
         assert_eq!(err.code, devx_core::ErrorCode::NotFound);
     }
 
@@ -425,7 +427,7 @@ mod tests {
         paths.ensure_dirs().expect("dirs");
         fake_php_install(&paths);
 
-        let plan = plan_php_pool(&paths, "8.4.25", 9100, 4, &[]).expect("plan");
+        let plan = plan_php_pool(&paths, "8.4.25", 9100, 4, &[], None).expect("plan");
         assert_eq!(plan.id, "php-pool-8.4.25");
 
         let spec = pool_spec(&paths, &plan).expect("spec");
@@ -471,7 +473,7 @@ mod tests {
         // the next port is chosen past the claim.
         fake_php_install(&paths);
         let plan =
-            plan_php_pool(&paths, "8.4.25", devx_provision::FIRST_POOL_PORT, 4, &[]).expect("plan");
+            plan_php_pool(&paths, "8.4.25", devx_provision::FIRST_POOL_PORT, 4, &[], None).expect("plan");
         pool_spec(&paths, &plan).expect("spec");
 
         assert_eq!(next(&[]), devx_provision::FIRST_POOL_PORT + 1);

@@ -7,6 +7,7 @@
 #![warn(clippy::all)]
 
 pub mod commands;
+pub mod event_log;
 pub mod events;
 pub mod helper;
 pub mod ipc;
@@ -176,6 +177,7 @@ fn shutdown_privileged(app: &tauri::AppHandle) {
 fn spawn_service_watcher(app: tauri::AppHandle) {
     let state = app.state::<state::AppState>();
     let mut events = state.services.events();
+    let paths = state.paths.clone();
 
     tauri::async_runtime::spawn(async move {
         loop {
@@ -187,6 +189,8 @@ fn spawn_service_watcher(app: tauri::AppHandle) {
                     if let Err(err) = update.emit(&app) {
                         tracing::warn!(error = %err, "could not emit service event");
                     }
+
+                    event_log::record(&paths, &event);
 
                     if event.state == devx_proc::ServiceState::Failed {
                         notify_failure(&app, &event);

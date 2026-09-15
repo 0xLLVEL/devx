@@ -124,7 +124,7 @@ impl Default for Provisioning {
 
 /// One user-configured site.
 ///
-/// Stored in `config.toml` under `[[sites]]`; rendered into nginx server
+/// Stored in `config.toml` under `[[sites]]`; rendered into web-server site
 /// blocks by `devx-provision::sites` whenever the configuration changes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 pub struct Site {
@@ -137,6 +137,11 @@ pub struct Site {
     /// Serve the site over HTTPS with the local CA's certificate.
     #[serde(default)]
     pub https: bool,
+    /// Which installed web server serves the site. Defaults to nginx, the
+    /// historical choice, so configs written before the field existed load
+    /// unchanged.
+    #[serde(default)]
+    pub web_server: WebServer,
     /// Environment variables passed to the site's PHP requests, rendered as
     /// `fastcgi_param` lines in the site's nginx block. Static sites ignore
     /// them.
@@ -146,6 +151,45 @@ pub struct Site {
     /// `server_name` list. Subdomain wildcards are covered by the resolver.
     #[serde(default)]
     pub aliases: Vec<String>,
+    /// HTTP Basic Auth credentials for the whole site. `None` (or an empty
+    /// user) means the site is public. Passwords are stored as bcrypt-style
+    /// htpasswd hashes, never as plain text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth: Option<SiteAuth>,
+}
+
+/// Basic-auth credentials for one site.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct SiteAuth {
+    /// User name accepted by the site.
+    pub username: String,
+    /// htpasswd-format password hash (apr1/bcrypt); nginx and Caddy both
+    /// read this format.
+    pub password_hash: String,
+}
+
+/// The web server that serves a site.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub enum WebServer {
+    /// nginx — the default, and the only server with a rendered sites include
+    /// before this field existed.
+    #[default]
+    Nginx,
+    /// Caddy — minimal config, HTTP/2 and HTTP/3 out of the box.
+    Caddy,
+    /// FrankenPHP — serves PHP directly, no FastCGI pool needed.
+    FrankenPhp,
+}
+
+impl WebServer {
+    /// The component id of the server that must be installed to serve a site.
+    pub fn component_id(self) -> &'static str {
+        match self {
+            WebServer::Nginx => "nginx",
+            WebServer::Caddy => "caddy",
+            WebServer::FrankenPhp => "frankenphp",
+        }
+    }
 }
 
 impl Site {
@@ -224,6 +268,66 @@ impl PhpExtensions {
     }
 }
 
+/// Xdebug settings, keyed by PHP version.
+///
+/// `enabled` toggles the `zend_extension` load and the `xdebug.mode` lines in
+/// the pool's ini; the plain stem `xdebug` is what `PhpExtensions` stores, so
+/// this map only carries the mode knobs. A version missing from the map runs
+/// with Xdebug off.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct PhpXdebug(
+    /// Per-version Xdebug mode sets.
+    pub std::collections::BTreeMap<String, XdebugConfig>,
+);
+
+impl PhpXdebug {
+    /// The Xdebug settings for `version`, when configured.
+    pub fn get(&self, version: &str) -> Option<&XdebugConfig> {
+        self.0.get(version)
+    }
+
+    /// Records the Xdebug settings for `version`.
+    pub fn insert(&mut self, version: impl Into<String>, config: XdebugConfig) {
+        self.0.insert(version.into(), config);
+    }
+
+    /// Removes the entry for `version`.
+    pub fn remove(&mut self, version: &str) {
+        self.0.remove(version);
+    }
+}
+
+/// Xdebug 3 knobs for one PHP version's pool.
+///
+/// `mode` accepts Xdebug's own mode words (`off`, `develop`, `debug`,
+/// `coverage`, `gcstats`, `profile`, `trace`, comma-separated combinations);
+/// `client_port` is the IDE's listening port. Kept as strings rather than an
+/// enum so any future mode word works without a DevX release.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct XdebugConfig {
+    /// Xdebug mode set (`off`, `debug`, `develop,debug`, …).
+    #[serde(default)]
+    pub mode: String,
+    /// The IDE port Xdebug connects back to (9003 by default upstream).
+    #[serde(default)]
+    pub client_port: u16,
+}
+
+impl XdebugConfig {
+    /// The default profile: debugger on, IDE on the standard port.
+    pub fn debug() -> Self {
+        Self {
+            mode: "debug".to_owned(),
+            client_port: 9003,
+        }
+    }
+
+    /// Whether the rendered directives are meaningful.
+    pub fn is_enabled(&self) -> bool {
+        !self.mode.is_empty() && self.mode != "off"
+    }
+}
+
 /// One user-configured supervised worker process.
 ///
 /// Stored under `[[workers]]`. Either `program` (a path or a name on `PATH`)
@@ -297,6 +401,8 @@ pub struct Config {
     pub php_pools: PhpPools,
     /// Enabled PHP extensions per installed PHP version.
     pub php_extensions: PhpExtensions,
+    /// Xdebug settings per installed PHP version.
+    pub php_xdebug: PhpXdebug,
     /// User-configured local sites.
     pub sites: Vec<Site>,
     /// User-configured supervised worker processes.
@@ -314,6 +420,7 @@ impl Default for Config {
             provisioning: Provisioning::default(),
             php_pools: PhpPools::default(),
             php_extensions: PhpExtensions::default(),
+            php_xdebug: PhpXdebug::default(),
             sites: Vec::new(),
             workers: Vec::new(),
             cron: Vec::new(),
@@ -364,6 +471,10 @@ impl Config {
                     "php_pools.\"{version}\" must be between 1 and 32 workers"
                 )));
             }
+        }
+
+        for (version, config) in &self.php_xdebug.0 {
+            let _ = (version, config);
         }
 
         let mut hostnames = std::collections::BTreeSet::new();
@@ -1290,6 +1401,8 @@ mod tests {
                     https: false,
                     env: [("APP_ENV".to_owned(), "local".to_owned())].into(),
                     aliases: vec!["app.local.test".to_owned()],
+                    web_server: WebServer::Nginx,
+                    auth: None,
                 });
             })
             .expect("update");

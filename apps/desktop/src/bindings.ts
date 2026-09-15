@@ -13,16 +13,16 @@ export const commands = {
 	/**  Returns the resolved configuration and data directories. */
 	pathsGet: () => typedError<AppPaths, DevxError>(__TAURI_INVOKE("paths_get")),
 	/**  Returns the current configuration. */
-	configGet: () => typedError<Config, DevxError>(__TAURI_INVOKE("config_get")),
+	configGet: () => typedError<Config_Serialize, DevxError>(__TAURI_INVOKE("config_get")),
 	/**
 	 *  Validates and persists a replacement configuration.
 	 * 
 	 *  Returns the stored configuration, which may differ from the input where
 	 *  DevX normalises values such as `schema_version`.
 	 */
-	configSet: (config: Config) => typedError<Config, DevxError>(__TAURI_INVOKE("config_set", { config })),
+	configSet: (config: Config_Deserialize) => typedError<Config_Serialize, DevxError>(__TAURI_INVOKE("config_set", { config })),
 	/**  Restores the default configuration. */
-	configReset: () => typedError<Config, DevxError>(__TAURI_INVOKE("config_reset")),
+	configReset: () => typedError<Config_Serialize, DevxError>(__TAURI_INVOKE("config_reset")),
 	/**
 	 *  Exports the current configuration as TOML text.
 	 * 
@@ -30,15 +30,53 @@ export const commands = {
 	 *  fresh DevX via the same parse-and-validate path a config file receives.
 	 */
 	configExport: () => typedError<string, DevxError>(__TAURI_INVOKE("config_export")),
+	/**  Lists the saved profiles, alphabetically. */
+	profileList: () => typedError<ProfileEntry[], DevxError>(__TAURI_INVOKE("profile_list")),
+	/**
+	 *  Saves the current configuration as a named profile, overwriting an
+	 *  existing profile of the same name on purpose.
+	 */
+	profileSave: (name: string) => typedError<ProfileEntry[], DevxError>(__TAURI_INVOKE("profile_save", { name })),
+	/**
+	 *  Applies a profile: validates it first, then replaces the running
+	 *  configuration. Services pick the change up through their normal
+	 *  re-plan paths, exactly as after an import.
+	 */
+	profileApply: (name: string) => typedError<Config_Serialize, DevxError>(__TAURI_INVOKE("profile_apply", { name })),
+	/**  Deletes a saved profile. The running configuration is untouched. */
+	profileDelete: (name: string) => typedError<ProfileEntry[], DevxError>(__TAURI_INVOKE("profile_delete", { name })),
 	/**
 	 *  Imports a configuration from TOML text, validating before it persists.
 	 * 
 	 *  Missing sections fall back to defaults, so a partial export still imports;
 	 *  anything invalid is refused and leaves the running configuration alone.
 	 */
-	configImport: (body: string) => typedError<Config, DevxError>(__TAURI_INVOKE("config_import", { body })),
+	configImport: (body: string) => typedError<Config_Serialize, DevxError>(__TAURI_INVOKE("config_import", { body })),
 	/**  Runs environment diagnostics against the live system. */
 	doctorRun: () => typedError<DoctorReport, DevxError>(__TAURI_INVOKE("doctor_run")),
+	/**
+	 *  Returns the newest service events from the persistent log, newest first.
+	 * 
+	 *  The log survives app restarts, so this answers "what happened while I
+	 *  was away" — including failures the live badge already moved past.
+	 */
+	eventsRecent: (limit: number | null) => typedError<EventEntry[], DevxError>(__TAURI_INVOKE("events_recent", { limit })),
+	/**
+	 *  The disk use of DevX's managed directories, biggest last.
+	 * 
+	 *  Only the four directories users can meaningfully shrink are listed;
+	 *  `certs` and `cache` are rounded off as noise.
+	 */
+	diskUsage: () => typedError<DirUsage[], DevxError>(__TAURI_INVOKE("disk_usage")),
+	/**
+	 *  The port map: every port DevX claims and who claims it.
+	 * 
+	 *  Covers the network ports from configuration (web, DNS), every supervised
+	 *  service with a bound port, and every rendered FastCGI pool — so the user
+	 *  can see, in one glance, which port belongs to what before starting
+	 *  something new.
+	 */
+	portMap: () => typedError<PortEntry[], DevxError>(__TAURI_INVOKE("port_map")),
 	/**  Lists the components DevX can install. */
 	catalogList: () => typedError<ComponentSummary[], DevxError>(__TAURI_INVOKE("catalog_list")),
 	/**
@@ -130,10 +168,45 @@ export const commands = {
 	 *  does not roll back the setting — the next manual start picks it up.
 	 */
 	phpExtSet: (version: string, extension: string, enabled: boolean) => typedError<PhpExtensionInfo, DevxError>(__TAURI_INVOKE("php_ext_set", { version, extension, enabled })),
+	/**  Reads the Xdebug configuration of one installed PHP version. */
+	phpXdebugGet: (version: string) => typedError<PhpXdebugInfo, DevxError>(__TAURI_INVOKE("php_xdebug_get", { version })),
+	/**
+	 *  Enables, disables or reconfigures Xdebug for one PHP version.
+	 * 
+	 *  `enabled = false` clears the stored configuration entirely; `enabled = true`
+	 *  with an empty `mode` means Xdebug's default debugger profile. A running
+	 *  pool restarts with the re-rendered ini, exactly like an extension toggle.
+	 */
+	phpXdebugSet: (version: string, enabled: boolean, mode: string, clientPort: number) => typedError<PhpXdebugInfo, DevxError>(__TAURI_INVOKE("php_xdebug_set", { version, enabled, mode, clientPort })),
 	/**  Lists the configured sites with their resolved PHP endpoints. */
 	siteList: () => typedError<SiteStatus[], DevxError>(__TAURI_INVOKE("site_list")),
+	/**
+	 *  Checks one site over HTTP(S) against the local web server.
+	 * 
+	 *  Resolves the host through the system resolver first (the bundled DNS or
+	 *  the hosts file), then issues a real request so the check covers the whole
+	 *  chain — DNS, TLS, server block, and PHP when the docroot runs it.
+	 */
+	sitePing: (hostname: string) => typedError<SitePing, DevxError>(__TAURI_INVOKE("site_ping", { hostname })),
+	/**
+	 *  The recent requests one site served, parsed from its access log.
+	 * 
+	 *  Understands the two formats DevX writes: nginx's combined format and
+	 *  Caddy's JSON access log. Lines that match neither are skipped, so a
+	 *  partially written last line never breaks the read. Newest entries first.
+	 */
+	siteRequests: (hostname: string, limit: number) => typedError<SiteRequestEntry[], DevxError>(__TAURI_INVOKE("site_requests", { hostname, limit })),
 	/**  Adds (or replaces) a site, renders its nginx block, and syncs the set. */
-	siteAdd: (hostname: string, docroot: string, phpVersion: string, https: boolean) => typedError<SiteStatus[], DevxError>(__TAURI_INVOKE("site_add", { hostname, docroot, phpVersion, https })),
+	siteAdd: (hostname: string, docroot: string, phpVersion: string, https: boolean, webServer: 
+/**
+ *  nginx — the default, and the only server with a rendered sites include
+ *  before this field existed.
+ */
+"Nginx" | 
+/**  Caddy — minimal config, HTTP/2 and HTTP/3 out of the box. */
+"Caddy" | 
+/**  FrankenPHP — serves PHP directly, no FastCGI pool needed. */
+"FrankenPhp" | null) => typedError<SiteStatus[], DevxError>(__TAURI_INVOKE("site_add", { hostname, docroot, phpVersion, https, webServer })),
 	/**  Removes a site, prunes its block, and syncs. */
 	siteRemove: (hostname: string) => typedError<SiteStatus[], DevxError>(__TAURI_INVOKE("site_remove", { hostname })),
 	/**
@@ -191,6 +264,21 @@ export const commands = {
 	dbListDatabases: (params: ConnectionParams) => typedError<DbResult, DevxError>(__TAURI_INVOKE("db_list_databases", { params })),
 	/**  Lists the tables in `params.database`. */
 	dbListTables: (params: ConnectionParams) => typedError<DbResult, DevxError>(__TAURI_INVOKE("db_list_tables", { params })),
+	/**
+	 *  Imports a plain SQL dump file into the running service.
+	 * 
+	 *  The file is replayed through the engine's own client, exactly like a
+	 *  backup restore; Redis has no SQL import path. The service must be
+	 *  running and the path must point to an existing `.sql` file.
+	 */
+	dbImportSql: (serviceId: string, filePath: string) => typedError<null, DevxError>(__TAURI_INVOKE("db_import_sql", { serviceId, filePath })),
+	/**
+	 *  Runs one read-only statement and writes the result grid to a CSV file.
+	 * 
+	 *  The first line is the header row; NULL renders as an empty field, the
+	 *  same convention the browser grid uses. Returns the exported row count.
+	 */
+	dbExportCsv: (params: ConnectionParams, statement: string, filePath: string) => typedError<number, DevxError>(__TAURI_INVOKE("db_export_csv", { params, statement, filePath })),
 	/**  Lists the backups of one database service, newest first. */
 	backupList: (serviceId: string) => typedError<BackupEntry[], DevxError>(__TAURI_INVOKE("backup_list", { serviceId })),
 	/**
@@ -291,6 +379,15 @@ export const commands = {
 	 */
 	terminalPath: () => typedError<string, DevxError>(__TAURI_INVOKE("terminal_path")),
 	/**
+	 *  Pins a component version for the terminal by writing PATH shims.
+	 * 
+	 *  Mirrors `devx use <component> <version>` so the UI and the CLI share one
+	 *  implementation (see `devx_provision::use_shim`).
+	 */
+	terminalUseVersion: (componentId: string, version: string) => typedError<null, DevxError>(__TAURI_INVOKE("terminal_use_version", { componentId, version })),
+	/**  Clears any shims pinned for a component (the UI's unpin action). */
+	terminalUnsetVersion: (componentId: string) => typedError<null, DevxError>(__TAURI_INVOKE("terminal_unset_version", { componentId })),
+	/**
 	 *  Lists the site templates DevX can scaffold.
 	 * 
 	 *  Templates follow the catalog's integrity policy: anything needing a
@@ -305,10 +402,18 @@ export const commands = {
 	 *  Local templates write their files into the (created) docroot and never
 	 *  overwrite existing content; download-based templates only create the
 	 *  folder and return their suggested command, to be run in the Terminal.
+	 *  The `git` template clones `git_url` with the system git before the site
+	 *  is registered, so the docroot already holds real content.
 	 */
-	templateCreate: (templateId: string, hostname: string, docroot: string, phpVersion: string, https: boolean) => typedError<TemplateCreateResult, DevxError>(__TAURI_INVOKE("template_create", { templateId, hostname, docroot, phpVersion, https })),
+	templateCreate: (templateId: string, hostname: string, docroot: string, phpVersion: string, https: boolean, gitUrl: string | null) => typedError<TemplateCreateResult, DevxError>(__TAURI_INVOKE("template_create", { templateId, hostname, docroot, phpVersion, https, gitUrl })),
 	/**  Adds an alias host name to a site, syncs, and restarts nginx when running. */
 	siteAliasAdd: (hostname: string, alias: string) => typedError<SiteStatus[], DevxError>(__TAURI_INVOKE("site_alias_add", { hostname, alias })),
+	/**
+	 *  Sets (or clears with `None`) the basic-auth credentials of a site. The
+	 *  password arrives as plain text and is stored only as an htpasswd bcrypt
+	 *  hash; the htpasswd file is written and the block synced immediately.
+	 */
+	siteAuthSet: (hostname: string, username: string | null, password: string | null) => typedError<SiteStatus[], DevxError>(__TAURI_INVOKE("site_auth_set", { hostname, username, password })),
 	/**  Removes an alias host name from a site, syncing as [`site_alias_add`]. */
 	siteAliasDelete: (hostname: string, alias: string) => typedError<SiteStatus[], DevxError>(__TAURI_INVOKE("site_alias_delete", { hostname, alias })),
 	/**  Lists the configured scheduled tasks with their Windows registration. */
@@ -548,7 +653,17 @@ export type ComponentVersion = {
  *  partial or hand-edited files comes from [`merge_over_defaults`], which fills
  *  gaps before deserialization.
  */
-export type Config = {
+export type Config = Config_Serialize | Config_Deserialize;
+
+/**
+ *  Complete DevX configuration.
+ * 
+ *  Deliberately has no `#[serde(default)]`: every field is required on the wire
+ *  so the generated TypeScript type has no optional properties. Robustness for
+ *  partial or hand-edited files comes from [`merge_over_defaults`], which fills
+ *  gaps before deserialization.
+ */
+export type Config_Deserialize = {
 	/**  Version of this document's schema. */
 	schema_version: number,
 	/**  Application-wide preferences. */
@@ -561,8 +676,41 @@ export type Config = {
 	php_pools: PhpPools,
 	/**  Enabled PHP extensions per installed PHP version. */
 	php_extensions: PhpExtensions,
+	/**  Xdebug settings per installed PHP version. */
+	php_xdebug: PhpXdebug,
 	/**  User-configured local sites. */
-	sites: Site[],
+	sites: Site_Deserialize[],
+	/**  User-configured supervised worker processes. */
+	workers: Worker[],
+	/**  User-configured scheduled tasks. */
+	cron: CronJob[],
+};
+
+/**
+ *  Complete DevX configuration.
+ * 
+ *  Deliberately has no `#[serde(default)]`: every field is required on the wire
+ *  so the generated TypeScript type has no optional properties. Robustness for
+ *  partial or hand-edited files comes from [`merge_over_defaults`], which fills
+ *  gaps before deserialization.
+ */
+export type Config_Serialize = {
+	/**  Version of this document's schema. */
+	schema_version: number,
+	/**  Application-wide preferences. */
+	general: General,
+	/**  Networking and local domain settings. */
+	network: Network,
+	/**  Component download and installation behaviour. */
+	provisioning: Provisioning,
+	/**  FastCGI worker counts per installed PHP version. */
+	php_pools: PhpPools,
+	/**  Enabled PHP extensions per installed PHP version. */
+	php_extensions: PhpExtensions,
+	/**  Xdebug settings per installed PHP version. */
+	php_xdebug: PhpXdebug,
+	/**  User-configured local sites. */
+	sites: Site_Serialize[],
 	/**  User-configured supervised worker processes. */
 	workers: Worker[],
 	/**  User-configured scheduled tasks. */
@@ -626,6 +774,13 @@ export type CronStatus = {
 	every_minutes: number,
 	/**  Whether the Windows scheduled task exists right now. */
 	registered: boolean,
+	/**
+	 *  The Windows task's next scheduled run, as reported by `schtasks`.
+	 * 
+	 *  Raw text straight from the OS (locale-formatted); `null` when the task
+	 *  is unregistered or the query failed, which the UI renders as "—".
+	 */
+	next_run: string | null,
 };
 
 /**  One column of a result set. */
@@ -690,6 +845,14 @@ export type DevxError = {
 	message: string,
 	/**  Optional actionable next step shown to the user. */
 	hint: string | null,
+};
+
+/**  Disk use of one managed directory, for the UI. */
+export type DirUsage = {
+	/**  What the directory holds (`runtimes`, `service data`, `logs`, `backups`). */
+	label: string,
+	/**  Total size on disk, in bytes. */
+	size_bytes: number,
 };
 
 /**  How local domains are resolved. */
@@ -763,6 +926,18 @@ export type ErrorCode =
 "privileged" | 
 /**  Something failed that we could not classify. */
 "internal";
+
+/**  One recorded service transition from the persistent event log, for the UI. */
+export type EventEntry = {
+	/**  Unix timestamp in seconds. */
+	at_unix: number,
+	/**  Id of the supervised service. */
+	id: string,
+	/**  The state it moved to (`running`, `failed`, `starting`, …). */
+	state: string,
+	/**  Why it left the running state (`crashed`, `health_timeout`, …), when it did. */
+	exit: string | null,
+};
 
 /**  Why a service left the `Running` or `Starting` state. */
 export type ExitReason = 
@@ -1028,12 +1203,54 @@ export type PhpPools =
 /**  Pool worker counts keyed by PHP version. */
 { [key in string]: number };
 
+/**
+ *  Xdebug settings, keyed by PHP version.
+ * 
+ *  `enabled` toggles the `zend_extension` load and the `xdebug.mode` lines in
+ *  the pool's ini; the plain stem `xdebug` is what `PhpExtensions` stores, so
+ *  this map only carries the mode knobs. A version missing from the map runs
+ *  with Xdebug off.
+ */
+export type PhpXdebug = 
+/**  Per-version Xdebug mode sets. */
+{ [key in string]: XdebugConfig };
+
+/**  The Xdebug state of one PHP version, for the UI. */
+export type PhpXdebugInfo = {
+	/**  PHP version this configuration belongs to. */
+	version: string,
+	/**  Whether Xdebug is configured for this version at all. */
+	enabled: boolean,
+	/**  Xdebug mode set (`off`, `debug`, `develop,debug`, …); empty when unconfigured. */
+	mode: string,
+	/**  The IDE port the debugger connects back to. */
+	client_port: number,
+};
+
+/**  One claimed port and its owner, for the UI. */
+export type PortEntry = {
+	/**  What listens on the port (`nginx`, `php-pool-8.4.25`, `Mailpit`, …). */
+	owner: string,
+	/**  The port number. */
+	port: number,
+	/**  Whether the service is running right now. */
+	active: boolean,
+};
+
 /**  How the privileged helper looks from this machine right now. */
 export type PrivilegedStatus = {
 	/**  Whether the helper's named pipe answered. */
 	available: boolean,
 	/**  Protocol version of a reachable helper, when it answered. */
 	protocol_version: number | null,
+};
+
+/**  One saved configuration profile. */
+export type ProfileEntry = {
+	/**  Profile name, also the file stem on disk. */
+	name: string,
+	/**  Last modification as Unix seconds; `null` when unavailable. */
+	modified_unix: number | null,
 };
 
 /**  Component download and installation behaviour. */
@@ -1123,29 +1340,55 @@ export type ServiceStatus = {
 /**
  *  One user-configured site.
  * 
- *  Stored in `config.toml` under `[[sites]]`; rendered into nginx server
+ *  Stored in `config.toml` under `[[sites]]`; rendered into web-server site
  *  blocks by `devx-provision::sites` whenever the configuration changes.
  */
-export type Site = {
-	/**  Host name served, e.g. `myapp.test`. */
-	hostname: string,
-	/**  Absolute path of the folder nginx serves. */
-	docroot: string,
-	/**  PHP version whose pool serves the site, empty for a static site. */
-	php_version: string,
-	/**  Serve the site over HTTPS with the local CA's certificate. */
-	https?: boolean,
+export type Site = Site_Serialize | Site_Deserialize;
+
+/**  Basic-auth credentials for one site. */
+export type SiteAuth = {
+	/**  User name accepted by the site. */
+	username: string,
 	/**
-	 *  Environment variables passed to the site's PHP requests, rendered as
-	 *  `fastcgi_param` lines in the site's nginx block. Static sites ignore
-	 *  them.
+	 *  htpasswd-format password hash (apr1/bcrypt); nginx and Caddy both
+	 *  read this format.
 	 */
-	env?: { [key in string]: string },
+	password_hash: string,
+};
+
+/**  Result of one site health check, as the UI shows it. */
+export type SitePing = {
+	/**  HTTP status code, when the server answered. */
+	status: number | null,
+	/**  Total round-trip time in milliseconds, when the server answered. */
+	latency_ms: number | null,
+	/**  What went wrong, when the check failed. */
+	error: string | null,
+};
+
+/**  One parsed request from a site's access log, for the inspector. */
+export type SiteRequestEntry = {
 	/**
-	 *  Additional host names the site answers to, rendered into the nginx
-	 *  `server_name` list. Subdomain wildcards are covered by the resolver.
+	 *  Unix seconds of the request; `null` when the log line carries no
+	 *  parsable timestamp.
 	 */
-	aliases?: string[],
+	time_unix: number | null,
+	/**  Remote address as logged (usually `127.0.0.1`). */
+	remote: string,
+	/**  HTTP method, e.g. `GET`. */
+	method: string,
+	/**  Request path including query string, e.g. `/index.php?page=2`. */
+	path: string,
+	/**  HTTP status the server answered with. */
+	status: number,
+	/**  Response body size in bytes, when logged; `null` for 0/`-`. */
+	bytes: number | null,
+	/**  `Referer` header when present. */
+	referer: string,
+	/**  `User-Agent` header when present. */
+	user_agent: string,
+	/**  Milliseconds the server spent on the request, when the log records it. */
+	duration_ms: number | null,
 };
 
 /**  One site as the UI sees it, with the resolved FastCGI endpoint. */
@@ -1160,10 +1403,94 @@ export type SiteStatus = {
 	php_endpoint: string | null,
 	/**  Whether the site is served over HTTPS with the local CA certificate. */
 	https: boolean,
+	/**  Which web server serves this site. */
+	web_server: WebServer,
 	/**  Environment variables exposed to the site's PHP requests. */
 	env: { [key in string]: string },
 	/**  Additional host names the site answers to. */
 	aliases: string[],
+	/**  Basic-auth user when the site is protected, `None` for public. */
+	auth: SiteAuth | null,
+};
+
+/**
+ *  One user-configured site.
+ * 
+ *  Stored in `config.toml` under `[[sites]]`; rendered into web-server site
+ *  blocks by `devx-provision::sites` whenever the configuration changes.
+ */
+export type Site_Deserialize = {
+	/**  Host name served, e.g. `myapp.test`. */
+	hostname: string,
+	/**  Absolute path of the folder nginx serves. */
+	docroot: string,
+	/**  PHP version whose pool serves the site, empty for a static site. */
+	php_version: string,
+	/**  Serve the site over HTTPS with the local CA's certificate. */
+	https?: boolean,
+	/**
+	 *  Which installed web server serves the site. Defaults to nginx, the
+	 *  historical choice, so configs written before the field existed load
+	 *  unchanged.
+	 */
+	web_server?: WebServer,
+	/**
+	 *  Environment variables passed to the site's PHP requests, rendered as
+	 *  `fastcgi_param` lines in the site's nginx block. Static sites ignore
+	 *  them.
+	 */
+	env?: { [key in string]: string },
+	/**
+	 *  Additional host names the site answers to, rendered into the nginx
+	 *  `server_name` list. Subdomain wildcards are covered by the resolver.
+	 */
+	aliases?: string[],
+	/**
+	 *  HTTP Basic Auth credentials for the whole site. `None` (or an empty
+	 *  user) means the site is public. Passwords are stored as bcrypt-style
+	 *  htpasswd hashes, never as plain text.
+	 */
+	auth?: SiteAuth | null,
+};
+
+/**
+ *  One user-configured site.
+ * 
+ *  Stored in `config.toml` under `[[sites]]`; rendered into web-server site
+ *  blocks by `devx-provision::sites` whenever the configuration changes.
+ */
+export type Site_Serialize = {
+	/**  Host name served, e.g. `myapp.test`. */
+	hostname: string,
+	/**  Absolute path of the folder nginx serves. */
+	docroot: string,
+	/**  PHP version whose pool serves the site, empty for a static site. */
+	php_version: string,
+	/**  Serve the site over HTTPS with the local CA's certificate. */
+	https: boolean,
+	/**
+	 *  Which installed web server serves the site. Defaults to nginx, the
+	 *  historical choice, so configs written before the field existed load
+	 *  unchanged.
+	 */
+	web_server: WebServer,
+	/**
+	 *  Environment variables passed to the site's PHP requests, rendered as
+	 *  `fastcgi_param` lines in the site's nginx block. Static sites ignore
+	 *  them.
+	 */
+	env: { [key in string]: string },
+	/**
+	 *  Additional host names the site answers to, rendered into the nginx
+	 *  `server_name` list. Subdomain wildcards are covered by the resolver.
+	 */
+	aliases: string[],
+	/**
+	 *  HTTP Basic Auth credentials for the whole site. `None` (or an empty
+	 *  user) means the site is public. Passwords are stored as bcrypt-style
+	 *  htpasswd hashes, never as plain text.
+	 */
+	auth?: SiteAuth | null,
 };
 
 /**  The result of scaffolding a site from a template. */
@@ -1186,7 +1513,7 @@ export type TemplateInfo = {
 	local: boolean,
 };
 
-/**  The exit of one terminal command run. */
+/**  One terminal run's exit information. */
 export type TerminalExit = {
 	/**  Which run this belongs to, matching the streamed `TerminalOutput`s. */
 	run_id: number,
@@ -1255,6 +1582,18 @@ export type VersionListing = {
 	unverifiable: string[],
 };
 
+/**  The web server that serves a site. */
+export type WebServer = 
+/**
+ *  nginx — the default, and the only server with a rendered sites include
+ *  before this field existed.
+ */
+"Nginx" | 
+/**  Caddy — minimal config, HTTP/2 and HTTP/3 out of the box. */
+"Caddy" | 
+/**  FrankenPHP — serves PHP directly, no FastCGI pool needed. */
+"FrankenPhp";
+
 /**
  *  One user-configured supervised worker process.
  * 
@@ -1302,6 +1641,21 @@ export type WorkerStatus = {
 	instances: number,
 	/**  Live state of each instance that has been started. */
 	live: WorkerInstanceStatus[],
+};
+
+/**
+ *  Xdebug 3 knobs for one PHP version's pool.
+ * 
+ *  `mode` accepts Xdebug's own mode words (`off`, `develop`, `debug`,
+ *  `coverage`, `gcstats`, `profile`, `trace`, comma-separated combinations);
+ *  `client_port` is the IDE's listening port. Kept as strings rather than an
+ *  enum so any future mode word works without a DevX release.
+ */
+export type XdebugConfig = {
+	/**  Xdebug mode set (`off`, `debug`, `develop,debug`, …). */
+	mode?: string,
+	/**  The IDE port Xdebug connects back to (9003 by default upstream). */
+	client_port?: number,
 };
 
 /* Tauri Specta runtime */
