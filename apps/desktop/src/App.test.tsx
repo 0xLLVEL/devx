@@ -66,6 +66,9 @@ vi.mock("@/lib/ipc", async (importOriginal) => {
     terminalPath: "",
     profileList: [],
     eventsRecent: [],
+    // §98: nothing recorded on a fresh machine, which the bell must render
+    // without inventing a count.
+    notificationsList: { entries: [], unread_count: 0, recorded: 0 },
     diskUsage: [],
     portMap: [],
     catalogList: [],
@@ -150,8 +153,18 @@ describe("every route (§132)", () => {
     renderRoute(path);
 
     // The route's own chunk replaced §102's suspense fallback...
-    await waitFor(() =>
-      expect(screen.queryByText("Loading this page…")).not.toBeInTheDocument(),
+    //
+    // The 8s budget is for the `React.lazy` chunk, not for the page. `waitFor`
+    // otherwise uses RTL's default 1000ms `asyncUtilTimeout`, which assumes the
+    // import has already resolved; when the suite runs in parallel on a busy
+    // box the largest route chunks can take longer than that, and the wait then
+    // expires with the fallback still mounted — a slow machine reported as a
+    // route that never rendered. It stays under the 15s `testTimeout` so a
+    // chunk that genuinely never arrives still fails on this assertion rather
+    // than surfacing as a hung test.
+    await waitFor(
+      () => expect(screen.queryByText("Loading this page…")).not.toBeInTheDocument(),
+      { timeout: 8000 },
     );
     // ...and the route is the one the path names, not the fallback route.
     const topbar = document.querySelector("header");
@@ -168,8 +181,14 @@ describe("every route (§132)", () => {
 
     // Let every immediate query resolve, then watch the count over a window in
     // which nothing changes. A render loop keeps committing here.
-    await waitFor(() =>
-      expect(screen.queryByText("Loading this page…")).not.toBeInTheDocument(),
+    //
+    // `/` is the dashboard, the one route `App.tsx` imports eagerly, so this
+    // fallback is not normally mounted and the wait returns at once. The budget
+    // is here so that the assertion cannot quietly turn into a 1s race against
+    // a chunk fetch if the dashboard is ever moved behind `lazy()`.
+    await waitFor(
+      () => expect(screen.queryByText("Loading this page…")).not.toBeInTheDocument(),
+      { timeout: 8000 },
     );
     await new Promise((resolve) => setTimeout(resolve, 50));
     const settled = commits;

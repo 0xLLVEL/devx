@@ -240,6 +240,7 @@ fn connect_pipe(file: &mut std::fs::File) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dns_cache::WindowsDnsCache;
     use crate::nrpt::WindowsNrptBackend;
     use crate::{FileHostsBackend, WindowsCaBackend};
 
@@ -251,6 +252,7 @@ mod tests {
             hosts: Box::new(FileHostsBackend::at(std::env::temp_dir().join("devx-noop"))),
             ca: Box::new(WindowsCaBackend),
             nrpt: Box::new(WindowsNrptBackend),
+            dns_cache: Box::new(WindowsDnsCache),
         });
         assert_object_safe(backends);
     }

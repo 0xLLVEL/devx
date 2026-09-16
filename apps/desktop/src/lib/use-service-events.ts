@@ -8,7 +8,8 @@ import { ipcEvents } from "@/lib/ipc";
  *
  * Every transition invalidates the status, pool and metrics queries so badges
  * update the moment a service changes state instead of at the next poll; the
- * pages' own refetch intervals remain as a fallback.
+ * pages' own refetch intervals remain as a fallback. The §98 notification
+ * center is in that list: a transition is exactly what its badge counts.
  */
 export function useServiceEvents() {
   const queryClient = useQueryClient();
@@ -20,6 +21,7 @@ export function useServiceEvents() {
       void queryClient.invalidateQueries({ queryKey: ["php-pool-status"] });
       void queryClient.invalidateQueries({ queryKey: ["worker-list"] });
       void queryClient.invalidateQueries({ queryKey: ["service-metrics"] });
+      void queryClient.invalidateQueries({ queryKey: ["notifications"] });
     });
 
     return () => {

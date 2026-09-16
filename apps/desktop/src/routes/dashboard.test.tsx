@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   dbListServers: vi.fn(),
   diskUsage: vi.fn(),
   portMap: vi.fn(),
+  listeningPorts: vi.fn(),
   eventsRecent: vi.fn(),
   servicesStartAll: vi.fn(),
   servicesStopAll: vi.fn(),

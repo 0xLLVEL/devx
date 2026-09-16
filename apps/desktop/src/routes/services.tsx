@@ -26,6 +26,7 @@ import { Link } from "react-router-dom";
 import { FilterBar, type ActiveFilter } from "@/components/filter-bar";
 import { LogViewer, type LogLine } from "@/components/log-viewer";
 import { PageHeader } from "@/components/page-header";
+import { PortInspectorButton } from "@/components/port-inspector";
 import { StatusBadge } from "@/components/status-dot";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -1187,6 +1188,17 @@ function ServerPorts({
           service runs.
         </p>
       ) : null}
+
+      {/* §110: this tab is DevX's own ports for one service. The machine's
+          whole listener table — including other software's ports — is in the
+          inspector, reached from here rather than given a tab of its own. */}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3">
+        <p className="text-xs text-ink-muted">
+          DevX's ports for this service only. The inspector lists every port on
+          the machine, including other software's.
+        </p>
+        <PortInspectorButton />
+      </div>
     </div>
   );
 }

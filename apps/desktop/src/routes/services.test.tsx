@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   phpExtSet: vi.fn(),
   pathsGet: vi.fn(),
   portMap: vi.fn(),
+  listeningPorts: vi.fn(),
   siteList: vi.fn(),
   workerList: vi.fn(),
   workerStart: vi.fn(),
@@ -417,6 +418,11 @@ describe("ServicesPage", () => {
     await user.click(screen.getByRole("tab", { name: "Ports" }));
     expect(within(detail("nginx")).getByText("8080")).toBeInTheDocument();
     expect(within(detail("nginx")).getByText("claimed")).toBeInTheDocument();
+    // §110: this tab is DevX's ports for one service; the machine's own
+    // listener table is one click from here rather than a tab of its own.
+    expect(
+      within(detail("nginx")).getByRole("button", { name: "Inspect ports" }),
+    ).toBeInTheDocument();
   });
 
   it("says the port map could not be read instead of showing an empty tab (§131 Rule 18)", async () => {

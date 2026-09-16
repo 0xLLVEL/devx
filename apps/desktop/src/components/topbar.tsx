@@ -1,6 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
 import {
-  Bell,
   Monitor,
   Moon,
   PanelLeftClose,
@@ -11,18 +9,15 @@ import {
   TerminalSquare,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect } from "react";
 import { Link, useLocation } from "react-router-dom";
 
+import { NotificationSlot } from "@/components/notification-center";
 import { themeLabel, nextTheme, useTheme } from "@/components/theme-provider";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { Callout } from "@/components/ui/callout";
 import { Tooltip } from "@/components/ui/tooltip";
 import { useToast } from "@/components/ui/toast";
-import { ipc } from "@/lib/ipc";
 import { findNavItem, findNavSection } from "@/lib/navigation";
-import { useSystemStatus } from "@/lib/shell-data";
-import { cn } from "@/lib/utils";
 
 /**
  * Topbar (§6): page context on the left, the global search trigger in the
@@ -124,188 +119,6 @@ export function Topbar({
       </div>
     </header>
   );
-}
-
-/**
- * Notifications (§98).
- *
- * The badge counts services that are actually failing, and the panel lists
- * the state transitions Rust recorded. There is no "mark all read" and no
- * "clear": the backend has no such command, and a button that does nothing is
- * worse than a missing one.
- */
-function NotificationSlot() {
-  const status = useSystemStatus();
-  const [open, setOpen] = useState(false);
-  const container = useRef<HTMLDivElement>(null);
-
-  const events = useQuery({
-    queryKey: ["events", "recent", 20],
-    queryFn: () => ipc.eventsRecent(20),
-    // Nothing is fetched until the panel is opened (§101).
-    enabled: open,
-  });
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-    const onPointerDown = (event: PointerEvent) => {
-      if (!container.current?.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setOpen(false);
-      }
-    };
-    document.addEventListener("pointerdown", onPointerDown);
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", onPointerDown);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [open]);
-
-  const failed = status?.failedCount ?? 0;
-  const label =
-    failed > 0
-      ? `Notifications: ${failed} service${failed === 1 ? "" : "s"} failed`
-      : "Notifications";
-
-  const entries = events.data ?? [];
-
-  return (
-    <div ref={container} className="relative">
-      <Tooltip label={label}>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          aria-label={label}
-          aria-expanded={open}
-          onClick={() => setOpen((current) => !current)}
-          className="relative"
-        >
-          <Bell />
-          {failed > 0 ? (
-            <span
-              aria-hidden
-              className="absolute -top-0.5 -right-0.5 flex size-4 items-center justify-center rounded-full bg-destructive font-mono text-[10px] text-destructive-foreground"
-            >
-              {failed}
-            </span>
-          ) : null}
-        </Button>
-      </Tooltip>
-
-      {open ? (
-        <div className="glass-surface absolute right-0 z-50 mt-2 w-[360px] rounded-lg p-1 shadow-lg">
-          <p className="px-3 py-2 text-caption tracking-wide text-ink-muted uppercase">
-            Recent service events
-          </p>
-          {events.isPending ? (
-            <p className="px-3 py-2 text-sm text-ink-muted" role="status">
-              Loading events…
-            </p>
-          ) : null}
-          {events.isError ? (
-            // §39: the same titled callout and retry every page uses, so the
-            // panel reports the failure instead of printing the backend's own
-            // string as the whole message.
-            <div className="p-2">
-              <Callout variant="destructive" title="Could not read the event log.">
-                <p>
-                  {events.error instanceof Error
-                    ? events.error.message
-                    : "The backend did not answer."}
-                </p>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="mt-2"
-                  onClick={() => void events.refetch()}
-                >
-                  Try again
-                </Button>
-              </Callout>
-            </div>
-          ) : null}
-          {!events.isPending && !events.isError && entries.length === 0 ? (
-            <p className="px-3 py-4 text-center text-sm text-ink-muted">
-              No service events recorded yet.
-            </p>
-          ) : null}
-          {entries.length > 0 ? (
-            <ul className="max-h-72 overflow-y-auto">
-              {entries.map((event) => (
-                <li
-                  key={`${event.at_unix}-${event.id}-${event.state}`}
-                  className="flex items-center justify-between gap-3 rounded-md px-3 py-2 text-sm hover:bg-hover"
-                >
-                  <span className="min-w-0">
-                    <span
-                      className="block truncate font-mono text-xs"
-                      title={event.id}
-                    >
-                      {event.id}
-                    </span>
-                    <span className="block text-caption text-ink-muted">
-                      {formatEventTime(event.at_unix)}
-                      {event.exit ? ` · ${event.exit}` : ""}
-                    </span>
-                  </span>
-                  <EventState state={event.state} />
-                </li>
-              ))}
-            </ul>
-          ) : null}
-          <div className="border-t border-line-subtle px-3 py-2">
-            <Link
-              to="/services"
-              onClick={() => setOpen(false)}
-              className="text-xs text-primary hover:underline"
-            >
-              Open Services
-            </Link>
-          </div>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-/** Colour is never the only signal (§55): dot plus the state's own name. */
-function EventState({ state }: { state: string }) {
-  const tone =
-    state === "running"
-      ? "bg-success"
-      : state === "failed"
-        ? "bg-destructive"
-        : state === "starting" || state === "stopping"
-          ? "bg-warning"
-          : "bg-muted-foreground/40";
-  return (
-    <span className="flex shrink-0 items-center gap-1.5 text-xs text-ink-secondary">
-      <span aria-hidden className={cn("size-1.5 rounded-full", tone)} />
-      {state}
-    </span>
-  );
-}
-
-function formatEventTime(atUnix: number): string {
-  const elapsed = Math.max(0, Date.now() / 1000 - atUnix);
-  if (elapsed < 60) {
-    return "just now";
-  }
-  if (elapsed < 3600) {
-    return `${Math.floor(elapsed / 60)} min ago`;
-  }
-  if (elapsed < 86400) {
-    return `${Math.floor(elapsed / 3600)} h ago`;
-  }
-  return `${Math.floor(elapsed / 86400)} d ago`;
 }
 
 const THEME_ICONS: Record<string, LucideIcon> = {

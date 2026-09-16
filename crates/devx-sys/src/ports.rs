@@ -25,9 +25,8 @@ pub struct PortOwner {
 ///
 /// Returns an empty list rather than an error when the table cannot be read, so
 /// conflict detection degrades to "assume free" rather than blocking a start.
-#[cfg(windows)]
 pub fn listening_ports() -> Vec<PortOwner> {
-    match unsafe { read_listener_table() } {
+    match try_listening_ports() {
         Ok(ports) => ports,
         Err(err) => {
             tracing::warn!(%err, "failed to read the TCP listener table");
@@ -36,10 +35,26 @@ pub fn listening_ports() -> Vec<PortOwner> {
     }
 }
 
-/// Always empty off Windows.
-#[cfg(not(windows))]
-pub fn listening_ports() -> Vec<PortOwner> {
-    Vec::new()
+/// Like [`listening_ports`], but says why the table could not be read.
+///
+/// The two exist because an empty list means different things to different
+/// callers. Conflict detection asks "is anything on this port", where an
+/// unreadable table can pass for "nothing there" and the start fails loudly on
+/// its own. The Port Inspector asks about the whole machine, and an empty
+/// answer there would be a claim — "nothing is listening" — that this probe
+/// never made. Empty off Windows.
+pub fn try_listening_ports() -> Result<Vec<PortOwner>, String> {
+    #[cfg(windows)]
+    {
+        // SAFETY: `read_listener_table` allocates the buffer it hands to the
+        // API and reads only the entries the API reported writing.
+        unsafe { read_listener_table() }
+    }
+
+    #[cfg(not(windows))]
+    {
+        Ok(Vec::new())
+    }
 }
 
 /// Whether `port` is currently held by a listener.
@@ -135,33 +150,65 @@ fn parse_table(buffer: &[u8]) -> Vec<PortOwner> {
 }
 
 /// Best-effort image name for a PID.
+///
+/// `QueryFullProcessImageNameW` rather than `GetModuleBaseNameW`: the latter
+/// requires `PROCESS_VM_READ`, which a signed-in user does not hold for other
+/// processes, so it answers "nothing" for most of the table — including the
+/// user's own services — and the Port Inspector would show a column of
+/// unknowns. Reading the image path needs only `PROCESS_QUERY_LIMITED_INFORMATION`,
+/// which is the access an unprivileged tool is allowed to ask for.
+///
+/// A process owned by another account still refuses even that, and is reported
+/// unnamed rather than guessed at.
 #[cfg(windows)]
 fn process_name(pid: u32) -> Option<String> {
+    use windows::core::PWSTR;
     use windows::Win32::Foundation::CloseHandle;
-    use windows::Win32::System::ProcessStatus::GetModuleBaseNameW;
-    use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+    use windows::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
+        PROCESS_QUERY_LIMITED_INFORMATION,
+    };
 
     if pid == 0 {
         return None;
+    }
+    // The kernel has no image file of its own, and Windows itself names it
+    // "System". Leaving it unnamed would hide the owner of the ports Windows
+    // holds, which are the ones most often found in a conflict.
+    if pid == 4 {
+        return Some("System".to_owned());
     }
 
     // SAFETY: OpenProcess with a query-only access right; the handle is closed
     // below on every path.
     let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }.ok()?;
 
-    let mut name = [0u16; 260];
-    // SAFETY: `handle` is valid and `name` is a correctly sized buffer.
-    let len = unsafe { GetModuleBaseNameW(handle, None, &mut name) };
+    let mut path = [0u16; 260];
+    let mut len = path.len() as u32;
+    // SAFETY: `handle` is valid and `path` is a correctly sized buffer whose
+    // length is passed alongside it; the call writes at most that many UTF-16
+    // units and reports how many it wrote.
+    let result = unsafe {
+        QueryFullProcessImageNameW(
+            handle,
+            PROCESS_NAME_WIN32,
+            PWSTR(path.as_mut_ptr()),
+            &mut len,
+        )
+    };
     // SAFETY: closing the handle opened above.
     unsafe {
         let _ = CloseHandle(handle);
     }
 
-    if len == 0 {
-        return None;
-    }
+    result.ok()?;
 
-    Some(String::from_utf16_lossy(&name[..len as usize]))
+    let full = String::from_utf16_lossy(&path[..len as usize]);
+    // Only the file name is shown: the directory a process was installed in is
+    // noise in a table, and the full path is available from the PID.
+    std::path::Path::new(&full)
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
 }
 
 #[cfg(test)]

@@ -8,11 +8,12 @@
 
 pub mod commands;
 pub mod event_log;
-pub mod mail;
 pub mod events;
 pub mod helper;
 pub mod ipc;
 pub mod logging;
+pub mod mail;
+pub mod notifications;
 pub mod services;
 pub mod session;
 pub mod state;

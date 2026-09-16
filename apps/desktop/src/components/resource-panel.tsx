@@ -1,5 +1,6 @@
 import { CircleAlert, Gauge, Loader2 } from "lucide-react";
 
+import { PortInspectorButton } from "@/components/port-inspector";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import type { DirUsage } from "@/lib/ipc";
@@ -173,6 +174,12 @@ export function ResourcePanel({
                 : "Port map unavailable."
               : `${portsActive ?? 0} of ${portsClaimed} bound by a running service.`}
           </p>
+          {/* §110: the row that counts DevX's ports is where the machine's
+              listener table is reached from, so the two are read together and
+              neither is mistaken for the other. */}
+          <div className="mt-2">
+            <PortInspectorButton />
+          </div>
         </div>
       </CardContent>
     </Card>

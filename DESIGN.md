@@ -3757,6 +3757,19 @@ Flush DNS
 
 Privileged operations should be clearly communicated.
 
+Scope: this manager lists the entries DevX itself wrote — the lines carrying
+its marker — and never the file's other lines. Those belong to the user and to
+the system, and the helper is only allowed to add, update and remove its own,
+so a panel that showed them would be offering edits it must refuse. The same
+limit is worth saying in the UI: a list presented as "the hosts file" would
+read as a claim about lines nobody here can touch.
+
+Entries are keyed by host name, so Edit is an add of the new name followed by
+a remove of the old one when the name changes; an address-only change is a
+single in-place update. Flush DNS drops the machine's whole resolver cache,
+not just these names, because a name that already resolved keeps resolving
+from the cache after the file changed.
+
 ------------------------------------------------------------------------
 
 # 112. Certificates

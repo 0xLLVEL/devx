@@ -17,6 +17,7 @@ import {
 import { useMemo, useState, type ReactNode } from "react";
 
 import { FilterBar, type ActiveFilter } from "@/components/filter-bar";
+import { HostsButton } from "@/components/hosts-panel";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -604,6 +605,10 @@ function NetworkStrip({
             ? "The bundled resolver answers every subdomain."
             : "Start the resolver to cover subdomains too."}
       </span>
+      {/* §111: the hosts manager is reached from here because this strip is
+          where name resolution is already explained. It stays reachable in
+          resolver mode too — entries written earlier are still on disk. */}
+      <HostsButton />
     </div>
   );
 }

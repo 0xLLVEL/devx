@@ -16,9 +16,11 @@ use std::path::PathBuf;
 use devx_core::Result;
 use devx_ipc::{HostsEntry, PrivilegedRequest, PrivilegedResponse, PROTOCOL_VERSION};
 
+use crate::dns_cache::DnsCacheBackend;
 use crate::nrpt::NrptBackend;
 
 pub mod cert_store;
+pub mod dns_cache;
 pub mod hosts;
 pub mod nrpt;
 pub mod server;
@@ -117,6 +119,8 @@ pub struct Backends {
     pub ca: Box<dyn CaBackend + Send + Sync>,
     /// NRPT rule operations.
     pub nrpt: Box<dyn NrptBackend + Send + Sync>,
+    /// Resolver-cache operations.
+    pub dns_cache: Box<dyn DnsCacheBackend + Send + Sync>,
 }
 
 impl Backends {
@@ -126,6 +130,7 @@ impl Backends {
             hosts: Box::new(FileHostsBackend::system()),
             ca: Box::new(WindowsCaBackend),
             nrpt: Box::new(nrpt::WindowsNrptBackend),
+            dns_cache: Box::new(dns_cache::WindowsDnsCache),
         }
     }
 
@@ -169,7 +174,12 @@ fn is_devx_suffix(namespace: &str) -> bool {
 /// Pure dispatch: no I/O of its own beyond what the backends do, so the
 /// protocol rules are testable end to end with temp files and fakes.
 pub fn handle(backends: &Backends, request: &PrivilegedRequest) -> PrivilegedResponse {
-    let Backends { hosts, ca, nrpt } = backends;
+    let Backends {
+        hosts,
+        ca,
+        nrpt,
+        dns_cache,
+    } = backends;
     match request {
         PrivilegedRequest::Hello { version } => {
             if *version == PROTOCOL_VERSION {
@@ -202,6 +212,10 @@ pub fn handle(backends: &Backends, request: &PrivilegedRequest) -> PrivilegedRes
             }
         }
         PrivilegedRequest::RemoveHostsEntry { hostname } => match hosts.remove(hostname) {
+            Ok(()) => PrivilegedResponse::Applied,
+            Err(err) => rejected(err),
+        },
+        PrivilegedRequest::FlushDns => match dns_cache.flush() {
             Ok(()) => PrivilegedResponse::Applied,
             Err(err) => rejected(err),
         },
@@ -393,11 +407,51 @@ mod tests {
         }
     }
 
+    /// In-memory resolver cache recording how often it was dropped, so the
+    /// dispatch test can prove the request reached the backend exactly once
+    /// without touching the machine's real cache.
+    struct FakeDnsCache {
+        flushes: std::sync::Arc<std::sync::Mutex<u32>>,
+        fail: bool,
+    }
+
+    impl FakeDnsCache {
+        fn new() -> Self {
+            Self {
+                flushes: std::sync::Arc::new(std::sync::Mutex::new(0)),
+                fail: false,
+            }
+        }
+
+        fn failing() -> Self {
+            Self {
+                fail: true,
+                ..Self::new()
+            }
+        }
+
+        /// A handle on the counter that survives the backend being boxed.
+        fn counter(&self) -> std::sync::Arc<std::sync::Mutex<u32>> {
+            std::sync::Arc::clone(&self.flushes)
+        }
+    }
+
+    impl DnsCacheBackend for FakeDnsCache {
+        fn flush(&self) -> Result<()> {
+            if self.fail {
+                return Err(devx_core::Error::privileged("the cache is unreachable"));
+            }
+            *self.flushes.lock().expect("lock") += 1;
+            Ok(())
+        }
+    }
+
     fn backends(hosts: TempHosts, ca: FakeCa) -> Backends {
         Backends {
             hosts: Box::new(hosts),
             ca: Box::new(ca),
             nrpt: Box::new(FakeNrpt::new()),
+            dns_cache: Box::new(FakeDnsCache::new()),
         }
     }
 
@@ -427,7 +481,7 @@ mod tests {
         assert_eq!(
             response,
             PrivilegedResponse::Rejected {
-                reason: "client speaks protocol 999, helper speaks 1".to_owned()
+                reason: format!("client speaks protocol 999, helper speaks {PROTOCOL_VERSION}")
             }
         );
     }
@@ -496,12 +550,72 @@ mod tests {
             ))),
             ca: Box::new(FakeCa::new()),
             nrpt: Box::new(FakeNrpt::new()),
+            dns_cache: Box::new(FakeDnsCache::new()),
         };
         let response = handle(&b, &PrivilegedRequest::ListHostsEntries);
         assert!(
             matches!(response, PrivilegedResponse::Rejected { .. }),
             "{response:?}"
         );
+    }
+
+    #[test]
+    fn flush_dns_reaches_the_cache_backend_exactly_once() {
+        let cache = FakeDnsCache::new();
+        let flushes = cache.counter();
+        let b = Backends {
+            hosts: Box::new(TempHosts::new()),
+            ca: Box::new(FakeCa::new()),
+            nrpt: Box::new(FakeNrpt::new()),
+            dns_cache: Box::new(cache),
+        };
+
+        assert_eq!(
+            handle(&b, &PrivilegedRequest::FlushDns),
+            PrivilegedResponse::Applied
+        );
+        assert_eq!(*flushes.lock().expect("lock"), 1);
+    }
+
+    #[test]
+    fn a_cache_that_cannot_be_flushed_is_a_rejection_not_a_panic() {
+        let b = Backends {
+            hosts: Box::new(TempHosts::new()),
+            ca: Box::new(FakeCa::new()),
+            nrpt: Box::new(FakeNrpt::new()),
+            dns_cache: Box::new(FakeDnsCache::failing()),
+        };
+
+        let response = handle(&b, &PrivilegedRequest::FlushDns);
+        assert!(
+            matches!(response, PrivilegedResponse::Rejected { .. }),
+            "{response:?}"
+        );
+    }
+
+    #[test]
+    fn flushing_leaves_the_hosts_entries_alone() {
+        // §111's Flush DNS is not a mutation: the entries a user sees must be
+        // exactly the ones they saw before the flush.
+        let cache = FakeDnsCache::new();
+        let b = Backends {
+            hosts: Box::new(TempHosts::new()),
+            ca: Box::new(FakeCa::new()),
+            nrpt: Box::new(FakeNrpt::new()),
+            dns_cache: Box::new(cache),
+        };
+
+        let _ = handle(
+            &b,
+            &PrivilegedRequest::AddHostsEntry(HostsEntry {
+                hostname: "app.test".into(),
+                ip: "127.0.0.1".into(),
+            }),
+        );
+        let before = handle(&b, &PrivilegedRequest::ListHostsEntries);
+
+        assert_eq!(handle(&b, &PrivilegedRequest::FlushDns), PrivilegedResponse::Applied);
+        assert_eq!(handle(&b, &PrivilegedRequest::ListHostsEntries), before);
     }
 
     #[test]

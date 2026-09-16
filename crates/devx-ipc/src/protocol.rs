@@ -12,7 +12,11 @@ use serde::{Deserialize, Serialize};
 ///
 /// Bumped on any incompatible change to the request or response shape; the
 /// helper refuses a client with a different version rather than guessing.
-pub const PROTOCOL_VERSION: u32 = 1;
+/// Version 2 added [`PrivilegedRequest::FlushDns`]: a version 1 helper cannot
+/// name that request, so it would drop the connection instead of answering,
+/// and the handshake is what turns that silence into a sentence the user can
+/// act on.
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// One `hosts`-file mapping, validated before it is ever applied.
 ///
@@ -60,6 +64,14 @@ pub enum PrivilegedRequest {
         /// Host name whose mapping should disappear.
         hostname: String,
     },
+    /// Drops the machine's DNS client resolver cache.
+    ///
+    /// Separate from the hosts mutations on purpose: a name that already
+    /// resolved keeps resolving from the cache after the file changed, and a
+    /// user who wants a stale answer gone should not have to edit an entry to
+    /// get it. Flushing needs elevation, so it goes through the helper rather
+    /// than the user process.
+    FlushDns,
     /// Installs `cert_pem` into the machine's trusted-root store under the
     /// given friendly name. The certificate must be a self-signed CA.
     InstallCa {
@@ -107,7 +119,11 @@ pub enum PrivilegedResponse {
     },
     /// The current marked `hosts` entries.
     HostsEntries(Vec<HostsEntry>),
-    /// The mutation was applied and the hosts file flushed.
+    /// The request was carried out: a mutation landed, or (for
+    /// [`PrivilegedRequest::FlushDns`]) the resolver cache was dropped.
+    ///
+    /// Mutations do not flush on their own; the cache follows the file only
+    /// when [`PrivilegedRequest::FlushDns`] is asked for explicitly.
     Applied,
     /// The answer to [`PrivilegedRequest::CheckCa`]: whether the named CA is
     /// already trusted by the machine.
@@ -399,5 +415,24 @@ mod tests {
         let json = r#"{"kind":"reformat_disk","payload":true}"#;
         let parsed: Result<PrivilegedRequest, _> = serde_json::from_str(json);
         assert!(parsed.is_err(), "an unknown variant must not parse");
+    }
+
+    #[test]
+    fn flush_dns_round_trips_and_keeps_its_wire_name() {
+        let json = serde_json::to_string(&PrivilegedRequest::FlushDns).expect("serialize");
+        // Pinned: the tag is part of the contract, so renaming it silently
+        // would leave a same-version helper answering "unknown request".
+        assert_eq!(json, r#"{"kind":"flush_dns"}"#);
+
+        let back: PrivilegedRequest = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, PrivilegedRequest::FlushDns);
+    }
+
+    #[test]
+    fn the_protocol_version_matches_the_requests_it_ships() {
+        // Version 2 is the first version that can name `FlushDns`; a bump
+        // without a request behind it (or a request without a bump) is what
+        // this pins.
+        assert_eq!(PROTOCOL_VERSION, 2);
     }
 }

@@ -72,6 +72,31 @@ export const commands = {
 	 */
 	eventsRecent: (limit: number | null) => typedError<EventEntry[], DevxError>(__TAURI_INVOKE("events_recent", { limit })),
 	/**
+	 *  What §98's panel shows: the recorded transitions, newest first, each marked
+	 *  read or unread, plus the unread count behind the bell's badge.
+	 * 
+	 *  Reading is free of side effects — opening the panel must not mark anything
+	 *  read, or §98's "Mark all read" would have nothing left to do.
+	 */
+	notificationsList: (limit: number | null) => typedError<NotificationList, DevxError>(__TAURI_INVOKE("notifications_list", { limit })),
+	/**
+	 *  §98's "Mark all read": everything recorded so far is read.
+	 * 
+	 *  Failures are not read by this. §98 keeps an error visible until it is
+	 *  acknowledged, so one that has not been cleared stays in the list and in the
+	 *  badge — that is the point of the rule, not an oversight.
+	 */
+	notificationsMarkAllRead: (limit: number | null) => typedError<NotificationList, DevxError>(__TAURI_INVOKE("notifications_mark_all_read", { limit })),
+	/**
+	 *  §98's "Clear": everything recorded so far is acknowledged, so the panel
+	 *  empties.
+	 * 
+	 *  Only the marker moves. `events.jsonl` is never edited, so the same
+	 *  transitions stay on the Activity timeline (§42) and in the logs — clearing
+	 *  notifications is not deleting history.
+	 */
+	notificationsClear: (limit: number | null) => typedError<NotificationList, DevxError>(__TAURI_INVOKE("notifications_clear", { limit })),
+	/**
 	 *  The disk use of DevX's managed directories, biggest last.
 	 * 
 	 *  Only the four directories users can meaningfully shrink are listed;
@@ -87,6 +112,36 @@ export const commands = {
 	 *  something new.
 	 */
 	portMap: () => typedError<PortEntry[], DevxError>(__TAURI_INVOKE("port_map")),
+	/**
+	 *  Every TCP port in the `LISTEN` state, with the process holding it (§110).
+	 * 
+	 *  This is the whole machine, not DevX's own reservations: `port_map` answers
+	 *  "which ports does DevX claim", this answers "who is listening, right now".
+	 *  The two are deliberately separate commands, so the UI cannot present one as
+	 *  the other.
+	 * 
+	 *  Read-only and unprivileged, and it reports a failure rather than an empty
+	 *  list, because "no port is listening" is a claim about the machine that a
+	 *  failed read cannot support.
+	 */
+	listeningPorts: () => typedError<PortOwner[], DevxError>(__TAURI_INVOKE("listening_ports")),
+	/**
+	 *  Stops the process holding `port`, after the user confirmed it (§110).
+	 * 
+	 *  The guards, in order, and what each one is for:
+	 * 
+	 *  1. The guard below rules out three PIDs before anything else runs.
+	 *  2. The listener table is read *again* here, and the PID has to still hold
+	 *     that port. The PID the user clicked came from a list that is already
+	 *     seconds old, and Windows reuses PIDs the moment a process exits, so
+	 *     without this the command could end an unrelated process that inherited
+	 *     the number. A stale row can then only fail the check.
+	 *  3. The termination itself is the OS's decision. A process owned by SYSTEM or
+	 *     by another account is refused with "Access is denied", and that refusal
+	 *     is reported as-is: no retry, no elevation, no helper service. The user
+	 *     gets the reason instead of a command that looks like it worked.
+	 */
+	stopProcessOnPort: (pid: number, port: number) => typedError<null, DevxError>(__TAURI_INVOKE("stop_process_on_port", { pid, port })),
 	/**  Lists the components DevX can install. */
 	catalogList: () => typedError<ComponentSummary[], DevxError>(__TAURI_INVOKE("catalog_list")),
 	/**
@@ -469,6 +524,58 @@ export const commands = {
 	cronSet: (name: string, program: string | null, phpVersion: string | null, args: string[], workingDir: string, everyMinutes: number) => typedError<CronStatus[], DevxError>(__TAURI_INVOKE("cron_set", { name, program, phpVersion, args, workingDir, everyMinutes })),
 	/**  Deletes a scheduled task from the config and from Windows. */
 	cronDelete: (name: string) => typedError<CronStatus[], DevxError>(__TAURI_INVOKE("cron_delete", { name })),
+	/**
+	 *  Lists the hosts entries DevX manages.
+	 * 
+	 *  Only marked entries: the file's other lines belong to the user and to the
+	 *  system, and this command does not report them at all.
+	 * 
+	 *  # Errors
+	 * 
+	 *  Fails with [`devx_core::ErrorCode::Privileged`] when the helper is not
+	 *  running. Elevation is deliberately not attempted from here.
+	 */
+	hostsList: () => typedError<HostsEntry[], DevxError>(__TAURI_INVOKE("hosts_list")),
+	/**
+	 *  Adds one DevX-managed hosts entry, or updates the existing one for that
+	 *  host name.
+	 * 
+	 *  Returns the list as it stands after the change, so the caller never renders
+	 *  a list it did not just read.
+	 * 
+	 *  # Errors
+	 * 
+	 *  Propagates validation failures (before anything is elevated), the
+	 *  elevation failure when the helper cannot be started, and the helper's own
+	 *  refusal — a host name already mapped by a line outside DevX's control is a
+	 *  conflict, not something to overwrite.
+	 */
+	hostsAdd: (hostname: string, ip: string) => typedError<HostsEntry[], DevxError>(__TAURI_INVOKE("hosts_add", { hostname, ip })),
+	/**
+	 *  Removes the DevX-managed hosts entry for `hostname`.
+	 * 
+	 *  Returns the list as it stands after the change. Removing a name DevX does
+	 *  not manage is not an error: there is nothing of DevX's to remove.
+	 * 
+	 *  # Errors
+	 * 
+	 *  Propagates validation failures, the elevation failure when the helper
+	 *  cannot be started, and the helper's own refusal.
+	 */
+	hostsRemove: (hostname: string) => typedError<HostsEntry[], DevxError>(__TAURI_INVOKE("hosts_remove", { hostname })),
+	/**
+	 *  Drops the machine's DNS client resolver cache.
+	 * 
+	 *  Separate from the mutations on purpose: a name that resolved once keeps
+	 *  resolving from the cache after the hosts file changed, and sometimes the
+	 *  cache is the only thing that needs clearing.
+	 * 
+	 *  # Errors
+	 * 
+	 *  Propagates the elevation failure when the helper cannot be started, and the
+	 *  helper's refusal when `ipconfig /flushdns` itself fails.
+	 */
+	hostsFlushDns: () => typedError<null, DevxError>(__TAURI_INVOKE("hosts_flush_dns")),
 };
 
 /** Events */
@@ -1038,6 +1145,23 @@ export type General = {
 };
 
 /**
+ *  One `hosts`-file mapping, validated before it is ever applied.
+ * 
+ *  Inetpub-style attacks and cache poisoning start with a hostile hosts file,
+ *  so both fields are validated in [`HostsEntry::validate`] and again at the
+ *  helper boundary: a request that fails validation is never written.
+ */
+export type HostsEntry = {
+	/**
+	 *  Host name to map, e.g. `myapp.test`. Single DNS label or FQDN of
+	 *  letters, digits and hyphens.
+	 */
+	hostname: string,
+	/**  IP address the host name resolves to, e.g. `127.0.0.1`. */
+	ip: string,
+};
+
+/**
  *  Where an install currently is, mirrored from
  *  [`devx_provision::InstallStage`] into an IPC-friendly shape.
  */
@@ -1235,6 +1359,47 @@ export type Network = {
 	dns_mode: DnsMode,
 };
 
+/**  One notification: a recorded transition, with what §98 shows beside it. */
+export type NotificationEntry = {
+	/**  Unix timestamp in seconds. */
+	at_unix: number,
+	/**  Id of the supervised service. */
+	id: string,
+	/**  The state it moved to (`running`, `failed`, `starting`, …). */
+	state: string,
+	/**  Why it left the running state (`crashed`, `health_timeout`, …), when it did. */
+	exit: string | null,
+	/**
+	 *  `error` for the transitions that stay until acknowledged, `info`
+	 *  otherwise. The frontend pairs it with text, never with colour alone
+	 *  (§55).
+	 */
+	severity: string,
+	/**  Whether the user still owes this one a look. */
+	unread: boolean,
+};
+
+/**  §98's panel contents. */
+export type NotificationList = {
+	/**  The entries to show, newest first. */
+	entries: NotificationEntry[],
+	/**
+	 *  How many of the events read are unread — the bell's badge.
+	 * 
+	 *  Counted over every event handed in, not just the ones that fit in
+	 *  `entries`, so a truncated panel still badges the truth.
+	 */
+	unread_count: number,
+	/**
+	 *  How many recorded transitions this answer was computed from.
+	 * 
+	 *  Not shown as a number: it is what lets the panel tell "nothing has
+	 *  happened yet" from "everything was cleared" instead of printing one
+	 *  sentence for both.
+	 */
+	recorded: number,
+};
+
 /**  The PHP extensions a version ships and which are enabled, for the UI. */
 export type PhpExtensionInfo = {
 	/**  PHP version these extensions belong to. */
@@ -1327,6 +1492,16 @@ export type PortEntry = {
 	port: number,
 	/**  Whether the service is running right now. */
 	active: boolean,
+};
+
+/**  A process listening on a local TCP port. */
+export type PortOwner = {
+	/**  The port being listened on. */
+	port: number,
+	/**  PID of the owning process. */
+	pid: number,
+	/**  Best-effort process image name (e.g. `nginx.exe`), if resolvable. */
+	process_name: string | null,
 };
 
 /**  How the privileged helper looks from this machine right now. */

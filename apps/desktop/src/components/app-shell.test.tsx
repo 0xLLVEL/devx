@@ -27,6 +27,9 @@ const mocks = vi.hoisted(() => ({
   mailStatus: vi.fn(),
   appInfo: vi.fn(),
   eventsRecent: vi.fn(),
+  notificationsList: vi.fn(),
+  notificationsMarkAllRead: vi.fn(),
+  notificationsClear: vi.fn(),
   servicesStartAll: vi.fn(),
   terminalPath: vi.fn(),
   terminalRun: vi.fn(),
@@ -53,6 +56,9 @@ vi.mock("@/lib/ipc", async () => {
     },
   };
 });
+
+/** §98: an empty notification center, the shape every command returns. */
+const EMPTY_NOTIFICATIONS = { entries: [], unread_count: 0, recorded: 0 };
 
 function renderShell(route = "/") {
   const queryClient = new QueryClient({
@@ -118,6 +124,8 @@ describe("AppShell", () => {
       debug: false,
     });
     mocks.eventsRecent.mockResolvedValue([]);
+    // §98: the bell reads its own count. Nothing recorded yet means no badge.
+    mocks.notificationsList.mockResolvedValue(EMPTY_NOTIFICATIONS);
     mocks.servicesStartAll.mockResolvedValue([]);
     mocks.terminalPath.mockResolvedValue("C:\\devx\\bin");
     mocks.terminalRun.mockResolvedValue({ run_id: 1, code: 0 });

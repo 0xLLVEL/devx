@@ -101,6 +101,16 @@ describe("ResourcePanel", () => {
     ).toBeInTheDocument();
   });
 
+  it("reaches the §110 port inspector from the ports row", () => {
+    // The panel counts DevX's own ports; the inspector opens from the same
+    // row, so the machine's listeners are never mistaken for them.
+    renderPanel();
+
+    expect(
+      screen.getByRole("button", { name: "Inspect ports" }),
+    ).toBeInTheDocument();
+  });
+
   it("shows no port figure when the port map is unavailable", () => {
     renderPanel({ portsClaimed: null, portsActive: null });
 

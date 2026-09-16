@@ -214,6 +214,15 @@ impl PipeClient {
         )
     }
 
+    /// Drops the machine's DNS client resolver cache through the helper.
+    ///
+    /// Nothing is validated here: there is no payload to validate, and the
+    /// handshake is the only precondition an operation this blunt can have.
+    pub async fn flush_dns(&mut self) -> Result<()> {
+        self.hello().await?;
+        expect_applied(self.request(PrivilegedRequest::FlushDns).await?)
+    }
+
     /// Installs `cert_pem` into the machine root store as `friendly_name`.
     ///
     /// Both the name and the PEM shape are validated before anything crosses
