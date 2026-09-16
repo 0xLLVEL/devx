@@ -144,4 +144,60 @@ describe("SharePage", () => {
       expect(mocks.tunnelStop).toHaveBeenCalledWith("myapp.test");
     });
   });
+
+  it("offers a retry when the share status cannot be read (§39)", async () => {
+    mocks.tunnelStatus.mockRejectedValueOnce(new Error("tunnel service asleep"));
+
+    renderWithProviders(<SharePage />);
+
+    expect(
+      await screen.findByText("Could not read the share status."),
+    ).toBeInTheDocument();
+
+    // The rows stay usable while the status is unknown.
+    expect(screen.getAllByRole("button", { name: /^share$/i })).toHaveLength(2);
+
+    mocks.tunnelStatus.mockImplementation((hostname: string) =>
+      Promise.resolve({ hostname, running: false, url: null }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+
+    await waitFor(() =>
+      expect(screen.queryByText("Could not read the share status.")).not.toBeInTheDocument(),
+    );
+    expect(screen.getAllByText("local only").length).toBe(2);
+  });
+
+  it("reports a copy that the clipboard refused (§131 Rule 18)", async () => {
+    mocks.tunnelStatus.mockImplementation((hostname: string) =>
+      hostname === "myapp.test"
+        ? Promise.resolve({
+            hostname,
+            running: true,
+            url: "https://quiet-words-1234.trycloudflare.com",
+          })
+        : Promise.resolve({ hostname, running: false, url: null }),
+    );
+    // jsdom ships no clipboard, so the refusal is installed directly.
+    const original = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    const writeText = vi.fn().mockRejectedValue(new Error("clipboard denied"));
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+
+    renderWithProviders(<SharePage />);
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: /copy the public url/i }),
+    );
+
+    expect(await screen.findByText("Could not copy the public URL")).toBeInTheDocument();
+    expect(screen.queryByText("Copied!")).not.toBeInTheDocument();
+    if (original) {
+      Object.defineProperty(navigator, "clipboard", original);
+    } else {
+      Reflect.deleteProperty(navigator, "clipboard");
+    }
+  });
 });

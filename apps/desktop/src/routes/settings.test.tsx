@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
   revealManagedDir: vi.fn(),
   appInfo: vi.fn(),
   updateCheck: vi.fn(),
+  profileList: vi.fn(),
+  profileDelete: vi.fn(),
 }));
 
 vi.mock("@/lib/ipc", async () => {
@@ -43,6 +45,8 @@ describe("SettingsPage", () => {
       update_available: false,
       url: null,
     });
+    mocks.profileList.mockResolvedValue([]);
+    mocks.profileDelete.mockResolvedValue([]);
   });
 
   it("renders the loaded configuration", async () => {
@@ -186,5 +190,126 @@ describe("SettingsPage", () => {
 
     expect(await screen.findByText("DevX is up to date")).toBeInTheDocument();
     expect(screen.getByText(/running 0\.1\.0/i)).toBeInTheDocument();
+  });
+
+  it("keeps the application update apart from runtime versions (§108)", async () => {
+    mocks.updateCheck.mockResolvedValue({
+      current: "0.1.0",
+      latest: "0.2.0",
+      update_available: true,
+      url: "https://github.com/devx/devx/releases/latest",
+    });
+
+    renderWithProviders(<SettingsPage />);
+
+    expect(await screen.findByText(/DevX build only/i)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /components/i })).toHaveAttribute(
+      "href",
+      "/components",
+    );
+    // No install IPC exists, so there is no button that claims to install one.
+    expect(
+      screen.queryByRole("button", { name: /^update$/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("names the failure when the saved profiles cannot be read", async () => {
+    mocks.profileList.mockRejectedValue(new Error("failed to read the profiles folder"));
+
+    renderWithProviders(<SettingsPage />);
+
+    // §39: a read that failed must not read as "you never saved one".
+    expect(
+      await screen.findByText("Could not read the saved profiles."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "failed to read the profiles folder",
+    );
+  });
+
+  it("replaces the update check with the failure when app-info cannot be read", async () => {
+    mocks.appInfo.mockRejectedValue(new Error("could not read the build metadata"));
+
+    renderWithProviders(<SettingsPage />);
+
+    // The update check stays disabled without a running version, so the card
+    // must not sit on "Checking for updates…" forever (§121).
+    expect(
+      await screen.findByText("Could not read this build's version."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/checking for updates/i)).not.toBeInTheDocument();
+  });
+
+  it("confirms before deleting a saved profile", async () => {
+    const user = userEvent.setup();
+    mocks.profileList.mockResolvedValue([{ name: "staging", modified_unix: null }]);
+
+    renderWithProviders(<SettingsPage />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Delete profile staging" }),
+    );
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText('Delete the profile "staging"?')).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole("button", { name: "Delete profile" }));
+
+    await waitFor(() => expect(mocks.profileDelete).toHaveBeenCalledTimes(1));
+    expect(mocks.profileDelete.mock.calls[0]?.[0]).toBe("staging");
+  });
+
+  it("confirms before restoring the default configuration", async () => {
+    const user = userEvent.setup();
+    mocks.configReset.mockResolvedValue(configFixture());
+
+    renderWithProviders(<SettingsPage />);
+
+    await user.click(await screen.findByRole("button", { name: "Restore defaults" }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByText("Restore the default configuration?"),
+    ).toBeInTheDocument();
+
+    await user.click(
+      within(dialog).getByRole("button", { name: "Restore defaults" }),
+    );
+
+    await waitFor(() => expect(mocks.configReset).toHaveBeenCalledTimes(1));
+    expect(
+      await screen.findByText("Configuration restored to its defaults."),
+    ).toBeInTheDocument();
+  });
+
+  it("reports a save that failed for a reason the IPC layer did not label", async () => {
+    const user = userEvent.setup();
+    // §131 Rule 18: not every rejection is an `IpcError`, and an unlabelled one
+    // must not leave the page looking as if the save never happened.
+    mocks.configSet.mockRejectedValue(new Error("the write lock was never released"));
+
+    renderWithProviders(<SettingsPage />);
+
+    const suffix = await screen.findByLabelText("Domain suffix");
+    await user.clear(suffix);
+    await user.type(suffix, "local");
+    await user.click(screen.getByRole("button", { name: /save changes/i }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Could not save the configuration.");
+    expect(alert).toHaveTextContent("the write lock was never released");
+  });
+
+  it("shows the empty state, not a paragraph, when no profile is saved (§38)", async () => {
+    mocks.profileList.mockResolvedValue([]);
+
+    renderWithProviders(<SettingsPage />);
+
+    expect(await screen.findByText("No saved profiles yet.")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Set everything up the way you like it, then save it under a name below.",
+      ),
+    ).toBeInTheDocument();
   });
 });

@@ -1,36 +1,94 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
-  CircleAlert,
+  Boxes,
+  Clock,
+  Cpu,
+  Database,
+  FileText,
   Globe,
-  HardDrive,
   Loader2,
-  Package,
   Play,
+  Server,
   Square,
+  TerminalSquare,
+  type LucideIcon,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { Link } from "react-router-dom";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { ActivityTimeline } from "@/components/activity-timeline";
 import { PageHeader } from "@/components/page-header";
+import { ResourcePanel } from "@/components/resource-panel";
 import { StatusBadge } from "@/components/status-dot";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { SummaryCard, cardLinkClass, type SummaryTone } from "@/components/summary-card";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Callout } from "@/components/ui/callout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ipc, ipcEvents, type ServiceMetrics } from "@/lib/ipc";
-import { summarizeMetrics, useServiceMetrics, useSites } from "@/lib/queries";
+import { EmptyState } from "@/components/ui/empty-state";
+import { useToast } from "@/components/ui/toast";
+import {
+  ipc,
+  ipcEvents,
+  type BatchStartOutcome,
+  type DbServer,
+  type PortEntry,
+  type ServiceMetrics,
+  type SiteStatus,
+} from "@/lib/ipc";
+import { navShortcutLabel } from "@/lib/navigation";
+import {
+  summarizeMetrics,
+  useInstalledVersions,
+  useServiceMetrics,
+  useSites,
+} from "@/lib/queries";
+import { useSystemStatus, type SystemState } from "@/lib/shell-data";
 import { cn } from "@/lib/utils";
 
 /**
- * Landing page — a Real-Time Monitor (MASTER.md). The one decision here is
- * "is anything broken, and what do I click": the service monitor leads as a
- * dense table, failed services sort first, and the side summary stays
- * secondary with real numbers only.
+ * Dashboard (§16) — the screen that answers "is anything broken, and what do I
+ * click".
+ *
+ * Layout follows §16: the §17 header, the four §18 summary cards, then the
+ * panels, with the right rail carrying quick actions, recent activity and the
+ * §40 resource panel. Below 1280px the rail stacks under the main column
+ * (§16's 1100–1300px collapse), which also keeps the whole page intact down to
+ * the window's 940px minimum.
+ *
+ * Every figure on this page comes from a command the backend really answers.
+ * Where it does not — system-wide CPU, disk capacity, a "project" concept —
+ * the dashboard says nothing rather than guessing (§131 Rule 17).
  */
 export function DashboardPage() {
   const sites = useSites();
   const metrics = useServiceMetrics();
+  const installed = useInstalledVersions();
+  const catalog = useQuery({
+    queryKey: ["catalog"],
+    queryFn: ipc.catalogList,
+    // The shipped catalog does not change while the app runs.
+    staleTime: Infinity,
+  });
+  const servers = useQuery({ queryKey: ["db-servers"], queryFn: ipc.dbListServers });
+  // Disk usage walks the managed directories, so it is measured on §106's slow
+  // end and never in the background.
+  const disk = useQuery({
+    queryKey: ["disk-usage"],
+    queryFn: ipc.diskUsage,
+    refetchInterval: 60_000,
+    refetchIntervalInBackground: false,
+  });
+  const ports = useQuery({
+    queryKey: ["port-map"],
+    queryFn: ipc.portMap,
+    refetchInterval: 15_000,
+    refetchIntervalInBackground: false,
+  });
+  const events = useServiceEventLog(6);
+  const status = useSystemStatus();
   const queryClient = useQueryClient();
+  const toast = useToast();
 
   const invalidateServices = () => {
     void queryClient.invalidateQueries({ queryKey: ["service-metrics"] });
@@ -38,41 +96,172 @@ export function DashboardPage() {
   };
   const startAll = useMutation({
     mutationFn: ipc.servicesStartAll,
+    onSuccess: (outcomes) => reportFailedOutcomes(outcomes, "start", toast),
+    onError: (error: Error) => {
+      toast.error("Could not start services", { details: error.message });
+    },
     onSettled: invalidateServices,
   });
   const stopAll = useMutation({
     mutationFn: ipc.servicesStopAll,
+    onSuccess: (outcomes) => reportFailedOutcomes(outcomes, "stop", toast),
+    onError: (error: Error) => {
+      toast.error("Could not stop services", { details: error.message });
+    },
     onSettled: invalidateServices,
   });
 
   const entries = metrics.data ?? [];
   const { runningCount, failed, cpu, memory } = summarizeMetrics(entries);
-  const activity = useActivityFeed();
-  const stoppedCount = entries.filter((entry) => entry.state === "stopped" || entry.state === "failed").length;
+  const runningProcesses = entries
+    .filter((entry) => entry.state === "running")
+    .reduce((sum, entry) => sum + entry.processes, 0);
+  const stoppedCount = entries.filter(
+    (entry) => entry.state === "stopped" || entry.state === "failed",
+  ).length;
+
+  const siteList = sites.data ?? [];
+  const httpsSites = siteList.filter((site) => site.https).length;
+  const serverList = servers.data ?? [];
+  const reachableServers = serverList.filter((server) => server.reachable).length;
+
+  // "Runtimes" means language runtimes (§19), so installed components are
+  // classified by the catalog's own kind rather than counted wholesale — a
+  // Composer or a Mailpit install is not a runtime.
+  const runtimeVersions = useMemo(() => {
+    if (!installed.data || !catalog.data) {
+      return null;
+    }
+    const kinds = new Map(catalog.data.map((component) => [component.id, component.kind]));
+    return installed.data.filter((entry) => kinds.get(entry.component_id) === "runtime");
+  }, [installed.data, catalog.data]);
+
+  const portEntries = ports.data ?? [];
+  const conflicts = countPortConflicts(portEntries);
+
   const batchBusy = startAll.isPending || stopAll.isPending;
+  const problems = [
+    failed.length > 0
+      ? `${failed.length} failed`
+      : null,
+    conflicts > 0
+      ? `${conflicts} port conflict${conflicts === 1 ? "" : "s"}`
+      : null,
+  ].filter((part): part is string => part !== null);
+
+  const counts = [
+    runtimeVersions === null ? null : `${runtimeVersions.length} runtimes`,
+    `${entries.length} server${entries.length === 1 ? "" : "s"}`,
+    `${siteList.length} site${siteList.length === 1 ? "" : "s"}`,
+  ].filter((part): part is string => part !== null);
+
+  /* §18's four cards. A count that could not be read is drawn as unknown, never
+     as a zero (§131 Rule 17), and "nothing configured yet" is a fact rather
+     than an alarm. */
+  const runtimesCard: CardFacts = {
+    value: runtimeVersions === null ? null : String(runtimeVersions.length),
+    status:
+      installed.isPending || catalog.isPending
+        ? "Counting…"
+        : runtimeVersions === null
+          ? "Unavailable"
+          : runtimeVersions.length === 0
+            ? "None installed yet"
+            : "Installed",
+    tone: runtimeVersions === null && !installed.isPending && !catalog.isPending
+      ? "warning"
+      : "neutral",
+    pending: installed.isPending || catalog.isPending,
+  };
+  const serversCard: CardFacts = {
+    value: metrics.isError ? null : `${runningCount}/${entries.length}`,
+    status: metrics.isError
+      ? "Unavailable"
+      : entries.length === 0
+        ? "Nothing supervised yet"
+        : failed.length > 0
+          ? `${failed.length} failed`
+          : runningCount === entries.length
+            ? "All running"
+            : `${runningCount} of ${entries.length} running`,
+    tone: metrics.isError
+      ? "warning"
+      : failed.length > 0
+        ? "destructive"
+        : entries.length > 0 && runningCount < entries.length
+          ? "warning"
+          : entries.length === 0
+            ? "neutral"
+            : "success",
+    pending: metrics.isPending,
+  };
+  const sitesCard: CardFacts = {
+    value: sites.isPending || sites.isError ? null : String(siteList.length),
+    status: sites.isError
+      ? "Unavailable"
+      : siteList.length === 0
+        ? "None configured"
+        : httpsSites > 0
+          ? `${httpsSites} over HTTPS`
+          : "Served over HTTP",
+    tone: sites.isError ? "warning" : "neutral",
+    pending: sites.isPending,
+  };
+  const databasesCard: CardFacts = {
+    value: servers.isPending || servers.isError ? null : String(serverList.length),
+    status: servers.isError
+      ? "Unavailable"
+      : serverList.length === 0
+        ? "None configured"
+        : reachableServers === serverList.length
+          ? "All reachable"
+          : `${reachableServers} of ${serverList.length} reachable`,
+    tone: servers.isError
+      ? "warning"
+      : serverList.length === 0
+        ? "neutral"
+        : reachableServers === serverList.length
+          ? "success"
+          : "warning",
+    pending: servers.isPending,
+  };
 
   return (
-    <div className="space-y-5 p-5">
+    <div className="space-y-4 p-5">
       <PageHeader
-        title={
-          entries.length === 0
-            ? "Your environment is waiting."
-            : failed.length > 0
-              ? `${failed.length} service${failed.length === 1 ? "" : "s"} failed.`
-              : runningCount === entries.length
-                ? "Everything is running."
-                : `${runningCount} of ${entries.length} services up.`
-        }
-        description={
-          <>
-            {sites.data?.length ?? 0} site
-            {(sites.data?.length ?? 0) === 1 ? "" : "s"} served locally ·{" "}
-            {cpu.toFixed(0)}% CPU · {formatBytes(memory)} resident
-          </>
-        }
+        eyebrow={greeting()}
+        title={verdict(entries.length, failed.length, runningCount, metrics.isError)}
+        description={subtitle(
+          siteList.length,
+          entries.length,
+          runningCount,
+          cpu,
+          memory,
+          metrics.isError,
+        )}
         right={
+          status ? (
+            <StatusSummary
+              label={status.label}
+              state={status.state}
+              counts={counts.join(" · ")}
+              problems={problems}
+            />
+          ) : metrics.isPending ? (
+            /* §121: the placeholder is decoration, so the meaning of it is
+               announced separately rather than lost with the skeleton. */
+            <span role="status">
+              <span className="sr-only">Reading service state…</span>
+              <span
+                aria-hidden
+                className="block h-14 w-52 animate-pulse rounded-lg bg-secondary"
+              />
+            </span>
+          ) : null
+        }
+        primaryAction={
           entries.length > 0 ? (
-            <div className="flex items-center gap-2">
+            <>
               <Button
                 size="sm"
                 disabled={batchBusy || stoppedCount === 0}
@@ -90,294 +279,470 @@ export function DashboardPage() {
                 {stopAll.isPending ? <Loader2 className="animate-spin" /> : <Square />}
                 Stop all
               </Button>
-            </div>
+            </>
           ) : null
         }
       />
 
       {failed.length > 0 ? (
-        <Card className="border-destructive/40">
-          <CardContent className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
-            <p className="flex items-center gap-2 text-sm text-destructive" role="alert">
+        <Callout variant="destructive">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            {/* §39: what is wrong, what to do about it, and one way there. */}
+            <p>
               {failed.map((entry) => entry.id).join(", ")}{" "}
               {failed.length === 1 ? "is" : "are"} failing. Check its log on the
               Services page and restart it.
             </p>
             <Link
               to="/services"
-              className="text-sm font-medium text-primary hover:underline"
+              className={cn(buttonVariants({ variant: "outline", size: "sm" }), "shrink-0")}
             >
               Open Services
             </Link>
-          </CardContent>
-        </Card>
+          </div>
+        </Callout>
       ) : null}
 
-      <div className="grid gap-4 lg:grid-cols-3">
-        <ServicesBoard entries={entries} />
-        <div className="grid content-start gap-4">
-          <StatStrip
-            running={runningCount}
-            total={entries.length}
-            cpu={cpu}
-            memory={memory}
-            sites={sites.data?.length ?? 0}
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <SummaryCard to="/components" icon={Cpu} label="Runtimes" {...runtimesCard} />
+        <SummaryCard to="/services" icon={Server} label="Servers" {...serversCard} />
+        <SummaryCard to="/sites" icon={Globe} label="Sites" {...sitesCard} />
+        <SummaryCard to="/databases" icon={Database} label="Databases" {...databasesCard} />
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_20rem]">
+        <div className="min-w-0 space-y-4">
+          <ServicesPanel
+            entries={entries}
+            pending={metrics.isPending}
+            error={metrics.isError ? metrics.error : null}
+            onRetry={() => void metrics.refetch()}
           />
-          <SitesSnapshot sites={sites.data ?? []} />
-          <ActivityCard entries={activity} />
-          <ResourcesCard />
+          <div className="grid gap-4 md:grid-cols-2">
+            <SitesPanel
+              sites={siteList}
+              pending={sites.isPending}
+              error={sites.isError ? sites.error : null}
+              onRetry={() => void sites.refetch()}
+            />
+            <DatabasesPanel
+              servers={serverList}
+              pending={servers.isPending}
+              error={servers.isError ? servers.error : null}
+              onRetry={() => void servers.refetch()}
+            />
+          </div>
         </div>
+
+        {/* §16's right rail; it stacks under the main column below 1280px. */}
+        <aside className="min-w-0 space-y-4">
+          <QuickActions />
+          <Card>
+            <CardHeader className="pb-1.5">
+              <CardTitle className="flex items-center gap-2 text-sm font-medium">
+                <Clock className="size-4 text-muted-foreground" aria-hidden />
+                Recent activity
+                <span className="ml-auto text-caption font-normal text-ink-muted">
+                  service events
+                </span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {events.isPending ? (
+                // §37: a skeleton, like every other panel on the page, rather
+                // than a spinner in the one spot a list is about to appear.
+                <SkeletonLines label="Loading recent service events" />
+              ) : events.isError ? (
+                <Callout variant="destructive" title="Could not read the event log.">
+                  <p>{events.error?.message}</p>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="mt-2"
+                    onClick={() => void events.refetch()}
+                  >
+                    Try again
+                  </Button>
+                </Callout>
+              ) : (
+                <ActivityTimeline events={events.data ?? []} />
+              )}
+            </CardContent>
+          </Card>
+          <ResourcePanel
+            cpuPercent={cpu}
+            runningCount={runningCount}
+            memoryBytes={memory}
+            processCount={runningProcesses}
+            metricsPending={metrics.isPending}
+            metricsFailed={metrics.isError}
+            disk={disk.data ?? []}
+            diskPending={disk.isPending}
+            diskFailed={disk.isError}
+            portsClaimed={ports.data ? portEntries.length : null}
+            portsActive={
+              ports.data ? portEntries.filter((entry) => entry.active).length : null
+            }
+            portsPending={ports.isPending}
+          />
+        </aside>
       </div>
     </div>
   );
 }
 
 /**
- * Disk use of the managed directories plus the port map: what DevX stores
- * and what it listens on, in one glance. Both numbers are real — the usage
- * is a recursive walk, the map comes from the supervisor's bound ports.
+ * Everything a §18 card says about one entity group: its headline number and
+ * the state behind it.
  */
-function ResourcesCard() {
-  const usage = useQuery({
-    queryKey: ["disk-usage"],
-    queryFn: ipc.diskUsage,
-    refetchInterval: 60_000,
-  });
-  const ports = useQuery({
-    queryKey: ["port-map"],
-    queryFn: ipc.portMap,
-    refetchInterval: 15_000,
-  });
+type CardFacts = {
+  value: string | null;
+  status: string;
+  tone: SummaryTone;
+  pending: boolean;
+};
 
-  const totalBytes = (usage.data ?? []).reduce((sum, entry) => sum + entry.size_bytes, 0);
-  const entries = (ports.data ?? []).sort((a, b) => a.port - b.port);
+/**
+ * §17's status summary, opposite the headline.
+ *
+ * It carries the same verdict as the sidebar and the topbar because it reads
+ * the same derivation (§118/§119), so the three can never disagree about
+ * whether the system is ready.
+ */
+function StatusSummary({
+  label,
+  state,
+  counts,
+  problems,
+}: {
+  label: string;
+  state: SystemState;
+  counts: string;
+  problems: string[];
+}) {
+  return (
+    <div className="flex flex-col items-end gap-0.5 rounded-lg border border-border bg-card px-3 py-2 shadow-sm">
+      <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+        <span
+          aria-hidden
+          className={cn("size-2 shrink-0 rounded-full", SYSTEM_TONE[state])}
+        />
+        {label}
+      </span>
+      <span className="text-caption text-ink-muted">{counts}</span>
+      {problems.length > 0 ? (
+        <span className="text-caption text-warning">{problems.join(" · ")}</span>
+      ) : null}
+    </div>
+  );
+}
 
+/** §118's states, as a dot. The label beside it carries the meaning (§55). */
+const SYSTEM_TONE: Record<SystemState, string> = {
+  ready: "bg-success",
+  attention: "bg-warning",
+  error: "bg-destructive",
+  starting: "animate-pulse bg-warning",
+  stopping: "animate-pulse bg-warning",
+  unknown: "bg-muted-foreground/40",
+};
+
+/**
+ * §16/§117 quick actions.
+ *
+ * Only destinations that exist, and only shortcuts that are really installed:
+ * the hint comes from the route registry the shell builds its keymap from, so
+ * there is no `Ctrl + N` here to press and nothing happens.
+ */
+const QUICK_ACTIONS: {
+  to: string;
+  icon: LucideIcon;
+  title: string;
+  subtitle: string;
+}[] = [
+  {
+    to: "/components",
+    icon: Boxes,
+    title: "Add a runtime",
+    subtitle: "Install PHP, Node, Bun or Go",
+  },
+  { to: "/sites", icon: Globe, title: "Add a site", subtitle: "Serve a folder locally" },
+  {
+    to: "/terminal",
+    icon: TerminalSquare,
+    title: "Open Terminal",
+    subtitle: "Run commands with the DevX tools on PATH",
+  },
+  {
+    to: "/logs",
+    icon: FileText,
+    title: "Open Logs",
+    subtitle: "Read what DevX and its services wrote",
+  },
+];
+
+function QuickActions() {
   return (
     <Card>
       <CardHeader className="pb-1.5">
         <CardTitle className="flex items-center gap-2 text-sm font-medium">
-          <HardDrive className="size-4 text-muted-foreground" aria-hidden />
-          Resources
-          <span className="ml-auto text-xs font-normal text-muted-foreground">
-            {formatBytes(totalBytes)} on disk
-          </span>
+          <Boxes className="size-4 text-muted-foreground" aria-hidden />
+          Quick actions
         </CardTitle>
       </CardHeader>
-      <CardContent className="space-y-3">
-        {usage.isError ? (
-          <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
-            <CircleAlert className="size-4" />
-            Could not read disk usage.
-          </p>
-        ) : (
-          <ul className="space-y-1">
-            {(usage.data ?? []).map((entry) => (
-              <li key={entry.label} className="flex items-center gap-2 text-sm">
-                <span className="min-w-0 truncate text-muted-foreground">{entry.label}</span>
-                <span className="data-value ml-auto shrink-0">{formatBytes(entry.size_bytes)}</span>
-              </li>
-            ))}
-            {usage.isPending ? (
-              <li className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
-                <Loader2 className="size-4 animate-spin" />
-                Measuring…
-              </li>
-            ) : null}
-          </ul>
-        )}
-        <div className="border-t border-border pt-2">
-          <p className="mb-1 text-xs font-medium text-muted-foreground">Ports</p>
-          {ports.isError ? null : entries.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No ports claimed yet.</p>
-          ) : (
-            <ul className="space-y-1">
-              {entries.map((entry) => (
-                <li key={`${entry.owner}-${entry.port}`} className="flex items-center gap-2 text-sm">
-                  <span className="data-value shrink-0">{entry.port}</span>
-                  <span className="min-w-0 truncate text-muted-foreground">{entry.owner}</span>
-                  <StatusBadge
-                    state={entry.active ? "running" : "stopped"}
-                    label=""
-                    className="ml-auto"
-                  />
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
+      <CardContent className="space-y-1.5">
+        {QUICK_ACTIONS.map(({ to, icon: Icon, title, subtitle }) => {
+          const shortcut = navShortcutLabel(to);
+          return (
+            <Link
+              key={to}
+              to={to}
+              className={cn(cardLinkClass, "flex-row items-center gap-2.5 p-2")}
+            >
+              <Icon className="size-4 shrink-0 text-ink-secondary" aria-hidden />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm text-foreground">{title}</span>
+                <span className="block truncate text-caption text-ink-muted">
+                  {subtitle}
+                </span>
+              </span>
+              {shortcut ? (
+                <kbd className="shrink-0 rounded-sm border border-line-subtle px-1.5 py-0.5 font-mono text-caption text-ink-muted">
+                  {shortcut}
+                </kbd>
+              ) : null}
+            </Link>
+          );
+        })}
       </CardContent>
     </Card>
   );
 }
 
 /** The primary surface: a dense monitor table of every supervised service. */
-function ServicesBoard({ entries }: { entries: ServiceMetrics[] }) {
-  const maxMemory = Math.max(...entries.map((entry) => entry.memory_bytes), 1);
-  // Failed services first: the board answers "what's broken" before
+function ServicesPanel({
+  entries,
+  pending,
+  error,
+  onRetry,
+}: {
+  entries: ServiceMetrics[];
+  pending: boolean;
+  /** The metrics read that failed; null when it answered. */
+  error: Error | null;
+  onRetry: () => void;
+}) {
+  // Failed services first: the panel answers "what's broken" before
   // "what's running". Within a state, keep the backend's order.
   const stateRank = (state: string): number =>
     state === "failed" ? 0 : state === "starting" || state === "stopping" ? 1 : 2;
-  const sorted = [...entries].sort(
-    (a, b) => stateRank(a.state) - stateRank(b.state),
-  );
+  const sorted = [...entries].sort((a, b) => stateRank(a.state) - stateRank(b.state));
 
   return (
-    <Card className="lg:col-span-2">
+    <Card>
       <CardHeader className="pb-2">
         <CardTitle className="flex items-center gap-2 text-sm font-medium">
           <Activity className="size-4 text-muted-foreground" aria-hidden />
-          Service monitor
-          <span className="ml-auto text-xs font-normal text-muted-foreground">
-            <Link to="/services" className="text-primary hover:underline">
-              Manage
-            </Link>
-          </span>
+          Supervised services
+          <Link to="/services" className="ml-auto text-xs font-normal text-primary hover:underline">
+            Manage
+          </Link>
         </CardTitle>
       </CardHeader>
       <CardContent className="px-0 pb-0">
-        {entries.length === 0 ? (
-          <p className="px-4 pb-4 text-sm text-muted-foreground">
-            Nothing supervised yet. Install a service from the Components page,
-            then start it on the Services page and it will appear here.
-          </p>
-        ) : (
-          <table className="w-full text-sm">
-            <caption className="sr-only">
-              Supervised services with live state, CPU and memory
-            </caption>
-            <thead>
-              <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                <th scope="col" className="px-4 py-2 font-normal">Service</th>
-                <th scope="col" className="px-4 py-2 font-normal">State</th>
-                <th scope="col" className="px-4 py-2 font-normal">CPU</th>
-                <th scope="col" className="px-4 pb-2 pl-4 pr-4 text-right font-normal">Memory</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sorted.map((entry) => (
-                <tr
-                  key={entry.id}
-                  className="border-b border-border/60 transition-colors duration-150 last:border-b-0 hover:bg-muted/50"
+        {pending ? (
+          <div className="space-y-2 px-4 pb-4">
+            <span className="sr-only">Loading services</span>
+            {[0, 1, 2].map((row) => (
+              <span
+                key={row}
+                aria-hidden
+                className="block h-5 animate-pulse rounded-sm bg-secondary"
+              />
+            ))}
+          </div>
+        ) : error ? (
+          <div className="px-4 pb-4">
+            {/* §39/Rule 17: an unread metric list is a failure, not an empty
+                one — the empty state below would claim DevX supervises
+                nothing. */}
+            <Callout
+              variant="destructive"
+              title="Could not read the service metrics."
+            >
+              <p>{error.message}</p>
+              <Button size="sm" variant="outline" className="mt-2" onClick={onRetry}>
+                Try again
+              </Button>
+            </Callout>
+          </div>
+        ) : entries.length === 0 ? (
+          <div className="px-4 pb-4">
+            {/* §38: what is missing, and the action that fills it. */}
+            <EmptyState
+              icon={<Server />}
+              title="Nothing is supervised yet."
+              description="Install a service from the component catalog, then start it on the Services page and it appears here."
+              action={
+                <Link
+                  to="/components"
+                  className={buttonVariants({ variant: "outline", size: "sm" })}
                 >
-                  <td className="px-4 py-2">
-                    <span className="data-value text-foreground" data-selectable>
-                      {entry.id}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2">
-                    <StatusBadge state={toUiState(entry.state)} />
-                  </td>
-                  <td className="px-4 py-2">
-                    {entry.state === "running" ? (
-                      <span className="flex items-center gap-2">
-                        <span className="data-value text-foreground" data-selectable>
-                          {(entry.cpu_percent ?? 0).toFixed(0)}%
-                        </span>
-                        <span aria-hidden className="h-1 w-16 overflow-hidden rounded-full bg-muted">
-                          <span
-                            className="block h-full rounded-full bg-primary/70 transition-[width] duration-500"
-                            style={{ width: `${entry.cpu_percent ?? 0}%` }}
-                          />
-                        </span>
-                      </span>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">—</span>
-                    )}
-                  </td>
-                  <td className="py-2 pr-4 text-right">
-                    {entry.state === "running" ? (
-                      <span className="data-value text-foreground" data-selectable>
-                        {formatBytes(entry.memory_bytes)}
-                      </span>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">—</span>
-                    )}
-                    <span className="sr-only">
-                      {entry.state === "running"
-                        ? ""
-                        : `${((entry.memory_bytes / maxMemory) * 100).toFixed(0)}% of peak`}
-                    </span>
-                  </td>
+                  Open Components
+                </Link>
+              }
+            />
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <caption className="sr-only">
+                Supervised services with live state, CPU and memory
+              </caption>
+              <thead>
+                <tr className="border-b border-border text-left text-xs text-muted-foreground">
+                  <th scope="col" className="px-4 py-2 font-normal">
+                    Service
+                  </th>
+                  <th scope="col" className="px-4 py-2 font-normal">
+                    State
+                  </th>
+                  <th scope="col" className="px-4 py-2 font-normal">
+                    CPU
+                  </th>
+                  <th scope="col" className="py-2 pr-4 pl-4 text-right font-normal">
+                    Memory
+                  </th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {sorted.map((entry) => (
+                  <tr
+                    key={entry.id}
+                    className="border-b border-border/60 transition-colors duration-150 last:border-b-0 hover:bg-hover"
+                  >
+                    <td className="px-4 py-2">
+                      <span className="data-value text-foreground" data-selectable>
+                        {entry.id}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2">
+                      <StatusBadge state={toUiState(entry.state)} />
+                    </td>
+                    <td className="px-4 py-2">
+                      {entry.state === "running" ? (
+                        <span className="flex items-center gap-2">
+                          <span className="data-value text-foreground" data-selectable>
+                            {(entry.cpu_percent ?? 0).toFixed(0)}%
+                          </span>
+                          <span
+                            aria-hidden
+                            className="h-1 w-16 overflow-hidden rounded-full bg-muted"
+                          >
+                            <span
+                              className="block h-full rounded-full bg-primary/70 transition-[width] duration-200"
+                              style={{ width: `${entry.cpu_percent ?? 0}%` }}
+                            />
+                          </span>
+                        </span>
+                      ) : (
+                        <NotReported />
+                      )}
+                    </td>
+                    <td className="py-2 pr-4 text-right">
+                      {entry.state === "running" ? (
+                        <span className="data-value text-foreground" data-selectable>
+                          {formatBytes(entry.memory_bytes)}
+                        </span>
+                      ) : (
+                        <NotReported />
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </CardContent>
     </Card>
   );
 }
 
-/** Secondary summary of real numbers only — no deltas, no invented trends. */
-function StatStrip({
-  running,
-  total,
-  cpu,
-  memory,
-  sites,
-}: {
-  running: number;
-  total: number;
-  cpu: number;
-  memory: number;
-  sites: number;
-}) {
-  const stats = [
-    { label: "Services", value: `${running}/${total}` },
-    { label: "CPU", value: `${cpu.toFixed(0)}%` },
-    { label: "Memory", value: formatBytes(memory) },
-    { label: "Sites", value: String(sites) },
-  ];
-
+/** A metric a stopped service does not have yet — never a zero it did not report. */
+function NotReported() {
   return (
-    <Card>
-      <CardContent className="grid grid-cols-2 gap-x-4 gap-y-2.5 px-4 py-3">
-        {stats.map((stat) => (
-          <div key={stat.label}>
-            <p className="text-xs text-muted-foreground">{stat.label}</p>
-            <p className="data-value text-base font-semibold text-foreground">
-              {stat.value}
-            </p>
-          </div>
-        ))}
-      </CardContent>
-    </Card>
+    <>
+      <span aria-hidden className="text-xs text-muted-foreground">
+        —
+      </span>
+      <span className="sr-only">Not reported</span>
+    </>
   );
 }
 
-/** A compact snapshot of configured sites. */
-function SitesSnapshot({ sites }: { sites: { hostname: string; https: boolean }[] }) {
+/** The configured sites, at a glance (§23 condensed to a dashboard panel). */
+function SitesPanel({
+  sites,
+  pending,
+  error,
+  onRetry,
+}: {
+  sites: readonly SiteStatus[];
+  pending: boolean;
+  error: Error | null;
+  onRetry: () => void;
+}) {
   return (
     <Card>
       <CardHeader className="pb-1.5">
         <CardTitle className="flex items-center gap-2 text-sm font-medium">
           <Globe className="size-4 text-muted-foreground" aria-hidden />
           Sites
+          <Link to="/sites" className="ml-auto text-xs font-normal text-primary hover:underline">
+            Manage
+          </Link>
         </CardTitle>
       </CardHeader>
-      <CardContent>
-        {sites.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            No sites yet — scaffold one from the{" "}
-            <Link to="/sites" className="text-primary hover:underline">
-              Sites page
-            </Link>
-            .
-          </p>
+      <CardContent className="space-y-1.5">
+        {pending ? (
+          <SkeletonLines label="Loading sites" />
+        ) : error ? (
+          <PanelError
+            title="Could not read the site list."
+            error={error}
+            onRetry={onRetry}
+          />
+        ) : sites.length === 0 ? (
+          <EmptyState
+            icon={<Globe />}
+            title="No sites yet."
+            description="Point a local domain at a folder and DevX serves it."
+            action={
+              <Link to="/sites" className={buttonVariants({ variant: "outline", size: "sm" })}>
+                Add a site
+              </Link>
+            }
+          />
         ) : (
-          <ul className="space-y-1 text-sm">
+          <ul className="space-y-1">
             {sites.slice(0, 6).map((site) => (
-              <li key={site.hostname} className="flex items-center justify-between gap-4">
-                <span className="data-value min-w-0 truncate text-foreground" data-selectable>
+              <li key={site.hostname} className="flex items-center gap-2 text-sm">
+                <span
+                  className="data-value min-w-0 truncate text-foreground"
+                  title={site.hostname}
+                  data-selectable
+                >
                   {site.hostname}
                 </span>
-                {site.https ? <Badge variant="success">https</Badge> : null}
+                <span className="ml-auto flex shrink-0 items-center gap-1.5 text-caption text-ink-muted">
+                  {site.php_version ? `PHP ${site.php_version}` : "static"}
+                  {site.https ? <span className="text-success">· HTTPS</span> : null}
+                </span>
               </li>
             ))}
             {sites.length > 6 ? (
-              <li className="text-xs text-muted-foreground">
-                and {sites.length - 6} more
-              </li>
+              <li className="text-caption text-ink-muted">and {sites.length - 6} more</li>
             ) : null}
           </ul>
         )}
@@ -386,49 +751,83 @@ function SitesSnapshot({ sites }: { sites: { hostname: string; https: boolean }[
   );
 }
 
-/** Recent supervised-service events, kept client-side from the event bus. */
-function ActivityCard({
-  entries,
+/** The database servers DevX can connect to, with real reachability. */
+function DatabasesPanel({
+  servers,
+  pending,
+  error,
+  onRetry,
 }: {
-  entries: { id: string; state: string; at: string }[];
+  servers: readonly DbServer[];
+  pending: boolean;
+  error: Error | null;
+  onRetry: () => void;
 }) {
   return (
     <Card>
       <CardHeader className="pb-1.5">
         <CardTitle className="flex items-center gap-2 text-sm font-medium">
-          <Package className="size-4 text-muted-foreground" aria-hidden />
-          Activity
-          <span className="ml-auto text-xs font-normal text-muted-foreground">
-            service events, persisted across restarts
-          </span>
+          <Database className="size-4 text-muted-foreground" aria-hidden />
+          Databases
+          <Link
+            to="/databases"
+            className="ml-auto text-xs font-normal text-primary hover:underline"
+          >
+            Manage
+          </Link>
         </CardTitle>
       </CardHeader>
-      <CardContent>
-        {entries.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            Quiet so far. Service state changes show up here as they happen.
-          </p>
+      <CardContent className="space-y-1.5">
+        {pending ? (
+          <SkeletonLines label="Loading database servers" />
+        ) : error ? (
+          <PanelError
+            title="Could not read the database servers."
+            error={error}
+            onRetry={onRetry}
+          />
+        ) : servers.length === 0 ? (
+          <EmptyState
+            icon={<Database />}
+            title="No database server yet."
+            description="Install MariaDB, PostgreSQL or Redis to connect from here."
+            action={
+              <Link
+                to="/databases"
+                className={buttonVariants({ variant: "outline", size: "sm" })}
+              >
+                Open Databases
+              </Link>
+            }
+          />
         ) : (
-          <ul className="space-y-1 text-sm">
-            {entries.map((entry, index) => (
-              <li key={`${entry.at}-${entry.id}-${index}`} className="flex items-center gap-2">
-                <StatusBadge state={toUiState(entry.state)} label="" className="sr-only" />
+          <ul className="space-y-1">
+            {servers.map((server) => (
+              <li key={server.service_id} className="flex items-center gap-2 text-sm">
+                {/* §95: both strings are shortened to the column, so the full
+                    value stays reachable on hover. */}
                 <span
-                  aria-hidden
-                  className={cn(
-                    "size-1.5 shrink-0 rounded-full",
-                    entry.state === "running"
-                      ? "bg-success"
-                      : entry.state === "failed"
-                        ? "bg-destructive"
-                        : "bg-warning",
-                  )}
-                />
-                <span className="data-value min-w-0 truncate text-foreground">
-                  {entry.id}
+                  className="min-w-0 truncate text-foreground"
+                  title={ENGINE_LABELS[server.engine] ?? server.engine}
+                >
+                  {ENGINE_LABELS[server.engine] ?? server.engine}
                 </span>
-                <span className="ml-auto shrink-0 text-xs text-muted-foreground">
-                  {entry.at}
+                <span
+                  className="data-value min-w-0 truncate text-ink-muted"
+                  title={`${server.host}:${server.port}`}
+                >
+                  {server.host}:{server.port}
+                </span>
+                {/* §55: the dot has a label, so reachability is not colour-only. */}
+                <span className="ml-auto flex shrink-0 items-center gap-1.5 text-caption text-ink-muted">
+                  <span
+                    aria-hidden
+                    className={cn(
+                      "size-1.5 rounded-full",
+                      server.reachable ? "bg-success" : "bg-muted-foreground/40",
+                    )}
+                  />
+                  {server.reachable ? "reachable" : "not reachable"}
                 </span>
               </li>
             ))}
@@ -439,45 +838,78 @@ function ActivityCard({
   );
 }
 
-/** Maps backend state strings onto the shared UI state set. */
-function toUiState(state: string): "running" | "failed" | "starting" | "stopping" | "stopped" {
-  const known = ["running", "failed", "starting", "stopping", "stopped"] as const;
-  const match = known.find((candidate) => candidate === state);
-  return match ?? "stopped";
+const ENGINE_LABELS: Record<string, string> = {
+  maria_db: "MariaDB",
+  postgre_sql: "PostgreSQL",
+  redis: "Redis",
+};
+
+function SkeletonLines({ label }: { label: string }) {
+  return (
+    <div className="space-y-2">
+      <span className="sr-only">{label}</span>
+      {[0, 1].map((row) => (
+        <span
+          key={row}
+          aria-hidden
+          className="block h-4 animate-pulse rounded-sm bg-secondary"
+        />
+      ))}
+    </div>
+  );
 }
 
 /**
- * Recent service state transitions, newest first.
+ * A secondary panel whose query failed.
  *
- * Seeded from the persistent event log (`events.jsonl`) so the history
- * covers everything since the log began, then extended live by the push
- * event while the window is open.
+ * §39: the cause and the way out sit on the panel itself. It is not an empty
+ * state — a first load and a genuinely empty list look different — and not a
+ * silent gap either (§131 Rule 18).
  */
-function useActivityFeed(): { id: string; state: string; at: string }[] {
+function PanelError({
+  title,
+  error,
+  onRetry,
+}: {
+  title: string;
+  error: Error;
+  onRetry: () => void;
+}) {
+  return (
+    <Callout variant="destructive" title={title}>
+      <p>{error.message}</p>
+      <Button size="sm" variant="outline" className="mt-2" onClick={onRetry}>
+        Try again
+      </Button>
+    </Callout>
+  );
+}
+
+/**
+ * The recent service transitions, from the persistent event log.
+ *
+ * The log is the source of truth, so the timeline is a plain query over it: a
+ * push from the service watcher invalidates the query instead of the client
+ * keeping a parallel history that could disagree with what Rust recorded.
+ */
+function useServiceEventLog(limit: number) {
   const queryClient = useQueryClient();
-  const history = useQuery({
-    queryKey: ["events-recent"],
-    queryFn: () => ipc.eventsRecent(6),
+  const events = useQuery({
+    queryKey: ["events", "recent", limit],
+    queryFn: () => ipc.eventsRecent(limit),
     refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
   });
-  const [live, setLive] = useState<{ id: string; state: string; at: string }[]>([]);
 
   useEffect(() => {
     let cancelled = false;
     let off: (() => void) | undefined;
 
-    // Outside a Tauri runtime (tests) `listen` rejects; the feed then simply
-    // stays empty, and the pages' own polling remains the data fallback.
+    // Outside a Tauri runtime (tests) `listen` rejects; the poll above then
+    // remains the data path.
     ipcEvents.serviceEventUpdate
-      .listen((event) => {
-        const { id, state } = event.payload.event;
-        setLive((current) =>
-          [{ id, state: String(state), at: new Date().toLocaleTimeString() }, ...current].slice(
-            0,
-            6,
-          ),
-        );
-        void queryClient.invalidateQueries({ queryKey: ["events-recent"] });
+      .listen(() => {
+        void queryClient.invalidateQueries({ queryKey: ["events"] });
       })
       .then((unlisten) => {
         if (cancelled) {
@@ -492,28 +924,135 @@ function useActivityFeed(): { id: string; state: string; at: string }[] {
       cancelled = true;
       off?.();
     };
-  }, []);
+  }, [queryClient]);
 
-  // Live entries first (they carry the newest clock reading), then history,
-  // de-duplicated by id+state so a push that is already persisted hides.
-  const merged: { id: string; state: string; at: string }[] = [];
-  const seen = new Set<string>();
-  for (const entry of [...live, ...(history.data ?? []).map((e) => ({ id: e.id, state: e.state, at: formatTimestamp(e.at_unix) }))]) {
-    const key = `${entry.id}|${entry.state}`;
-    if (!seen.has(key)) {
-      seen.add(key);
-      merged.push(entry);
-    }
-  }
-  return merged.slice(0, 6);
+  return events;
 }
 
-/** Formats Unix seconds as a local time string. */
-function formatTimestamp(unixSeconds: number): string {
-  if (unixSeconds === 0) {
-    return "unknown";
+/**
+ * How many ports the port map claims for more than one owner.
+ *
+ * That is the only conflict the backend's data can prove: two entries on the
+ * same number cannot both bind it. A single owner per port — the normal case —
+ * counts as zero.
+ */
+export function countPortConflicts(entries: readonly PortEntry[]): number {
+  const owners = new Map<number, Set<string>>();
+  for (const entry of entries) {
+    const forPort = owners.get(entry.port) ?? new Set<string>();
+    forPort.add(entry.owner);
+    owners.set(entry.port, forPort);
   }
-  return new Date(unixSeconds * 1000).toLocaleTimeString();
+  let conflicts = 0;
+  for (const forPort of owners.values()) {
+    if (forPort.size > 1) {
+      conflicts += 1;
+    }
+  }
+  return conflicts;
+}
+
+/**
+ * §54: `services_start_all` and `services_stop_all` are non-fatal per service,
+ * so a batch that half-worked answers with the failures instead of rejecting.
+ * A rejected call is reported by each mutation's `onError`; this covers the
+ * other shape, with the backend's own message per service.
+ */
+function reportFailedOutcomes(
+  outcomes: readonly BatchStartOutcome[],
+  verb: "start" | "stop",
+  toast: ReturnType<typeof useToast>,
+) {
+  const failedOutcomes = outcomes.filter((outcome) => outcome.error !== null);
+  if (failedOutcomes.length === 0) {
+    return;
+  }
+  toast.error(
+    `${failedOutcomes.length} service${failedOutcomes.length === 1 ? "" : "s"} did not ${verb}`,
+    {
+      description: failedOutcomes.map((outcome) => outcome.id).join(", "),
+      details: failedOutcomes
+        .map((outcome) => `${outcome.id}: ${outcome.error ?? "unknown error"}`)
+        .join("\n"),
+    },
+  );
+}
+
+/**
+ * §17's headline: the worst thing that is true, said first.
+ *
+ * A failed metrics read is not a fact about the user's machine, so it is never
+ * turned into a verdict about one (§131 Rule 17).
+ */
+function verdict(
+  total: number,
+  failed: number,
+  running: number,
+  unavailable: boolean,
+): string {
+  if (unavailable) {
+    return "Could not read the service state.";
+  }
+  if (total === 0) {
+    return "Your environment is waiting.";
+  }
+  if (failed > 0) {
+    return `${failed} service${failed === 1 ? "" : "s"} failed.`;
+  }
+  if (running === total) {
+    return "Everything is running.";
+  }
+  return `${running} of ${total} services up.`;
+}
+
+/**
+ * §17's subtitle: what this machine holds right now.
+ *
+ * The CPU and memory figures are the supervised services' own — the backend
+ * measures nothing else — so the line says so instead of implying a system
+ * total. It is also omitted outright when those figures could not be read,
+ * rather than reporting the zeros the summariser falls back to.
+ */
+function subtitle(
+  sites: number,
+  total: number,
+  running: number,
+  cpu: number,
+  memory: number,
+  unavailable: boolean,
+): string {
+  const sitePart = `${sites} site${sites === 1 ? "" : "s"} served locally`;
+  if (unavailable) {
+    return `${sitePart} · service state unavailable`;
+  }
+  if (total === 0) {
+    return `${sitePart} · nothing supervised yet`;
+  }
+  return `${sitePart} · ${cpu.toFixed(0)}% across ${running} running service${
+    running === 1 ? "" : "s"
+  } · ${formatBytes(memory)} resident`;
+}
+
+/** §17's greeting. */
+function greeting(now = new Date()): string {
+  const hour = now.getHours();
+  if (hour < 5) {
+    return "Good night, Developer";
+  }
+  if (hour < 12) {
+    return "Good morning, Developer";
+  }
+  if (hour < 18) {
+    return "Good afternoon, Developer";
+  }
+  return "Good evening, Developer";
+}
+
+/** Maps backend state strings onto the shared UI state set. */
+function toUiState(state: string): "running" | "failed" | "starting" | "stopping" | "stopped" {
+  const known = ["running", "failed", "starting", "stopping", "stopped"] as const;
+  const match = known.find((candidate) => candidate === state);
+  return match ?? "stopped";
 }
 
 /** Formats a byte count for the dashboard. */

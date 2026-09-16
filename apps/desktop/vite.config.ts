@@ -32,5 +32,13 @@ export default defineConfig({
     globals: true,
     setupFiles: ["./src/test/setup.ts"],
     include: ["src/**/*.{test,spec}.{ts,tsx}"],
+    // Each file boots its own jsdom and module graph, so a worker costs a core
+    // and a heap. At one worker per core all 21 files oversubscribe the box: a
+    // test that needs about 2s of real work gets starved past the default 5s
+    // timeout, and React Testing Library's 1s element queries start failing
+    // too. A quarter of the parallelism keeps workers from crowding each other,
+    // and the timeout absorbs what a busy machine adds on top of that.
+    maxWorkers: "25%",
+    testTimeout: 15000,
   },
 });

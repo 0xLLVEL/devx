@@ -26,7 +26,7 @@ export function Progress({
     >
       <div
         className={cn(
-          "h-full rounded-full bg-primary transition-[width] duration-300",
+          "h-full rounded-full bg-primary transition-[width] duration-200",
           pct === undefined && "animate-pulse",
         )}
         style={{ width: `${pct ?? 30}%` }}

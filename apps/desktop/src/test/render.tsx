@@ -3,11 +3,14 @@ import { render, type RenderOptions, type RenderResult } from "@testing-library/
 import type { ReactElement, ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
 
+import { ToastProvider } from "@/components/ui/toast";
+
 /**
  * Renders a component inside the providers the app supplies at runtime.
  *
  * Retries are disabled so a rejected query surfaces immediately instead of
- * timing out the test.
+ * timing out the test. The toast provider is included so a route's feedback
+ * channel is observable, exactly as it is in the running app.
  */
 export function renderWithProviders(
   ui: ReactElement,
@@ -24,7 +27,9 @@ export function renderWithProviders(
   function Wrapper({ children }: { children: ReactNode }) {
     return (
       <QueryClientProvider client={queryClient}>
-        <MemoryRouter initialEntries={[route]}>{children}</MemoryRouter>
+        <MemoryRouter initialEntries={[route]}>
+          <ToastProvider>{children}</ToastProvider>
+        </MemoryRouter>
       </QueryClientProvider>
     );
   }

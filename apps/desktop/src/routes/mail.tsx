@@ -1,6 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  CircleAlert,
   FileText,
   Inbox,
   Loader2,
@@ -12,10 +11,12 @@ import {
   Trash2,
 } from "lucide-react";
 import { useState } from "react";
+import { Link } from "react-router-dom";
 
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Callout } from "@/components/ui/callout";
 import {
   Card,
   CardContent,
@@ -23,8 +24,11 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { ConfirmDialog } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
+import { useToast } from "@/components/ui/toast";
+import { Tooltip } from "@/components/ui/tooltip";
 import {
   ipc,
   type MailStatus,
@@ -32,9 +36,22 @@ import {
   type MessageSummary,
 } from "@/lib/ipc";
 
+/** A rejection that is not an `Error` still has to say something (§131 Rule 18). */
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** A captured message with no subject still needs a name in copy. */
+function subjectOf(message: MessageSummary): string {
+  return message.subject === "" ? "(no subject)" : message.subject;
+}
+
 /** Mail page: every message your apps sent, captured locally by Mailpit. */
 export function MailPage() {
   const queryClient = useQueryClient();
+  const toast = useToast();
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<MessageSummary | null>(null);
   const status = useQuery({
     queryKey: ["mail-status"],
     queryFn: ipc.mailStatus,
@@ -56,6 +73,20 @@ export function MailPage() {
 
   const remove = useMutation({
     mutationFn: (ids: string[]) => ipc.mailDelete(ids),
+    onSuccess: (_result, ids) => {
+      // The confirmation owns the pending state, so it closes when the delete
+      // has actually landed rather than the moment the click happens.
+      setConfirmClear(false);
+      setDeleteTarget(null);
+      if (ids.length === 0) {
+        toast.success("Inbox cleared");
+      } else {
+        toast.success(ids.length === 1 ? "Message deleted" : `${ids.length} messages deleted`);
+      }
+    },
+    onError: (error: Error) => {
+      toast.error("Could not delete the messages", { details: error.message });
+    },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["mail-list"] });
       queryClient.invalidateQueries({ queryKey: ["mail-status"] });
@@ -64,6 +95,10 @@ export function MailPage() {
 
   const markAllRead = useMutation({
     mutationFn: ipc.mailMarkAllRead,
+    onSuccess: () => toast.success("Inbox marked read"),
+    onError: (error: Error) => {
+      toast.error("Could not mark the inbox read", { details: error.message });
+    },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["mail-list"] });
       queryClient.invalidateQueries({ queryKey: ["mail-status"] });
@@ -71,6 +106,10 @@ export function MailPage() {
   });
   const sendTest = useMutation({
     mutationFn: ipc.mailSendTest,
+    onSuccess: () => toast.success("Test message sent"),
+    onError: (error: Error) => {
+      toast.error("Could not send the test message", { details: error.message });
+    },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["mail-list"] });
       queryClient.invalidateQueries({ queryKey: ["mail-status"] });
@@ -89,18 +128,22 @@ export function MailPage() {
   });
 
   const busy = remove.isPending;
-  const error =
-    remove.error instanceof Error
-      ? remove.error
-      : markAllRead.error instanceof Error
-        ? markAllRead.error
-        : sendTest.error instanceof Error
-          ? sendTest.error
-          : messages.error instanceof Error
-            ? messages.error
-            : viewer.error instanceof Error
-              ? viewer.error
-              : null;
+  // Only the row that is actually being deleted reports it (§121).
+  const deletingId =
+    remove.isPending && remove.variables?.length === 1 ? (remove.variables[0] ?? null) : null;
+  // Query failures are rendered by the panel they emptied, so the banner is
+  // left with the inbox actions, which have no refetch of their own.
+  const actionError =
+    remove.error !== null
+      ? { title: "Could not delete the messages.", error: remove.error }
+      : markAllRead.error !== null
+        ? { title: "Could not mark the inbox read.", error: markAllRead.error }
+        : sendTest.error !== null
+          ? { title: "Could not send the test message.", error: sendTest.error }
+          : null;
+  const statusFailed = status.isError && status.data === undefined;
+  const listError = messages.isError && messages.data === undefined ? messages.error : null;
+  const viewerError = viewer.isError && viewer.data === undefined ? viewer.error : null;
 
   const select = (id: string) => {
     setSelectedId(id);
@@ -112,20 +155,34 @@ export function MailPage() {
   const unreadCount = (messages.data ?? []).filter((m) => !m.read).length;
 
   return (
-    <div className="mx-auto w-full max-w-5xl space-y-4 p-5">
-      <StatusCard
-        status={status.data}
-        busy={sendTest.isPending || markAllRead.isPending}
-        unreadCount={unreadCount}
-        onSendTest={() => sendTest.mutate()}
-        onMarkAllRead={() => markAllRead.mutate()}
-      />
+    <>
+      <div className="mx-auto w-full max-w-5xl space-y-4 p-5">
+        {statusFailed ? (
+          <Callout variant="destructive" title="Could not read the mail catcher status.">
+            <p>{errorText(status.error)}</p>
+            <Button
+              size="sm"
+              variant="outline"
+              className="mt-2"
+              onClick={() => void status.refetch()}
+            >
+              Try again
+            </Button>
+          </Callout>
+        ) : (
+          <StatusCard
+            status={status.data}
+            busy={sendTest.isPending || markAllRead.isPending}
+            unreadCount={unreadCount}
+            onSendTest={() => sendTest.mutate()}
+            onMarkAllRead={() => markAllRead.mutate()}
+          />
+        )}
 
-        {error ? (
-          <p className="flex items-center gap-2 text-sm text-destructive" role="alert">
-            <CircleAlert className="size-4" />
-            {error.message}
-          </p>
+        {actionError ? (
+          <Callout variant="destructive" title={actionError.title}>
+            <p>{errorText(actionError.error)}</p>
+          </Callout>
         ) : null}
 
         {status.data?.running ? (
@@ -133,19 +190,43 @@ export function MailPage() {
             <MessageList
               messages={visibleMessages}
               pending={messages.isPending}
+              error={listError}
+              onRetry={() => void messages.refetch()}
               filter={filter}
               onFilter={setFilter}
               selectedId={selectedId}
               onSelect={select}
-              onDelete={(id) => remove.mutate([id])}
-              deleting={busy && remove.variables?.length === 1}
+              onDelete={(message) => setDeleteTarget(message)}
+              deletingId={deletingId}
             />
             <MessageViewer
               messageId={selectedId}
               message={viewer.data}
               pending={viewer.isPending}
+              error={viewerError}
+              onRetry={() => void viewer.refetch()}
             />
           </div>
+        ) : status.data && !status.data.running ? (
+          // §38: the status card only says the catcher is off; the page still
+          // owes the user the action that turns it on.
+          <Card>
+            <CardContent className="p-6">
+              <EmptyState
+                icon={<Inbox />}
+                title="Nothing is being captured yet."
+                description="With the catcher running, every message your app sends is held here instead of being delivered."
+                action={
+                  <Link
+                    to="/services"
+                    className={buttonVariants({ variant: "outline", size: "sm" })}
+                  >
+                    Open Services
+                  </Link>
+                }
+              />
+            </CardContent>
+          </Card>
         ) : null}
 
         {status.data?.running && (messages.data ?? []).length > 0 ? (
@@ -154,11 +235,7 @@ export function MailPage() {
               size="sm"
               variant="outline"
               disabled={busy}
-              onClick={() => {
-                if (window.confirm("Delete every captured message?")) {
-                  remove.mutate([]);
-                }
-              }}
+              onClick={() => setConfirmClear(true)}
             >
               <Trash2 />
               Clear inbox
@@ -166,6 +243,35 @@ export function MailPage() {
           </div>
         ) : null}
       </div>
+
+      {/* §35: name the loss and its scope instead of asking "are you sure?". */}
+      <ConfirmDialog
+        open={confirmClear}
+        onClose={() => setConfirmClear(false)}
+        onConfirm={() => remove.mutate([])}
+        title="Delete every captured message?"
+        description={`All ${(messages.data ?? []).length} messages in the Mailpit inbox are deleted, including the read ones. Nothing is sent or forwarded anywhere — the inbox simply starts empty.`}
+        confirmLabel="Delete all messages"
+        destructive
+        pending={remove.isPending}
+      />
+
+      {/* §35: one message is lost for good, so the loss is named before it happens. */}
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={() => {
+          if (deleteTarget) {
+            remove.mutate([deleteTarget.id]);
+          }
+        }}
+        title={deleteTarget ? `Delete "${subjectOf(deleteTarget)}"?` : "Delete this message?"}
+        description="The message is removed from the Mailpit inbox and cannot be recovered. Nothing is sent or forwarded anywhere."
+        confirmLabel="Delete message"
+        destructive
+        pending={remove.isPending}
+      />
+    </>
   );
 }
 
@@ -187,7 +293,14 @@ function StatusCard({
   onMarkAllRead: () => void;
 }) {
   if (!status) {
-    return null;
+    // §37/§121: the first read gets a skeleton, so the page is never blank.
+    return (
+      <div className="space-y-2" role="status">
+        <span className="sr-only">Loading the mail catcher status…</span>
+        <span aria-hidden className="block h-7 w-64 animate-pulse rounded-sm bg-secondary" />
+        <span aria-hidden className="block h-4 w-full max-w-2xl animate-pulse rounded-sm bg-secondary" />
+      </div>
+    );
   }
   return (
     <PageHeader
@@ -233,21 +346,25 @@ function StatusCard({
 function MessageList({
   messages,
   pending,
+  error,
+  onRetry,
   filter,
   onFilter,
   selectedId,
   onSelect,
   onDelete,
-  deleting,
+  deletingId,
 }: {
   messages?: MessageSummary[];
   pending: boolean;
+  error?: unknown;
+  onRetry: () => void;
   filter: string;
   onFilter: (value: string) => void;
   selectedId: string | null;
   onSelect: (id: string) => void;
-  onDelete: (id: string) => void;
-  deleting: boolean;
+  onDelete: (message: MessageSummary) => void;
+  deletingId: string | null;
 }) {
   return (
     <Card className="self-start">
@@ -268,11 +385,24 @@ function MessageList({
         </div>
       </CardHeader>
       <CardContent className="p-2">
-        {pending ? (
-          <p className="flex items-center gap-2 p-4 text-sm text-muted-foreground" role="status">
-            <Loader2 className="size-4 animate-spin" />
-            Loading messages…
-          </p>
+        {error != null ? (
+          <Callout variant="destructive" title="Could not read the inbox.">
+            <p>{errorText(error)}</p>
+            <Button size="sm" variant="outline" className="mt-2" onClick={onRetry}>
+              Try again
+            </Button>
+          </Callout>
+        ) : pending ? (
+          <div className="space-y-2 p-4" role="status">
+            <span className="sr-only">Loading messages…</span>
+            {[0, 1, 2].map((row) => (
+              <span
+                key={row}
+                aria-hidden
+                className="block h-9 animate-pulse rounded-sm bg-secondary"
+              />
+            ))}
+          </div>
         ) : (messages ?? []).length === 0 ? (
           <div className="p-4">
             <EmptyState
@@ -283,6 +413,13 @@ function MessageList({
                   ? "Clear the filter to see every captured message."
                   : "Send one from your app — or use Send test email — to see it here."
               }
+              action={
+                filter ? (
+                  <Button size="sm" variant="outline" onClick={() => onFilter("")}>
+                    Clear filter
+                  </Button>
+                ) : undefined
+              }
             />
           </div>
         ) : (
@@ -292,9 +429,9 @@ function MessageList({
                 <MessageRow
                   message={message}
                   selected={message.id === selectedId}
-                  deleting={deleting}
+                  deleting={message.id === deletingId}
                   onSelect={() => onSelect(message.id)}
-                  onDelete={() => onDelete(message.id)}
+                  onDelete={() => onDelete(message)}
                 />
               </li>
             ))}
@@ -319,15 +456,21 @@ function MessageRow({
   onSelect: () => void;
   onDelete: () => void;
 }) {
+  const subject = subjectOf(message);
+  const participants = `${message.from.name || message.from.address} → ${message.to
+    .map((to) => to.address)
+    .join(", ")}`;
   return (
     <div
-      className={`group flex items-center gap-2 rounded-sm p-2 text-sm transition-colors duration-150 cursor-pointer ${
-        selected ? "bg-accent" : "hover:bg-accent/50"
+      className={`group flex items-center gap-2 rounded-sm text-sm transition-colors duration-150 ${
+        selected ? "bg-accent" : ""
       }`}
     >
+      {/* The row's padding lives on the button, so cursor, hover and hit area agree. */}
       <button
         type="button"
-        className="flex min-w-0 flex-1 items-center gap-2 text-left"
+        aria-current={selected ? "true" : undefined}
+        className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-sm p-2 text-left transition-colors duration-150 hover:bg-accent/50"
         onClick={onSelect}
       >
         {message.read ? (
@@ -336,28 +479,40 @@ function MessageRow({
           <Mail className="size-4 shrink-0 text-foreground" aria-hidden />
         )}
         <span className="min-w-0 flex-1">
-          <span className={`block truncate ${message.read ? "" : "font-medium"}`}>
-            {message.subject === "" ? "(no subject)" : message.subject}
+          <span
+            className={`block truncate ${message.read ? "" : "font-medium"}`}
+            title={subject}
+          >
+            {subject}
           </span>
-          <span className="block truncate text-xs text-muted-foreground" data-selectable>
-            {message.from.name || message.from.address} →{" "}
-            {message.to.map((to) => to.address).join(", ")}
+          <span
+            className="block truncate text-xs text-muted-foreground"
+            title={participants}
+            data-selectable
+          >
+            {participants}
           </span>
         </span>
         {!message.read ? (
-          <span aria-label="unread" className="size-2 shrink-0 rounded-full bg-primary" />
+          <>
+            {/* §55: the dot is decoration; the state is the text. */}
+            <span className="sr-only">Unread</span>
+            <span aria-hidden className="size-2 shrink-0 rounded-full bg-primary" />
+          </>
         ) : null}
       </button>
-      <Button
-        variant="ghost"
-        size="sm"
-        className="opacity-0 transition-opacity group-hover:opacity-100"
-        disabled={deleting}
-        onClick={onDelete}
-        aria-label={`Delete message ${message.subject === "" ? "(no subject)" : message.subject}`}
-      >
-        {deleting ? <Loader2 className="animate-spin" /> : <Trash2 />}
-      </Button>
+      <Tooltip label="Delete message">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
+          disabled={deleting}
+          onClick={onDelete}
+          aria-label={`Delete message ${subject}`}
+        >
+          {deleting ? <Loader2 className="animate-spin" /> : <Trash2 />}
+        </Button>
+      </Tooltip>
     </div>
   );
 }
@@ -367,16 +522,38 @@ function MessageViewer({
   messageId,
   message,
   pending,
+  error,
+  onRetry,
 }: {
   messageId: string | null;
   message?: Message;
   pending: boolean;
+  error?: unknown;
+  onRetry: () => void;
 }) {
   if (messageId === null) {
     return (
       <Card className="self-start">
-        <CardContent className="p-8 text-center text-sm text-muted-foreground">
-          Select a message to read it. Viewing marks it read.
+        <CardContent className="p-4">
+          <EmptyState
+            icon={<MailOpen />}
+            title="Select a message to read it."
+            description="Viewing marks it read."
+          />
+        </CardContent>
+      </Card>
+    );
+  }
+  if (error != null) {
+    return (
+      <Card className="self-start">
+        <CardContent className="p-4">
+          <Callout variant="destructive" title="Could not read the message.">
+            <p>{errorText(error)}</p>
+            <Button size="sm" variant="outline" className="mt-2" onClick={onRetry}>
+              Try again
+            </Button>
+          </Callout>
         </CardContent>
       </Card>
     );
@@ -412,13 +589,18 @@ function MessageViewer({
       <CardContent className="space-y-3">
         <div className="flex flex-wrap gap-2">
           {message.attachments.map((attachment) => (
-            <Badge key={attachment.part_id} variant="outline" className="font-mono">
-              <FileText className="size-3" aria-hidden />
-              {attachment.file_name}
+            <Badge
+              key={attachment.part_id}
+              variant="outline"
+              className="max-w-full font-mono"
+              title={attachment.file_name}
+            >
+              <FileText className="size-3 shrink-0" aria-hidden />
+              <span className="truncate">{attachment.file_name}</span>
             </Badge>
           ))}
         </div>
-        <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-sm border border-border bg-muted/30 p-3 font-mono text-xs" data-selectable>
+        <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-sm border border-border bg-muted/30 p-3 font-mono text-xs" data-selectable>
           {message.text ?? "(no plain-text body)"}
         </pre>
       </CardContent>

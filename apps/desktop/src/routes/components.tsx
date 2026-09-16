@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import {
-  CircleAlert,
+  Boxes,
   Download,
   Loader2,
   Lock,
@@ -17,7 +17,11 @@ import { Button } from "@/components/ui/button";
 import {
   Callout,
 } from "@/components/ui/callout";
+import { ConfirmDialog } from "@/components/ui/dialog";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Progress } from "@/components/ui/progress";
+import { useToast } from "@/components/ui/toast";
+import { Tooltip } from "@/components/ui/tooltip";
 import {
   ipc,
   type ComponentKind,
@@ -66,20 +70,34 @@ export function ComponentsPage() {
   if (catalog.isPending) {
     return (
       <div className="p-5">
-        <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
-          <Loader2 className="size-4 animate-spin" />
-          Loading catalog…
-        </p>
+        {/* §37: a skeleton in the shape of the catalog instead of a spinner. */}
+        <div className="space-y-2" role="status">
+          <span className="sr-only">Loading catalog…</span>
+          {[0, 1, 2].map((row) => (
+            <span
+              key={row}
+              aria-hidden
+              className="block h-4 animate-pulse rounded-sm bg-secondary"
+            />
+          ))}
+        </div>
       </div>
     );
   }
   if (catalog.isError) {
     return (
       <div className="p-5">
-        <p className="flex items-center gap-2 text-sm text-destructive" role="alert">
-          <CircleAlert className="size-4" />
-          {catalog.error.message}
-        </p>
+        <Callout variant="destructive" title="Could not read the component catalog.">
+          <p>{catalog.error.message}</p>
+          <Button
+            size="sm"
+            variant="outline"
+            className="mt-2"
+            onClick={() => void catalog.refetch()}
+          >
+            Try again
+          </Button>
+        </Callout>
       </div>
     );
   }
@@ -88,13 +106,21 @@ export function ComponentsPage() {
     catalog.data?.find((component) => component.id === selectedId) ??
     catalog.data?.[0] ??
     null;
-  const installedVersions = (install.installed.data ?? []).length;
+  // §121: an unreadable list must not be reported as "nothing installed".
+  const installedCount = install.installed.isError
+    ? null
+    : (install.installed.data ?? []).length;
+  const installedVersions = installedCount ?? 0;
 
   return (
     <div className="space-y-4 p-5">
       <PageHeader
         title="Component catalog"
-        description={`${catalog.data.length} components · ${installedVersions} version${installedVersions === 1 ? "" : "s"} installed on this machine.`}
+        description={
+          installedCount === null
+            ? `${catalog.data.length} components · installed versions could not be read.`
+            : `${catalog.data.length} components · ${installedVersions} version${installedVersions === 1 ? "" : "s"} installed on this machine.`
+        }
         right={
           <span className="text-xs text-muted-foreground">
             Every download is checksum-verified before it lands.
@@ -102,55 +128,91 @@ export function ComponentsPage() {
         }
       />
 
-      <div className="grid gap-6 lg:grid-cols-[18rem_1fr]">
-            <nav aria-label="Components" className="space-y-4">
-              {KIND_ORDER.filter((kind) =>
-                catalog.data.some((component) => component.kind === kind),
-              ).map((kind) => (
-                <div key={kind} className="space-y-1">
-                  <h2 className="px-1 text-xs font-semibold text-muted-foreground">
-                    {KIND_LABELS[kind]}
-                  </h2>
-                  {catalog.data
-                    .filter((component) => component.kind === kind)
-                    .map((component) => {
-                      const kindInstalled = install.installed.data?.filter(
-                        (entry) => entry.component_id === component.id,
-                      ).length ?? 0;
-                      return (
-                        <button
-                          key={component.id}
-                          type="button"
-                          onClick={() => setSelectedId(component.id)}
-                          aria-current={selected?.id === component.id}
-                          className={cn(
-                            "flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-2 text-left text-sm transition-colors",
-                            selected?.id === component.id
-                              ? "bg-accent text-accent-foreground"
-                              : "hover:bg-accent/50",
-                          )}
-                        >
-                          <span className="min-w-0 truncate">{component.name}</span>
-                          <span className="flex shrink-0 items-center gap-1.5">
-                            {kindInstalled > 0 ? (
-                              <Badge variant="success">{kindInstalled}</Badge>
-                            ) : null}
-                            {component.caveat ? (
+      {install.installed.isError ? (
+        <Callout variant="destructive" title="Could not read the installed versions.">
+          <p>{install.installed.error.message}</p>
+          <Button
+            size="sm"
+            variant="outline"
+            className="mt-2"
+            onClick={() => void install.installed.refetch()}
+          >
+            Try again
+          </Button>
+        </Callout>
+      ) : null}
+
+      {catalog.data.length === 0 ? (
+        /* §38: an embedded catalog can come up empty, and nothing on this page
+           would otherwise say so; the nav just stays blank. */
+        <EmptyState
+          icon={<Boxes />}
+          title="No components in the catalog."
+          description="The catalog this build carries lists no components, so there is nothing to install or remove."
+          action={
+            <Button size="sm" variant="outline" onClick={() => void catalog.refetch()}>
+              Try again
+            </Button>
+          }
+        />
+      ) : (
+        <div className="grid gap-6 lg:grid-cols-[18rem_1fr]">
+          <nav aria-label="Components" className="space-y-4">
+            {KIND_ORDER.filter((kind) =>
+              catalog.data.some((component) => component.kind === kind),
+            ).map((kind) => (
+              <div key={kind} className="space-y-1">
+                <h2 className="px-1 text-xs font-semibold text-muted-foreground">
+                  {KIND_LABELS[kind]}
+                </h2>
+                {catalog.data
+                  .filter((component) => component.kind === kind)
+                  .map((component) => {
+                    const kindInstalled = install.installed.data?.filter(
+                      (entry) => entry.component_id === component.id,
+                    ).length ?? 0;
+                    return (
+                      <button
+                        key={component.id}
+                        type="button"
+                        onClick={() => setSelectedId(component.id)}
+                        aria-current={selected?.id === component.id}
+                        className={cn(
+                          "flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-2 text-left text-sm transition-colors duration-150",
+                          selected?.id === component.id
+                            ? "bg-accent text-accent-foreground"
+                            : "hover:bg-accent/50",
+                        )}
+                      >
+                        {/* §95: the name is the only label the row has. */}
+                        <span className="min-w-0 truncate" title={component.name}>
+                          {component.name}
+                        </span>
+                        <span className="flex shrink-0 items-center gap-1.5">
+                          {kindInstalled > 0 ? (
+                            <Badge variant="success">{kindInstalled}</Badge>
+                          ) : null}
+                          {component.caveat ? (
+                            /* §94: the caveat is only spelled out in the detail
+                               pane, so the icon carries it here. */
+                            <Tooltip label={component.caveat} side="top">
                               <TriangleAlert
                                 aria-label="Has a caveat"
                                 className="size-3.5 shrink-0 text-warning"
                               />
-                            ) : null}
-                          </span>
-                        </button>
-                      );
-                    })}
-                </div>
-              ))}
-            </nav>
+                            </Tooltip>
+                          ) : null}
+                        </span>
+                      </button>
+                    );
+                  })}
+              </div>
+            ))}
+          </nav>
 
           {selected ? <ComponentDetail component={selected} install={install} /> : null}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -169,10 +231,11 @@ function ComponentDetail({
 
   const installable = versions.data?.versions.length ?? 0;
   const hidden = versions.data?.unverifiable.length ?? 0;
+  const hiddenVersions = versions.data?.unverifiable.join(", ") ?? "";
 
   return (
     <section
-      className="animate-in fade-in slide-in-from-bottom-2 flex flex-col space-y-4 duration-300 lg:h-0 lg:min-h-full"
+      className="animate-in fade-in slide-in-from-bottom-2 flex flex-col space-y-4 duration-200 lg:h-0 lg:min-h-full"
       aria-label={component.name}
     >
       <div className="space-y-2">
@@ -208,7 +271,13 @@ function ComponentDetail({
             </Badge>
           ) : null}
           {versions.isFetching ? (
-            <Loader2 aria-label="Refreshing" className="size-3.5 animate-spin text-muted-foreground" />
+            /* §55: the spinner is decoration; the state lives in the status. */
+            <>
+              <Loader2 aria-hidden className="size-3.5 animate-spin text-muted-foreground" />
+              <span role="status" className="sr-only">
+                Refreshing versions
+              </span>
+            </>
           ) : null}
           {versions.data?.stale ? (
             <Badge variant="warning">
@@ -219,11 +288,52 @@ function ComponentDetail({
         </div>
 
         {versions.isPending ? (
-          <p className="text-sm text-muted-foreground" role="status">
-            Resolving versions…
-          </p>
+          /* §37: rows resolving, in the shape of the list they become. */
+          <div className="space-y-2" role="status">
+            <span className="sr-only">Resolving versions…</span>
+            {[0, 1, 2].map((row) => (
+              <span
+                key={row}
+                aria-hidden
+                className="block h-8 animate-pulse rounded-sm bg-secondary"
+              />
+            ))}
+          </div>
         ) : versions.isError ? (
-          <Callout variant="destructive">{versions.error.message}</Callout>
+          <Callout
+            variant="destructive"
+            title={`Could not resolve versions for ${component.name}.`}
+          >
+            <p>{versions.error.message}</p>
+            <Button
+              size="sm"
+              variant="outline"
+              className="mt-2"
+              onClick={() => void versions.refetch()}
+            >
+              Try again
+            </Button>
+          </Callout>
+        ) : versions.data.versions.length === 0 ? (
+          /* §38: an empty list next to a "0 installable" badge explains itself. */
+          <EmptyState
+            icon={<Download />}
+            title="No installable versions."
+            description={
+              hidden > 0
+                ? "Every release the upstream lists is hidden because it publishes no checksum for it; the hidden list is below."
+                : "No release of this component is available to install right now."
+            }
+            action={
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => void versions.refetch()}
+              >
+                Try again
+              </Button>
+            }
+          />
         ) : (
           <>
             <ul className="max-h-96 divide-y divide-border overflow-y-auto rounded-md border border-border lg:max-h-none lg:min-h-0 lg:flex-1">
@@ -241,8 +351,10 @@ function ComponentDetail({
               <Callout variant="warning">
                 {hidden} release{hidden === 1 ? "" : "s"} hidden because the
                 upstream publishes no checksum for them:{" "}
-                <span className="font-mono">
-                  {versions.data.unverifiable.join(", ")}
+                {/* §95: the list can run long, so it truncates with the full
+                    text on hover rather than stretching the callout. */}
+                <span className="block truncate font-mono" title={hiddenVersions}>
+                  {hiddenVersions}
                 </span>
               </Callout>
             ) : null}
@@ -266,6 +378,8 @@ function VersionRow({
   const phase = install.phaseOf(componentId, version.version);
   const busy = phase !== undefined && phase.stage !== "done";
   const fraction = phase ? phaseFraction(phase) : null;
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const toast = useToast();
 
   const installError =
     install.install.error instanceof Error &&
@@ -311,11 +425,9 @@ function VersionRow({
               variant="ghost"
               size="sm"
               disabled={install.uninstall.isPending}
-              onClick={() =>
-                install.uninstall.mutate({ componentId, version: version.version })
-              }
+              onClick={() => setConfirmRemove(true)}
             >
-              <Trash2 />
+              {install.uninstall.isPending ? <Loader2 className="animate-spin" /> : <Trash2 />}
               Remove
             </Button>
           ) : (
@@ -341,10 +453,44 @@ function VersionRow({
       ) : null}
 
       {installError ? (
-        <p className="mt-1.5 text-xs text-destructive" role="alert">
-          {installError.message}
-        </p>
+        <Callout
+          variant="destructive"
+          title={`Could not install ${version.version}.`}
+          className="mt-2"
+        >
+          <p>{installError.message}</p>
+        </Callout>
       ) : null}
+
+      {/* §35: removing deletes the files on disk, so the version is named before
+          it goes. The confirmation stays up while the removal runs, and closes
+          either way so the toast is not left behind the modal. */}
+      <ConfirmDialog
+        open={confirmRemove}
+        onClose={() => setConfirmRemove(false)}
+        onConfirm={() =>
+          install.uninstall.mutate(
+            { componentId, version: version.version },
+            {
+              onSuccess: () => {
+                setConfirmRemove(false);
+                toast.success(`Removed ${componentId} ${version.version}`);
+              },
+              onError: (error: Error) => {
+                setConfirmRemove(false);
+                toast.error(`Could not remove ${componentId} ${version.version}`, {
+                  details: error.message,
+                });
+              },
+            },
+          )
+        }
+        title={`Remove ${componentId} ${version.version}?`}
+        description="The installed files for this version are deleted from disk. Other versions of this component stay where they are."
+        confirmLabel="Remove version"
+        destructive
+        pending={install.uninstall.isPending}
+      />
     </li>
   );
 }

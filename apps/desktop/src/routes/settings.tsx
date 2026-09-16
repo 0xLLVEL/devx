@@ -1,7 +1,6 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import {
   Bookmark,
-  CircleAlert,
   CircleCheck,
   Download,
   FolderOpen,
@@ -11,9 +10,11 @@ import {
   Upload,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Callout } from "@/components/ui/callout";
 import {
   Card,
   CardContent,
@@ -21,11 +22,15 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { ConfirmDialog } from "@/components/ui/dialog";
+import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { useToast } from "@/components/ui/toast";
+import { Tooltip } from "@/components/ui/tooltip";
 import { IpcError, ipc, type AppInfo, type Config } from "@/lib/ipc";
 
 /**
@@ -37,6 +42,7 @@ function ProfilesCard() {
   const queryClient = useQueryClient();
   const [name, setName] = useState("");
   const [confirmApply, setConfirmApply] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
   const profiles = useQuery({ queryKey: ["profiles"], queryFn: ipc.profileList });
 
@@ -44,6 +50,7 @@ function ProfilesCard() {
     void queryClient.invalidateQueries({ queryKey: ["profiles"] });
     void queryClient.invalidateQueries({ queryKey: ["config"] });
     setConfirmApply(null);
+    setConfirmDelete(null);
   };
 
   const save = useMutation({
@@ -56,10 +63,15 @@ function ProfilesCard() {
   const apply = useMutation({
     mutationFn: (profile: string) => ipc.profileApply(profile),
     onSuccess: invalidate,
+    // The card carries the rejection, so the modal must be out of its way.
+    onError: () => setConfirmApply(null),
   });
   const remove = useMutation({
     mutationFn: (profile: string) => ipc.profileDelete(profile),
     onSuccess: invalidate,
+    // A modal sits above the toast layer, so the confirmation closes before the
+    // rejection is read in the card below (§39).
+    onError: () => setConfirmDelete(null),
   });
 
   const entries = profiles.data ?? [];
@@ -83,64 +95,66 @@ function ProfilesCard() {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
-        {entries.length > 0 ? (
+        {profiles.isPending ? (
+          <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
+            <Loader2 className="size-4 animate-spin" />
+            Loading saved profiles…
+          </p>
+        ) : profiles.isError ? (
+          /* §121: a read that failed is not "you never saved one". */
+          <Callout variant="destructive" title="Could not read the saved profiles.">
+            <p>{profiles.error.message}</p>
+            <Button
+              size="sm"
+              variant="outline"
+              className="mt-2"
+              onClick={() => void profiles.refetch()}
+            >
+              Try again
+            </Button>
+          </Callout>
+        ) : entries.length > 0 ? (
           <ul className="space-y-1.5">
             {entries.map((profile) => (
               <li key={profile.name} className="flex items-center justify-between gap-3">
                 <span className="flex min-w-0 items-center gap-2">
                   <Bookmark className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-                  <span className="truncate font-mono text-sm" data-selectable>
+                  <span className="truncate font-mono text-sm" title={profile.name} data-selectable>
                     {profile.name}
                   </span>
                 </span>
                 <span className="flex shrink-0 items-center gap-1">
-                  {confirmApply === profile.name ? (
-                    <>
-                      <Button
-                        size="sm"
-                        variant="destructive"
-                        disabled={apply.isPending}
-                        onClick={() => apply.mutate(profile.name)}
-                      >
-                        {apply.isPending ? <Loader2 className="animate-spin" /> : null}
-                        Replace current config
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => setConfirmApply(null)}
-                      >
-                        Cancel
-                      </Button>
-                    </>
-                  ) : (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={apply.isPending}
-                      onClick={() => setConfirmApply(profile.name)}
-                    >
-                      Apply
-                    </Button>
-                  )}
                   <Button
-                    variant="ghost"
                     size="sm"
-                    disabled={remove.isPending}
-                    onClick={() => remove.mutate(profile.name)}
-                    aria-label={`Delete profile ${profile.name}`}
+                    variant="outline"
+                    disabled={apply.isPending}
+                    onClick={() => setConfirmApply(profile.name)}
                   >
-                    <Trash2 />
+                    Apply
                   </Button>
+                  <Tooltip label={`Delete profile ${profile.name}`}>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={remove.isPending}
+                      onClick={() => setConfirmDelete(profile.name)}
+                      aria-label={`Delete profile ${profile.name}`}
+                    >
+                      <Trash2 />
+                    </Button>
+                  </Tooltip>
                 </span>
               </li>
             ))}
           </ul>
         ) : (
-          <p className="text-sm text-muted-foreground">
-            No saved profiles yet. Set everything up the way you like it, then
-            save it under a name below.
-          </p>
+          /* §38: the form below is the action, so the empty state explains
+             rather than repeating it as a button. */
+          <EmptyState
+            icon={<Bookmark />}
+            title="No saved profiles yet."
+            description="Set everything up the way you like it, then save it under a name below."
+          />
         )}
 
         <form
@@ -172,11 +186,52 @@ function ProfilesCard() {
         </form>
 
         {error ? (
-          <p className="flex items-center gap-2 text-sm text-destructive" role="alert">
-            <CircleAlert className="size-4" />
-            {error.message}
-          </p>
+          <Callout variant="destructive" title="Could not update the saved profiles.">
+            <p>{error.message}</p>
+            {error instanceof IpcError && error.hint ? (
+              <p className="mt-1 text-destructive/80">{error.hint}</p>
+            ) : null}
+          </Callout>
         ) : null}
+
+        {/* §35: applying a profile repaints the whole running configuration, and
+            deleting one is not recoverable, so both name their target first. */}
+        <ConfirmDialog
+          open={confirmApply !== null}
+          onClose={() => setConfirmApply(null)}
+          onConfirm={() => {
+            if (confirmApply) {
+              apply.mutate(confirmApply);
+            }
+          }}
+          title={
+            confirmApply
+              ? `Replace the configuration with "${confirmApply}"?`
+              : "Apply this profile?"
+          }
+          description="Every site, worker and setting in the running configuration is replaced by the snapshot stored in this profile. The current configuration is not kept unless you saved it as a profile of its own."
+          confirmLabel="Replace current config"
+          destructive
+          pending={apply.isPending}
+        />
+        <ConfirmDialog
+          open={confirmDelete !== null}
+          onClose={() => setConfirmDelete(null)}
+          onConfirm={() => {
+            if (confirmDelete) {
+              remove.mutate(confirmDelete);
+            }
+          }}
+          title={
+            confirmDelete
+              ? `Delete the profile "${confirmDelete}"?`
+              : "Delete this profile?"
+          }
+          description="The saved snapshot is deleted from the profiles folder. The running configuration is not changed, and no other profile is touched."
+          confirmLabel="Delete profile"
+          destructive
+          pending={remove.isPending}
+        />
       </CardContent>
     </Card>
   );
@@ -185,6 +240,8 @@ function ProfilesCard() {
 /** Settings page: data locations plus everything in `config.toml`. */
 export function SettingsPage() {
   const queryClient = useQueryClient();
+  const toast = useToast();
+  const [confirmReset, setConfirmReset] = useState(false);
 
   const configQuery = useQuery({ queryKey: ["config"], queryFn: ipc.configGet });
   const pathsQuery = useQuery({ queryKey: ["paths"], queryFn: ipc.pathsGet });
@@ -216,10 +273,24 @@ export function SettingsPage() {
     onSuccess: (saved) => {
       queryClient.setQueryData(["config"], saved);
       setDraft(saved);
+      setConfirmReset(false);
+      // §123: this replaces the whole configuration, so it needs a receipt.
+      toast.success("Configuration restored to its defaults.");
+    },
+    onError: (error: Error) => {
+      // A modal sits above the toast layer, so it closes before the reason is
+      // read (§54).
+      setConfirmReset(false);
+      toast.error("Could not restore the defaults", { details: error.message });
     },
   });
 
-  const reveal = useMutation({ mutationFn: ipc.revealManagedDir });
+  const reveal = useMutation({
+    mutationFn: ipc.revealManagedDir,
+    onError: (error: Error) => {
+      toast.error("Could not open the folder", { details: error.message });
+    },
+  });
 
   if (configQuery.isPending || !draft) {
     return (
@@ -235,16 +306,26 @@ export function SettingsPage() {
   if (configQuery.isError) {
     return (
       <div className="p-6">
-        <p className="flex items-center gap-2 text-sm text-destructive" role="alert">
-          <CircleAlert className="size-4" />
-          {configQuery.error.message}
-        </p>
+        <Callout variant="destructive" title="Could not read the saved configuration.">
+          <p>{configQuery.error.message}</p>
+          <Button
+            size="sm"
+            variant="outline"
+            className="mt-2"
+            onClick={() => void configQuery.refetch()}
+          >
+            Try again
+          </Button>
+        </Callout>
       </div>
     );
   }
 
   const dirty = JSON.stringify(draft) !== JSON.stringify(configQuery.data);
-  const saveError = save.error instanceof IpcError ? save.error : null;
+  // §131 Rule 18: a rejected save is reported whatever it was rejected with;
+  // only the IPC-specific hint is conditional.
+  const saveError = save.error;
+  const saveHint = save.error instanceof IpcError ? save.error.hint : null;
 
   const patch = (update: (config: Config) => Config) =>
     setDraft((current) => (current ? update(structuredClone(current)) : current));
@@ -264,7 +345,7 @@ export function SettingsPage() {
               <div className="flex items-center gap-2">
                 <Button
                   variant="ghost"
-                  onClick={() => reset.mutate()}
+                  onClick={() => setConfirmReset(true)}
                   disabled={reset.isPending}
                 >
                   Restore defaults
@@ -282,18 +363,10 @@ export function SettingsPage() {
         />
 
         {saveError ? (
-          <div
-            role="alert"
-            className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive"
-          >
-            <CircleAlert className="mt-0.5 size-4 shrink-0" />
-            <div>
-              <p>{saveError.message}</p>
-              {saveError.hint ? (
-                <p className="mt-1 text-destructive/80">{saveError.hint}</p>
-              ) : null}
-            </div>
-          </div>
+          <Callout variant="destructive" title="Could not save the configuration.">
+            <p>{saveError.message}</p>
+            {saveHint ? <p className="mt-1 text-destructive/80">{saveHint}</p> : null}
+          </Callout>
         ) : null}
 
         {save.isSuccess && !dirty ? (
@@ -570,21 +643,39 @@ export function SettingsPage() {
           </CardHeader>
           <CardContent className="space-y-3">
             {pathsQuery.isPending ? (
-              <p className="text-sm text-muted-foreground">Resolving paths…</p>
-            ) : pathsQuery.isError ? (
-              <p className="text-sm text-destructive" role="alert">
-                {pathsQuery.error.message}
+              /* §121: the read is announced and visibly in flight, matching
+                 how the other cards on this page report their own loads. */
+              <p
+                className="flex items-center gap-2 text-sm text-muted-foreground"
+                role="status"
+              >
+                <Loader2 className="size-4 animate-spin" />
+                Resolving paths…
               </p>
+            ) : pathsQuery.isError ? (
+              <Callout variant="destructive" title="Could not resolve the DevX directories.">
+                <p>{pathsQuery.error.message}</p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="mt-2"
+                  onClick={() => void pathsQuery.refetch()}
+                >
+                  Try again
+                </Button>
+              </Callout>
             ) : (
               <>
                 <PathRow
                   label="Configuration"
                   path={pathsQuery.data.config_dir}
+                  busy={reveal.isPending}
                   onReveal={() => reveal.mutate(pathsQuery.data.config_dir)}
                 />
                 <PathRow
                   label="Data, runtimes and logs"
                   path={pathsQuery.data.data_dir}
+                  busy={reveal.isPending}
                   onReveal={() => reveal.mutate(pathsQuery.data.data_dir)}
                 />
               </>
@@ -595,7 +686,20 @@ export function SettingsPage() {
         <ProfilesCard />
         <TransferCard />
 
-        <UpdatesCard appInfo={appInfoQuery.data ?? null} />
+        <UpdatesCard info={appInfoQuery} />
+
+        {/* §35: restoring the defaults overwrites every setting at once, and the
+            saved profiles live outside the config file, so they survive it. */}
+        <ConfirmDialog
+          open={confirmReset}
+          onClose={() => setConfirmReset(false)}
+          onConfirm={() => reset.mutate()}
+          title="Restore the default configuration?"
+          description="Every setting in config.toml is replaced with its DevX default: the domain suffix, ports, resolution strategy, theme, startup behaviour and provisioning options. Unsaved edits are discarded, and the current configuration cannot be recovered afterwards. Saved profiles are not affected."
+          confirmLabel="Restore defaults"
+          destructive
+          pending={reset.isPending}
+        />
     </div>
   );
 }
@@ -711,24 +815,17 @@ function TransferCard() {
           </div>
         ) : null}
         {exportConfig.error instanceof Error ? (
-          <p className="flex items-center gap-2 text-sm text-destructive" role="alert">
-            <CircleAlert className="size-4" />
-            {exportConfig.error.message}
-          </p>
+          <Callout variant="destructive" title="Could not export the configuration.">
+            <p>{exportConfig.error.message}</p>
+          </Callout>
         ) : null}
         {importConfig.error instanceof Error ? (
-          <div
-            role="alert"
-            className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive"
-          >
-            <CircleAlert className="mt-0.5 size-4 shrink-0" />
-            <div>
-              <p>{importConfig.error.message}</p>
-              {importConfig.error instanceof IpcError && importConfig.error.hint ? (
-                <p className="mt-1 text-destructive/80">{importConfig.error.hint}</p>
-              ) : null}
-            </div>
-          </div>
+          <Callout variant="destructive" title="Could not import this file.">
+            <p>{importConfig.error.message}</p>
+            {importConfig.error instanceof IpcError && importConfig.error.hint ? (
+              <p className="mt-1 text-destructive/80">{importConfig.error.hint}</p>
+            ) : null}
+          </Callout>
         ) : null}
       </CardContent>
     </Card>
@@ -736,15 +833,16 @@ function TransferCard() {
 }
 
 /** Release status of the running build, checked on demand and on page view. */
-function UpdatesCard({ appInfo }: { appInfo: AppInfo | null }) {
+function UpdatesCard({ info }: { info: UseQueryResult<AppInfo> }) {
   const updates = useQuery({
     queryKey: ["update-check"],
     queryFn: ipc.updateCheck,
     staleTime: 60 * 60 * 1000,
-    enabled: appInfo !== null,
+    // The comparison needs the running version, so this waits for app-info.
+    enabled: info.data != null,
   });
 
-  const current = updates.data?.current ?? appInfo?.version ?? null;
+  const current = updates.data?.current ?? info.data?.version ?? null;
 
   return (
     <Card>
@@ -755,15 +853,38 @@ function UpdatesCard({ appInfo }: { appInfo: AppInfo | null }) {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
-        {updates.isPending ? (
+        {info.isError ? (
+          /* §121: without the running version there is nothing to compare, and
+             the update check stays disabled, so this must not sit on
+             "Checking for updates…" forever. */
+          <Callout variant="destructive" title="Could not read this build's version.">
+            <p>{info.error.message}</p>
+            <Button
+              size="sm"
+              variant="outline"
+              className="mt-2"
+              onClick={() => void info.refetch()}
+            >
+              Try again
+            </Button>
+          </Callout>
+        ) : updates.isPending ? (
           <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
             <Loader2 className="size-4 animate-spin" />
             Checking for updates…
           </p>
         ) : updates.isError ? (
-          <p className="text-sm text-destructive" role="alert">
-            {updates.error.message}
-          </p>
+          <Callout variant="destructive" title="Could not check for updates.">
+            <p>{updates.error.message}</p>
+            <Button
+              size="sm"
+              variant="outline"
+              className="mt-2"
+              onClick={() => void updates.refetch()}
+            >
+              Try again
+            </Button>
+          </Callout>
         ) : updates.data.update_available ? (
           <div className="flex items-start justify-between gap-4 rounded-md border border-warning/40 bg-warning/10 p-3">
             <div className="space-y-0.5">
@@ -807,6 +928,18 @@ function UpdatesCard({ appInfo }: { appInfo: AppInfo | null }) {
             </Button>
           </div>
         )}
+
+        {/* §108: runtime updates are a different thing from an application
+            update, and they live where runtimes live. Saying so here is the
+            whole point — this card must never look like it upgrades PHP. */}
+        <p className="text-xs text-muted-foreground">
+          This is the DevX build only. Runtime versions — PHP, Node, databases —
+          are installed and removed on the{" "}
+          <Link to="/components" className="text-primary hover:underline">
+            Components
+          </Link>{" "}
+          page.
+        </p>
       </CardContent>
     </Card>
   );
@@ -850,22 +983,30 @@ function ToggleRow({
 function PathRow({
   label,
   path,
+  busy,
   onReveal,
 }: {
   label: string;
   path: string;
+  /** §37: the button is held while the folder is being opened. */
+  busy: boolean;
   onReveal: () => void;
 }) {
   return (
     <div className="flex items-center justify-between gap-4 rounded-md border border-border p-3">
       <div className="min-w-0 space-y-0.5">
         <p className="text-sm">{label}</p>
-        <p className="truncate font-mono text-xs text-muted-foreground" data-selectable>
+        {/* §95: the row truncates a long path, so the full one stays reachable. */}
+        <p
+          className="truncate font-mono text-xs text-muted-foreground"
+          title={path}
+          data-selectable
+        >
           {path}
         </p>
       </div>
-      <Button variant="outline" size="sm" onClick={onReveal}>
-        <FolderOpen />
+      <Button variant="outline" size="sm" onClick={onReveal} disabled={busy}>
+        {busy ? <Loader2 className="animate-spin" /> : <FolderOpen />}
         Open
       </Button>
     </div>

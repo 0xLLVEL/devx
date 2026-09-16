@@ -1,9 +1,32 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>DevX</title>
+    <script>
+      /*
+       * Pre-paint theme (§9). config.toml arrives over IPC, which is always
+       * slower than the first frame, so the theme it last resolved to is
+       * mirrored into localStorage and applied here. Once the config is read,
+       * src/lib/theme.ts takes over and corrects this if it disagrees.
+       */
+      (function () {
+        var theme = null;
+        try {
+          theme = window.localStorage.getItem("devx.theme");
+        } catch (error) {
+          // Storage unavailable: fall through to the OS preference.
+        }
+        var wantsDark =
+          theme === "dark" ||
+          (theme !== "light" &&
+            window.matchMedia("(prefers-color-scheme: dark)").matches);
+        var root = document.documentElement;
+        root.classList.toggle("dark", wantsDark);
+        root.style.colorScheme = wantsDark ? "dark" : "light";
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

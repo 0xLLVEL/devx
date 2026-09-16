@@ -6,6 +6,8 @@ import { cn } from "@/lib/utils";
 export function Card({ className, ...props }: ComponentProps<"div">) {
   return (
     <div
+      /* §12 cards are 12px; §14 keeps them real opaque surfaces — glass stays
+         an accent layer for chrome. */
       className={cn(
         "rounded-lg border border-border bg-card text-card-foreground shadow-sm",
         className,
@@ -24,7 +26,8 @@ export function CardHeader({ className, ...props }: ComponentProps<"div">) {
 export function CardTitle({ className, ...props }: ComponentProps<"h3">) {
   return (
     <h3
-      className={cn("text-sm font-semibold leading-none tracking-tight", className)}
+      /* §10 level 1 of the card hierarchy: H3, 15/20/650. */
+      className={cn("text-h3 tracking-tight", className)}
       {...props}
     />
   );

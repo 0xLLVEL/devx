@@ -6,4 +6,7 @@ import { afterEach } from "vitest";
 // with the jsdom environment in every setup, so be explicit.
 afterEach(() => {
   cleanup();
+  // The shell remembers its collapsed state and the last theme here; one
+  // test's layout must never become the next test's starting point.
+  window.localStorage.clear();
 });

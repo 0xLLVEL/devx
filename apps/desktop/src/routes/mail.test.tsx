@@ -123,21 +123,97 @@ describe("MailPage", () => {
       await screen.findByRole("button", { name: /delete message welcome/i }),
     );
 
+    // §35: the row asks first, and names the message it would remove.
+    expect(mocks.mailDelete).not.toHaveBeenCalled();
+    expect(screen.getByText(/delete "welcome!"/i)).toBeInTheDocument();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Delete message" }),
+    );
+
     await waitFor(() => {
       expect(mocks.mailDelete).toHaveBeenCalledWith(["abc123"]);
     });
   });
 
-  it("clears the whole inbox with an empty id list", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+  it("clears the whole inbox with an empty id list, after confirming", async () => {
     renderWithProviders(<MailPage />);
 
     await userEvent.click(
       await screen.findByRole("button", { name: /clear inbox/i }),
     );
 
+    // Nothing is deleted until the consequence has been accepted.
+    expect(mocks.mailDelete).not.toHaveBeenCalled();
+    expect(screen.getByText(/starts empty/i)).toBeInTheDocument();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /delete all messages/i }),
+    );
+
     await waitFor(() => {
       expect(mocks.mailDelete).toHaveBeenCalledWith([]);
     });
+  });
+
+  it("keeps the inbox when the clear is dismissed", async () => {
+    renderWithProviders(<MailPage />);
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: /clear inbox/i }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(mocks.mailDelete).not.toHaveBeenCalled();
+  });
+
+  it("offers the action that turns the catcher on while it is stopped (§38)", async () => {
+    mocks.mailStatus.mockResolvedValue({
+      running: false,
+      port: null,
+      smtp_port: 1025,
+      total: null,
+      unread: null,
+    });
+    mocks.mailList.mockResolvedValue([]);
+
+    renderWithProviders(<MailPage />);
+
+    expect(await screen.findByText("Nothing is being captured yet.")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open Services" })).toHaveAttribute(
+      "href",
+      "/services",
+    );
+  });
+
+  it("clears the filter from the filter-miss empty state (§38)", async () => {
+    renderWithProviders(<MailPage />);
+
+    await userEvent.type(
+      await screen.findByRole("textbox", { name: "Filter messages" }),
+      "no-such-message",
+    );
+
+    expect(await screen.findByText("No messages match the filter.")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Clear filter" }));
+
+    expect(await screen.findByText("Welcome!")).toBeInTheDocument();
+    expect(screen.queryByText("No messages match the filter.")).not.toBeInTheDocument();
+  });
+
+  it("reports which message is open to assistive technology (§121)", async () => {
+    renderWithProviders(<MailPage />);
+
+    // The row's own name starts with the subject; the delete control's does not.
+    const row = await screen.findByRole("button", { name: /^welcome!/i });
+    expect(row).not.toHaveAttribute("aria-current");
+
+    await userEvent.click(row);
+
+    await waitFor(() => expect(row).toHaveAttribute("aria-current", "true"));
+    expect(screen.getByRole("button", { name: /^password reset/i })).not.toHaveAttribute(
+      "aria-current",
+    );
   });
 });

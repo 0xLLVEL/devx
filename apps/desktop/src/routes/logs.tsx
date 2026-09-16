@@ -1,11 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
-import { CircleAlert, Loader2, RefreshCw, Search } from "lucide-react";
+import { FileText, Loader2, RefreshCw, Search } from "lucide-react";
 import { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Callout } from "@/components/ui/callout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -51,12 +53,31 @@ export function LogsPage() {
                 Loading logs…
               </p>
             ) : files.isError ? (
-              <p className="flex items-center gap-2 text-sm text-destructive" role="alert">
-                <CircleAlert className="size-4" />
-                {files.error.message}
-              </p>
+              <Callout variant="destructive" title="Could not read the log file list.">
+                <p>{files.error.message}</p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="mt-2"
+                  onClick={() => void files.refetch()}
+                >
+                  Try again
+                </Button>
+              </Callout>
             ) : entries.length === 0 ? (
-              <EmptyState title="No logs yet." description="Start a service to produce output." />
+              <EmptyState
+                icon={<FileText />}
+                title="No logs yet."
+                description="Start a service to produce output."
+                action={
+                  <Link
+                    to="/services"
+                    className={buttonVariants({ variant: "outline", size: "sm" })}
+                  >
+                    Open Services
+                  </Link>
+                }
+              />
             ) : (
               <ul className="space-y-1">
                 {entries.map((entry) => (
@@ -73,14 +94,47 @@ export function LogsPage() {
           </CardContent>
         </Card>
 
-      {active ? (
+      {files.isPending ? (
+        <Card>
+          <CardContent className="space-y-2 p-6" role="status">
+            {/* §121: the right panel is loading too — saying "select a file"
+                here would report an empty state that has not happened yet. */}
+            <span className="sr-only">Loading logs…</span>
+            <span aria-hidden className="block h-4 w-64 animate-pulse rounded-sm bg-secondary" />
+            <span aria-hidden className="block h-4 w-40 animate-pulse rounded-sm bg-secondary" />
+          </CardContent>
+        </Card>
+      ) : files.isError ? (
+        <Card>
+          <CardContent className="p-6">
+            {/* §39: an error names the next step rather than leaving the panel
+                blank. */}
+            <EmptyState
+              icon={<FileText />}
+              title="Nothing to read here yet."
+              description="The log file list could not be read, so there is no file to open."
+              action={
+                <Button variant="outline" size="sm" onClick={() => void files.refetch()}>
+                  Try again
+                </Button>
+              }
+            />
+          </CardContent>
+        </Card>
+      ) : active ? (
         <LogViewer key={active} fileName={active} />
       ) : (
         <Card>
           <CardContent className="p-6">
-            <p className="text-sm text-muted-foreground">
-              Select a log file to read it here.
-            </p>
+            {/* The only way here is an empty file list: a non-empty list
+                selects its first file, so "select a file" would be a choice
+                the user cannot make. The action lives on the list panel, where
+                the files would appear. */}
+            <EmptyState
+              icon={<FileText />}
+              title="No log file to read yet."
+              description="The viewer fills in as soon as a service writes output."
+            />
           </CardContent>
         </Card>
       )}
@@ -109,7 +163,9 @@ function LogFileLink({
           : "border-transparent text-muted-foreground hover:bg-sidebar-accent/60"
       }`}
     >
-      <span className="data-value min-w-0 truncate">{entry.file_name}</span>
+      <span className="data-value min-w-0 truncate" title={entry.file_name}>
+        {entry.file_name}
+      </span>
       <span className="flex shrink-0 items-center gap-1.5">
         {entry.rotated ? <Badge variant="outline">rotated</Badge> : null}
         <span className="data-value text-muted-foreground">{formatBytes(entry.size_bytes)}</span>
@@ -140,13 +196,26 @@ function LogViewer({ fileName }: { fileName: string }) {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [search, setSearch] = useState("");
   const [level, setLevel] = useState<LevelFilter>("all");
+  const [refreshing, setRefreshing] = useState(false);
 
   const content = useQuery({
-    queryKey: ["log-content", fileName, autoRefresh],
+    // The display preference is not part of the key: flipping auto-refresh
+    // must not count as a different file and throw away the visible tail.
+    queryKey: ["log-content", fileName],
     queryFn: () => ipc.logsRead(fileName, TAIL_LINES),
     refetchInterval: autoRefresh ? 2000 : false,
     refetchIntervalInBackground: false,
   });
+
+  // The button spins for the read the user asked for, not for the 2s poll.
+  const refresh = async () => {
+    setRefreshing(true);
+    try {
+      await content.refetch();
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   // Filtering is derived per render: the tail is small (≤ 500 lines) and
   // re-polling keeps it fresh, so a memo over the current lines is enough.
@@ -166,7 +235,9 @@ function LogViewer({ fileName }: { fileName: string }) {
     <Card>
       <CardHeader>
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <CardTitle className="data-value min-w-0 truncate text-sm">{fileName}</CardTitle>
+          <CardTitle className="data-value min-w-0 truncate text-sm" title={fileName}>
+            {fileName}
+          </CardTitle>
           <div className="flex items-center gap-3">
             <label className="flex items-center gap-2 text-xs text-muted-foreground">
               Auto-refresh
@@ -179,10 +250,10 @@ function LogViewer({ fileName }: { fileName: string }) {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => content.refetch()}
-              disabled={content.isFetching}
+              onClick={() => void refresh()}
+              disabled={refreshing}
             >
-              {content.isFetching ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+              {refreshing ? <Loader2 className="animate-spin" /> : <RefreshCw />}
               Refresh
             </Button>
           </div>
@@ -226,10 +297,17 @@ function LogViewer({ fileName }: { fileName: string }) {
             Reading {fileName}…
           </p>
         ) : content.isError ? (
-          <p className="flex items-center gap-2 text-sm text-destructive" role="alert">
-            <CircleAlert className="size-4" />
-            {content.error.message}
-          </p>
+          <Callout variant="destructive" title="Could not read this log file.">
+            <p>{content.error.message}</p>
+            <Button
+              size="sm"
+              variant="outline"
+              className="mt-2"
+              onClick={() => void content.refetch()}
+            >
+              Try again
+            </Button>
+          </Callout>
         ) : (
           <>
             {content.data.truncated ? (
@@ -237,19 +315,50 @@ function LogViewer({ fileName }: { fileName: string }) {
                 Showing the last {TAIL_LINES} lines of the file.
               </p>
             ) : null}
+            {/* §121: with the poll off, the tail on screen is frozen and must
+                say so rather than pass for live output. */}
+            {!autoRefresh ? (
+              <p className="mb-2 text-xs text-muted-foreground">
+                Auto-refresh is off. These lines were read at{" "}
+                {formatClock(content.dataUpdatedAt)}.
+              </p>
+            ) : null}
             <div
               className="max-h-[60vh] overflow-y-auto rounded-sm border border-border bg-background/60 p-2"
               data-selectable
             >
               {content.data.lines.length === 0 ? (
-                <p className="data-value text-muted-foreground">This file is empty.</p>
+                <EmptyState
+                  icon={<FileText />}
+                  title="This file is empty."
+                  description="Nothing has been written to it yet; auto-refresh picks up the first lines."
+                />
               ) : visible.length === 0 ? (
-                <p className="data-value text-muted-foreground">
-                  No lines match the current search and level filter.
-                </p>
+                <EmptyState
+                  icon={<Search />}
+                  title="No lines match the current search and level filter."
+                  description={`${content.data.lines.length} line${
+                    content.data.lines.length === 1 ? "" : "s"
+                  } were read and none of them match.`}
+                  action={
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setSearch("");
+                        setLevel("all");
+                      }}
+                    >
+                      Clear filters
+                    </Button>
+                  }
+                />
               ) : (
                 visible.map((line, index) => (
-                  <div key={`${index}-${line.slice(0, 12)}`} className="data-value">
+                  <div
+                    key={`${index}-${line.slice(0, 12)}`}
+                    className="data-value break-all"
+                  >
                     {line}
                   </div>
                 ))
@@ -260,6 +369,11 @@ function LogViewer({ fileName }: { fileName: string }) {
       </CardContent>
     </Card>
   );
+}
+
+/** Formats a millisecond timestamp as a local clock time. */
+function formatClock(millis: number): string {
+  return new Date(millis).toLocaleTimeString();
 }
 
 /** Formats a byte count for the file list. */

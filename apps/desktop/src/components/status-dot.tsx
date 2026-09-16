@@ -13,6 +13,20 @@ const DOT_CLASS: Record<ServiceUiState, string> = {
   stopped: "bg-muted-foreground/40",
 };
 
+const UNKNOWN_TONE = "bg-muted-foreground/40";
+
+/**
+ * Dot colour for a raw backend state string.
+ *
+ * The event log carries the state as a string, so callers that render a dot
+ * without a full badge (the activity timeline) use this instead of keeping a
+ * second copy of the mapping. An unknown state reads as neutral rather than
+ * borrowing a meaning it does not have.
+ */
+export function stateTone(state: string): string {
+  return DOT_CLASS[state as ServiceUiState] ?? UNKNOWN_TONE;
+}
+
 /**
  * Status = dot + label, with an alert icon added for the failed state —
  * never color alone (MASTER.md accessibility rule). The pulse on

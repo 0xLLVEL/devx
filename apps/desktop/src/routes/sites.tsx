@@ -2,26 +2,35 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
   ChevronRight,
-  CircleAlert,
   Copy,
   ExternalLink,
+  FolderOpen,
   Globe,
   Loader2,
   Lock,
   Plus,
+  Search,
   ShieldCheck,
   Trash2,
+  Variable,
 } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 
+import { FilterBar, type ActiveFilter } from "@/components/filter-bar";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Callout } from "@/components/ui/callout";
+import { ConfirmDialog, Dialog } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { OverflowMenu, useContextMenu, type MenuItem } from "@/components/ui/menu";
 import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { useToast } from "@/components/ui/toast";
+import { Tooltip } from "@/components/ui/tooltip";
+import { openFolder } from "@/lib/open-folder";
 import { openInBrowser } from "@/lib/open-url";
 import { pickDirectory } from "@/lib/pick-directory";
 import {
@@ -88,95 +97,245 @@ function siteUrl(site: SiteStatus): string {
   return `${site.https ? "https" : "http"}://${site.hostname}`;
 }
 
-/** Sites page: the local network as one dense monitor table. */
+/** The `@static` sentinel keeps "static" apart from a real PHP version. */
+const STATIC = "@static";
+
+/**
+ * Sites page: the local domains DevX serves, as one dense table (§60) with a
+ * compact filter row (§61) and the per-site actions attached to the row they
+ * affect (§91).
+ *
+ * The table shows what the backend actually knows: host name, the URL with its
+ * scheme, the runtime and web server rendering it, the docroot, and a health
+ * check the user runs on demand. §23 also lists Restart and Disable; neither
+ * has a command behind it, so neither appears here.
+ */
 export function SitesPage() {
   const queryClient = useQueryClient();
+  const toast = useToast();
   const sites = useQuery({ queryKey: ["sites"], queryFn: ipc.siteList });
   const phpPools = useQuery({ queryKey: ["php-pools"], queryFn: ipc.phpPoolList });
   const ca = useQuery({ queryKey: ["ca"], queryFn: ipc.caStatus });
   const dns = useQuery({ queryKey: ["dns"], queryFn: ipc.dnsStatus });
   const config = useQuery({ queryKey: ["config"], queryFn: ipc.configGet });
 
-  const [adding, setAdding] = useState(false);
+  const [creating, setCreating] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
+  const [removeTarget, setRemoveTarget] = useState<SiteStatus | null>(null);
 
-  const [hostname, setHostname] = useState("");
-  const [docroot, setDocroot] = useState("");
-  const [phpVersion, setPhpVersion] = useState("");
-  const [https, setHttps] = useState(false);
-  const [webServer, setWebServer] = useState<WebServerChoice>("Nginx");
+  const [query, setQuery] = useState("");
+  const [serverFilter, setServerFilter] = useState<"all" | WebServerChoice>("all");
+  const [runtimeFilter, setRuntimeFilter] = useState("all");
 
-  const add = useMutation({
-    mutationFn: () =>
-      ipc.siteAdd(hostname.trim(), docroot.trim(), phpVersion, https, webServer),
-    onSuccess: () => {
-      setHostname("");
-      setDocroot("");
-      setPhpVersion("");
-      setHttps(false);
-      setWebServer("Nginx");
-      setAdding(false);
-      queryClient.invalidateQueries({ queryKey: ["sites"] });
-    },
-  });
   const remove = useMutation({
     mutationFn: (hostname: string) => ipc.siteRemove(hostname),
+    onSuccess: (_result, hostname) =>
+      toast.success("Site removed", { description: `${hostname} is no longer served.` }),
+    onError: (error: Error, hostname) =>
+      toast.error(`Could not remove ${hostname}`, { details: error.message }),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["sites"] }),
   });
   const caInstall = useMutation({
     mutationFn: ipc.caInstall,
+    onError: (error: Error) =>
+      toast.error("Could not install the CA", { details: error.message }),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["ca"] }),
   });
   const dnsStart = useMutation({
     mutationFn: ipc.dnsStart,
+    onError: (error: Error) =>
+      toast.error("Could not start the resolver", { details: error.message }),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["dns"] }),
   });
   const dnsStop = useMutation({
     mutationFn: ipc.dnsStop,
+    onError: (error: Error) =>
+      toast.error("Could not stop the resolver", { details: error.message }),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["dns"] }),
   });
   const aliasAdd = useMutation({
     mutationFn: ({ hostname, alias }: { hostname: string; alias: string }) =>
       ipc.siteAliasAdd(hostname, alias),
+    onError: (error: Error) =>
+      toast.error("Could not add the alias", { details: error.message }),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["sites"] }),
   });
   const aliasDelete = useMutation({
     mutationFn: ({ hostname, alias }: { hostname: string; alias: string }) =>
       ipc.siteAliasDelete(hostname, alias),
+    onError: (error: Error) =>
+      toast.error("Could not delete the alias", { details: error.message }),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["sites"] }),
   });
 
   const phpChoices = (phpPools.data ?? []).map((pool) => pool.version);
   const allSites = sites.data ?? [];
   const selectedSite = allSites.find((site) => site.hostname === selected) ?? null;
-  const error =
-    add.error instanceof Error
-      ? add.error
-      : remove.error instanceof Error
-        ? remove.error
-        : null;
+
+  // §131 Rule 17: the strip reports the mode the backend gave it, so until the
+  // three probes answer it stays in a loading state instead of guessing one.
+  const networkPending = dns.isPending || ca.isPending || config.isPending;
+  const networkError = dns.error ?? ca.error ?? config.error;
+  const phpChoicesError = phpPools.error instanceof Error ? phpPools.error : null;
+
+  // §61: a control only exists when the data gives it something to do.
+  const serverKinds = useMemo(
+    () => [...new Set(allSites.map((site) => site.web_server))].sort(),
+    [allSites],
+  );
+  const runtimes = useMemo(
+    () => [...new Set(allSites.map((site) => site.php_version))].sort(),
+    [allSites],
+  );
+
+  const needle = query.trim().toLowerCase();
+  const visibleSites = allSites.filter((site) => {
+    if (serverFilter !== "all" && site.web_server !== serverFilter) {
+      return false;
+    }
+    if (runtimeFilter !== "all" && (site.php_version || STATIC) !== runtimeFilter) {
+      return false;
+    }
+    if (needle.length > 0) {
+      const haystack = [site.hostname, site.docroot, ...site.aliases]
+        .join(" ")
+        .toLowerCase();
+      if (!haystack.includes(needle)) {
+        return false;
+      }
+    }
+    return true;
+  });
+
+  const activeFilters: ActiveFilter[] = [];
+  if (needle.length > 0) {
+    activeFilters.push({
+      id: "search",
+      label: "Search",
+      value: query.trim(),
+      onClear: () => setQuery(""),
+    });
+  }
+  if (serverFilter !== "all") {
+    activeFilters.push({
+      id: "server",
+      label: "Server",
+      value: serverLabel(serverFilter),
+      onClear: () => setServerFilter("all"),
+    });
+  }
+  if (runtimeFilter !== "all") {
+    activeFilters.push({
+      id: "runtime",
+      label: "Runtime",
+      value: runtimeFilter === STATIC ? "Static" : `PHP ${runtimeFilter}`,
+      onClear: () => setRuntimeFilter("all"),
+    });
+  }
+
+  const clearFilters = () => {
+    setQuery("");
+    setServerFilter("all");
+    setRuntimeFilter("all");
+  };
+
+  const openFolderFor = async (site: SiteStatus) => {
+    const opened = await openFolder(site.docroot);
+    if (!opened) {
+      toast.error("Could not open the folder", { details: site.docroot });
+    }
+  };
 
   return (
     <div className="space-y-4 p-5">
       <PageHeader
         title={
-          allSites.length === 0
-            ? "Your local network is empty."
-            : `${allSites.length} site${allSites.length === 1 ? "" : "s"} served locally.`
+          sites.isSuccess
+            ? allSites.length === 0
+              ? "Your local network is empty."
+              : `${allSites.length} site${allSites.length === 1 ? "" : "s"} served locally.`
+            : "Local sites"
         }
-        description={`Anything under *.${dns.data?.suffix ?? "test"} resolves to this machine — the resolver covers every subdomain.`}
-        right={
-          <Button size="sm" onClick={() => setAdding((open) => !open)}>
+        description={
+          dns.data
+            ? `Anything under *.${dns.data.suffix} resolves to this machine: the resolver covers every subdomain.`
+            : "Local host names served from this machine."
+        }
+        primaryAction={
+          <Button size="sm" onClick={() => setCreating(true)}>
             <Plus />
-            {adding ? "Close form" : "Add site"}
+            Add site
           </Button>
         }
-      />
+      >
+        {/* Below one site there is nothing to narrow down, so the row stays
+            away entirely rather than sitting there inert. */}
+        {allSites.length > 1 ? (
+          <FilterBar active={activeFilters} onClear={clearFilters}>
+            <div className="relative">
+              <Search
+                aria-hidden
+                className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground"
+              />
+              <Input
+                className="h-8 w-64 pl-8 text-xs"
+                aria-label="Search sites"
+                placeholder="Host name or path"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </div>
+
+            {serverKinds.length > 1 ? (
+              <Select
+                aria-label="Server"
+                className="h-8 w-36 text-xs"
+                value={serverFilter}
+                onChange={(event) =>
+                  setServerFilter(event.target.value as "all" | WebServerChoice)
+                }
+              >
+                <option value="all">All servers</option>
+                {serverKinds.map((kind) => (
+                  <option key={kind} value={kind}>
+                    {serverLabel(kind)}
+                  </option>
+                ))}
+              </Select>
+            ) : null}
+
+            {runtimes.length > 1 ? (
+              <Select
+                aria-label="Runtime"
+                className="h-8 w-36 text-xs"
+                value={runtimeFilter}
+                onChange={(event) => setRuntimeFilter(event.target.value)}
+              >
+                <option value="all">All runtimes</option>
+                {runtimes.map((version) => (
+                  <option key={version || STATIC} value={version || STATIC}>
+                    {version || "Static"}
+                  </option>
+                ))}
+              </Select>
+            ) : null}
+          </FilterBar>
+        ) : null}
+      </PageHeader>
 
       <NetworkStrip
         dns={dns.data}
-        mode={config.data?.network.dns_mode ?? "hosts_file"}
+        mode={config.data?.network.dns_mode}
         ca={ca.data}
+        pending={networkPending}
+        error={networkError}
+        onRetry={() => {
+          void dns.refetch();
+          void ca.refetch();
+          void config.refetch();
+        }}
         dnsBusy={dnsStart.isPending || dnsStop.isPending}
         caInstalling={caInstall.isPending}
         onDnsStart={() => dnsStart.mutate()}
@@ -184,57 +343,78 @@ export function SitesPage() {
         onCaInstall={() => caInstall.mutate()}
       />
 
-      {adding ? (
-        <AddSiteForm
-          hostname={hostname}
-          docroot={docroot}
-          phpVersion={phpVersion}
-          https={https}
-          webServer={webServer}
-          phpChoices={phpChoices}
-          busy={add.isPending}
-          onHostname={setHostname}
-          onDocroot={setDocroot}
-          onPhp={setPhpVersion}
-          onHttps={setHttps}
-          onServer={setWebServer}
-          onSubmit={() => add.mutate()}
-          onClose={() => setAdding(false)}
-          error={error}
-        />
-      ) : null}
+      <CreateSiteDialog
+        open={creating}
+        phpChoices={phpChoices}
+        phpChoicesError={phpChoicesError}
+        onRetryPhpChoices={() => void phpPools.refetch()}
+        onClose={() => setCreating(false)}
+      />
 
       {sites.isPending ? (
-        <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
-          <Loader2 className="size-4 animate-spin" />
-          Loading sites…
-        </p>
+        /* §37/§121: the table's shape is known, so it loads as skeleton rows.
+           The sentence the spinner used to carry stays for screen readers. */
+        <div className="space-y-2 rounded-md border border-border p-3" role="status">
+          <span className="sr-only">Loading sites…</span>
+          {[0, 1, 2].map((row) => (
+            <span
+              key={row}
+              aria-hidden
+              className="block h-6 animate-pulse rounded-sm bg-secondary"
+            />
+          ))}
+        </div>
+      ) : sites.isError ? (
+        <Callout variant="destructive" title="Could not read the site list.">
+          <p>{sites.error.message}</p>
+          <Button
+            size="sm"
+            variant="outline"
+            className="mt-2"
+            onClick={() => void sites.refetch()}
+          >
+            Try again
+          </Button>
+        </Callout>
       ) : allSites.length === 0 ? (
         <EmptyState
           icon={<Globe />}
           title="No sites yet."
           description="Add one and DevX will route its .test host name to your project folder."
           action={
-            <Button size="sm" onClick={() => setAdding(true)}>
+            <Button size="sm" onClick={() => setCreating(true)}>
               <Plus />
               Create your first site
             </Button>
           }
         />
+      ) : visibleSites.length === 0 ? (
+        /* The reset control is the filter row's own: a second "Clear filters"
+           here would be the same button twice on one screen. */
+        <EmptyState
+          icon={<Search />}
+          title="No site matches these filters."
+          description={`${allSites.length} site${allSites.length === 1 ? "" : "s"} exist and none of them match the current filters.`}
+        />
       ) : (
-        <div className="overflow-x-auto rounded-md border border-border">
-          <table className="w-full min-w-[720px] text-left text-sm">
-            <thead className="bg-muted/60 text-xs text-muted-foreground">
+        /* §60: a bounded scroll area, so the header can stay put on a long
+           list instead of scrolling away with the rows. */
+        <div className="max-h-[32rem] overflow-auto rounded-md border border-border">
+          <table className="w-full min-w-[900px] text-left text-sm">
+            <thead className="sticky top-0 z-10 bg-surface-2 text-xs text-muted-foreground">
               <tr>
                 <th className="px-3 py-2 font-medium">Site</th>
-                <th className="hidden px-3 py-2 font-medium md:table-cell">Serves</th>
-                <th className="hidden px-3 py-2 font-medium lg:table-cell">Document root</th>
+                <th className="px-3 py-2 font-medium">URL</th>
+                <th className="px-3 py-2 font-medium">Serves</th>
+                <th className="hidden px-3 py-2 font-medium xl:table-cell">
+                  Document root
+                </th>
                 <th className="px-3 py-2 font-medium">Health</th>
                 <th className="px-3 py-2 text-right font-medium">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {allSites.map((site) => (
+              {visibleSites.map((site) => (
                 <SiteRow
                   key={site.hostname}
                   site={site}
@@ -245,14 +425,21 @@ export function SitesPage() {
                       current === site.hostname ? null : site.hostname,
                     )
                   }
-                  onRemove={() => remove.mutate(site.hostname)}
+                  onOpenFolder={() => void openFolderFor(site)}
+                  onCopyUrl={() => {
+                    void navigator.clipboard.writeText(siteUrl(site));
+                    toast.success("URL copied", { description: siteUrl(site) });
+                  }}
+                  onRemove={() => setRemoveTarget(site)}
                 >
                   {selectedSite !== null && selectedSite.hostname === site.hostname ? (
                     <SiteDetail
                       site={selectedSite}
                       phpChoices={phpChoices}
                       onAliasAdd={(alias) =>
-                        aliasAdd.mutate({ hostname: site.hostname, alias })
+                        // The panel clears the field only once this resolves,
+                        // so a failed add keeps the typed name (§54).
+                        aliasAdd.mutateAsync({ hostname: site.hostname, alias })
                       }
                       onAliasDelete={(alias) =>
                         aliasDelete.mutate({ hostname: site.hostname, alias })
@@ -268,6 +455,35 @@ export function SitesPage() {
       )}
 
       <TemplatesSection phpChoices={phpChoices} />
+
+      {/* §35/§78: the confirmation names the host and the docroot, and says
+          what is not touched. Removing a site never deletes files. */}
+      <ConfirmDialog
+        open={removeTarget !== null}
+        onClose={() => setRemoveTarget(null)}
+        onConfirm={() => {
+          if (removeTarget) {
+            remove.mutate(removeTarget.hostname);
+          }
+          setRemoveTarget(null);
+        }}
+        title={`Remove ${removeTarget?.hostname ?? "this site"}?`}
+        description={
+          <>
+            DevX stops serving this host name and deletes its site block. The
+            folder{" "}
+            {/* §96: a Windows path has no spaces to break on, so `break-all`
+                is what keeps it inside the 400px confirmation. */}
+            <span className="font-mono text-xs break-all" data-selectable>
+              {removeTarget?.docroot}
+            </span>{" "}
+            stays on disk, untouched.
+          </>
+        }
+        confirmLabel="Remove site"
+        destructive
+        pending={remove.isPending}
+      />
     </div>
   );
 }
@@ -281,6 +497,9 @@ function NetworkStrip({
   dns,
   mode,
   ca,
+  pending,
+  error,
+  onRetry,
   dnsBusy,
   caInstalling,
   onDnsStart,
@@ -288,15 +507,44 @@ function NetworkStrip({
   onCaInstall,
 }: {
   dns?: DnsStatus;
-  mode: DnsMode;
+  mode?: DnsMode;
   ca?: CaStatus;
+  pending: boolean;
+  error: Error | null;
+  onRetry: () => void;
   dnsBusy: boolean;
   caInstalling: boolean;
   onDnsStart: () => void;
   onDnsStop: () => void;
   onCaInstall: () => void;
 }) {
-  if (!dns || !ca) {
+  if (pending) {
+    return (
+      <div
+        className="flex items-center gap-6 rounded-md border border-border bg-card px-3 py-2"
+        role="status"
+      >
+        <span className="sr-only">Loading network status</span>
+        <span aria-hidden className="block h-4 w-40 animate-pulse rounded-sm bg-secondary" />
+        <span aria-hidden className="block h-4 w-24 animate-pulse rounded-sm bg-secondary" />
+      </div>
+    );
+  }
+
+  // §131 Rule 18: an unreadable probe is an error the user can act on, not an
+  // empty strip that vanishes off the page.
+  if (error) {
+    return (
+      <Callout variant="destructive" title="Could not read the network status.">
+        <p>{error.message}</p>
+        <Button size="sm" variant="outline" className="mt-2" onClick={onRetry}>
+          Try again
+        </Button>
+      </Callout>
+    );
+  }
+
+  if (!dns || !ca || mode === undefined) {
     return null;
   }
 
@@ -360,47 +608,99 @@ function NetworkStrip({
   );
 }
 
-/** The collapsed add-site form: one compact grid row of fields. */
-function AddSiteForm({
-  hostname,
-  docroot,
-  phpVersion,
-  https,
-  webServer,
+/**
+ * Create Site (§24) as a modal (§34).
+ *
+ * The dialog carries exactly the five things `site_add` accepts. §24 also
+ * sketches Project, Certificate, Port, a custom index and proxy headers; there
+ * is no command behind any of them, so none of them is drawn as a control that
+ * cannot work. The one supported choice that is not in the common path, the
+ * web server, sits in §90's Advanced section, closed by default.
+ */
+function CreateSiteDialog({
+  open,
   phpChoices,
-  busy,
-  onHostname,
-  onDocroot,
-  onPhp,
-  onHttps,
-  onServer,
-  onSubmit,
+  phpChoicesError,
+  onRetryPhpChoices,
   onClose,
-  error,
 }: {
-  hostname: string;
-  docroot: string;
-  phpVersion: string;
-  https: boolean;
-  webServer: WebServerChoice;
+  open: boolean;
   phpChoices: string[];
-  busy: boolean;
-  onHostname: (value: string) => void;
-  onDocroot: (value: string) => void;
-  onPhp: (value: string) => void;
-  onHttps: (value: boolean) => void;
-  onServer: (value: WebServerChoice) => void;
-  onSubmit: () => void;
+  phpChoicesError: Error | null;
+  onRetryPhpChoices: () => void;
   onClose: () => void;
-  error: Error | null;
 }) {
+  const queryClient = useQueryClient();
+  const toast = useToast();
+
+  const [hostname, setHostname] = useState("");
+  const [docroot, setDocroot] = useState("");
+  const [phpVersion, setPhpVersion] = useState("");
+  const [https, setHttps] = useState(false);
+  const [webServer, setWebServer] = useState<WebServerChoice>("Nginx");
+
+  const add = useMutation({
+    mutationFn: () =>
+      ipc.siteAdd(hostname.trim(), docroot.trim(), phpVersion, https, webServer),
+    onSuccess: () => {
+      const added = hostname.trim();
+      toast.success("Site added", {
+        description: `${added} is served by ${serverLabel(webServer)}.`,
+      });
+      setHostname("");
+      setDocroot("");
+      setPhpVersion("");
+      setHttps(false);
+      setWebServer("Nginx");
+      onClose();
+      void queryClient.invalidateQueries({ queryKey: ["sites"] });
+    },
+    onError: (error: Error) => {
+      // §77: the backend's own words, both where the user is looking and in
+      // the notification stack for the "View Details" path.
+      toast.error("Could not add the site", { details: error.message });
+    },
+  });
+
+  const incomplete = hostname.trim().length === 0 || docroot.trim().length === 0;
+  const error = add.error instanceof Error ? add.error : null;
+
+  const close = () => {
+    // A stale error must not greet the user on the next open.
+    add.reset();
+    onClose();
+  };
+
+  const submit = () => {
+    if (!incomplete && !add.isPending) {
+      add.mutate();
+    }
+  };
+
   return (
-    <div className="rounded-md border border-primary/40 bg-card p-4">
+    <Dialog
+      open={open}
+      onClose={close}
+      title="Add a site"
+      description="DevX routes the host name to this folder through the local web server."
+      size="lg"
+      footer={
+        <>
+          <Button type="button" variant="ghost" data-autofocus disabled={add.isPending} onClick={close}>
+            Cancel
+          </Button>
+          <Button type="button" disabled={incomplete || add.isPending} onClick={submit}>
+            {add.isPending ? <Loader2 className="animate-spin" /> : <Plus />}
+            Create site
+          </Button>
+        </>
+      }
+    >
       <form
-        className="grid items-end gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_9rem_9rem_8rem]"
+        className="space-y-3"
         onSubmit={(event) => {
           event.preventDefault();
-          onSubmit();
+          submit();
         }}
       >
         <div className="space-y-1.5">
@@ -409,79 +709,107 @@ function AddSiteForm({
             id="site-hostname"
             placeholder="myapp.test"
             value={hostname}
-            onChange={(event) => onHostname(event.target.value)}
+            onChange={(event) => setHostname(event.target.value)}
             autoComplete="off"
             spellCheck={false}
           />
         </div>
-        <DocrootField id="site-docroot" value={docroot} onChange={onDocroot} />
-        <div className="space-y-1.5">
-          <Label htmlFor="site-php">PHP</Label>
-          <Select
-            id="site-php"
-            value={phpVersion}
-            onChange={(event) => onPhp(event.target.value)}
-          >
-            <option value="">None (static)</option>
-            {phpChoices.map((version) => (
-              <option key={version} value={version}>
-                {version}
-              </option>
-            ))}
-          </Select>
+
+        <DocrootField id="site-docroot" value={docroot} onChange={setDocroot} />
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label htmlFor="site-php">PHP</Label>
+            <Select
+              id="site-php"
+              value={phpVersion}
+              onChange={(event) => setPhpVersion(event.target.value)}
+            >
+              <option value="">None (static)</option>
+              {phpChoices.map((version) => (
+                <option key={version} value={version}>
+                  {version}
+                </option>
+              ))}
+            </Select>
+            {/* An empty list here means "no PHP pool", unless the pool list
+                itself failed: then saying so beats a fake static-only choose. */}
+            {phpChoicesError ? (
+              /* §39: the dialog is where the missing list is felt, so the retry
+                 is here rather than only on the page behind it. */
+              <Callout variant="destructive" title="Could not read the PHP versions.">
+                <p>{phpChoicesError.message}</p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="mt-2"
+                  onClick={onRetryPhpChoices}
+                >
+                  Try again
+                </Button>
+              </Callout>
+            ) : null}
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="site-https">HTTPS</Label>
+            <div className="flex h-9 items-center gap-2">
+              <Switch id="site-https" checked={https} onCheckedChange={setHttps} />
+              <span className="text-xs text-muted-foreground">
+                {https ? "Served over HTTPS" : "HTTP only"}
+              </span>
+            </div>
+          </div>
         </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="site-web-server">Web server</Label>
-          <Select
-            id="site-web-server"
-            value={webServer}
-            onChange={(event) => onServer(event.target.value as WebServerChoice)}
-          >
-            <option value="Nginx">nginx</option>
-            <option value="Caddy">Caddy</option>
-            <option value="FrankenPhp">FrankenPHP</option>
-          </Select>
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="site-https">HTTPS</Label>
-          <Select
-            id="site-https"
-            value={https ? "on" : "off"}
-            onChange={(event) => onHttps(event.target.value === "on")}
-          >
-            <option value="off">HTTP only</option>
-            <option value="on">HTTP + HTTPS</option>
-          </Select>
-        </div>
-      </form>
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        <Button type="button" size="sm" disabled={busy} onClick={onSubmit}>
-          {busy ? <Loader2 className="animate-spin" /> : <Plus />}
-          Add site
-        </Button>
-        <Button type="button" variant="ghost" size="sm" onClick={onClose}>
-          Cancel
-        </Button>
+
+        <details className="rounded-md border border-border">
+          <summary className="flex cursor-pointer items-center gap-1.5 px-3 py-2 text-sm text-ink-secondary transition-colors duration-150 hover:text-foreground [&::-webkit-details-marker]:hidden">
+            <ChevronRight
+              aria-hidden
+              className="size-3.5 transition-transform duration-150 [[open]_&]:rotate-90"
+            />
+            Advanced
+          </summary>
+          <div className="space-y-1.5 border-t border-border p-3">
+            <Label htmlFor="site-web-server">Web server</Label>
+            <Select
+              id="site-web-server"
+              value={webServer}
+              onChange={(event) => setWebServer(event.target.value as WebServerChoice)}
+            >
+              <option value="Nginx">nginx</option>
+              <option value="Caddy">Caddy</option>
+              <option value="FrankenPhp">FrankenPHP</option>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Only nginx serves PHP through a FastCGI pool; Caddy and
+              FrankenPHP handle it themselves.
+            </p>
+          </div>
+        </details>
+
         {error ? (
-          <p className="flex items-center gap-2 text-sm text-destructive" role="alert">
-            <CircleAlert className="size-4" />
-            {error.message}
-          </p>
+          <Callout variant="destructive" title="Could not create the site.">
+            <p>{error.message}</p>
+          </Callout>
         ) : null}
-      </div>
-    </div>
+      </form>
+    </Dialog>
   );
 }
 
 /**
- * One site in the monitor table. The row is the summary; clicking it opens
- * the full editor directly beneath, spanning the table width.
+ * One site in the monitor table. The row is the summary; clicking its name
+ * opens the full editor directly beneath, spanning the table width, and the
+ * row keeps the §60 selected surface while it is open.
  */
 function SiteRow({
   site,
   open,
   removing,
   onToggle,
+  onOpenFolder,
+  onCopyUrl,
   onRemove,
   children,
 }: {
@@ -489,20 +817,44 @@ function SiteRow({
   open: boolean;
   removing: boolean;
   onToggle: () => void;
+  onOpenFolder: () => void;
+  onCopyUrl: () => void;
   onRemove: () => void;
   children?: ReactNode;
 }) {
+  // §23's action list minus the two entries with no command behind them
+  // (Restart, Disable). §91: the everyday one stays on the row, the rest sit
+  // one click away (§62). §47 hands the same list to the row's context menu,
+  // destructive entry last.
+  const actions: MenuItem[] = [
+    { id: "folder", label: "Open folder", icon: FolderOpen, onSelect: onOpenFolder },
+    { id: "copy", label: "Copy URL", icon: Copy, onSelect: onCopyUrl },
+    {
+      id: "remove",
+      label: "Remove site",
+      icon: Trash2,
+      destructive: true,
+      disabled: removing,
+      onSelect: onRemove,
+    },
+  ];
+  const menu = useContextMenu({
+    label: `Actions for ${site.hostname}`,
+    items: actions,
+  });
+
   return (
     <>
       <tr
+        onContextMenu={menu.onContextMenu}
         className={`border-t border-border transition-colors duration-150 ${
-          open ? "bg-sidebar-accent/50" : "hover:bg-sidebar-accent/30"
+          open ? "bg-primary-soft" : "hover:bg-hover"
         }`}
       >
         <td className="px-3 py-2">
           <button
             type="button"
-            className="flex cursor-pointer items-center gap-2 text-left"
+            className="flex max-w-[18rem] cursor-pointer items-center gap-2 text-left"
             onClick={onToggle}
             aria-expanded={open}
             aria-label={`Edit ${site.hostname}`}
@@ -513,7 +865,12 @@ function SiteRow({
                 open ? "rotate-90" : ""
               }`}
             />
-            <span className="font-mono text-sm font-medium" data-selectable>
+            {/* §95: a long host name shortens in the cell, not on the click. */}
+            <span
+              className="min-w-0 truncate font-mono text-sm font-medium"
+              title={site.hostname}
+              data-selectable
+            >
               {site.hostname}
             </span>
             {site.auth ? (
@@ -521,7 +878,16 @@ function SiteRow({
             ) : null}
           </button>
         </td>
-        <td className="hidden px-3 py-2 md:table-cell">
+        <td className="px-3 py-2">
+          <span
+            className="font-mono text-xs text-ink-secondary"
+            data-selectable
+            title={siteUrl(site)}
+          >
+            {siteUrl(site)}
+          </span>
+        </td>
+        <td className="px-3 py-2">
           <span className="flex flex-wrap items-center gap-1.5">
             {site.php_version ? (
               <Badge variant="secondary">PHP {site.php_version}</Badge>
@@ -551,7 +917,7 @@ function SiteRow({
           ) : null}
         </td>
         <td
-          className="hidden max-w-56 truncate px-3 py-2 font-mono text-xs text-muted-foreground lg:table-cell"
+          className="hidden max-w-56 truncate px-3 py-2 font-mono text-xs text-muted-foreground xl:table-cell"
           data-selectable
           title={site.docroot}
         >
@@ -562,37 +928,25 @@ function SiteRow({
         </td>
         <td className="px-3 py-2">
           <div className="flex items-center justify-end gap-1">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => void openInBrowser(siteUrl(site))}
-              aria-label={`Open ${site.hostname} in browser`}
-            >
-              <ExternalLink />
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => void navigator.clipboard.writeText(siteUrl(site))}
-              aria-label={`Copy ${site.hostname} URL`}
-            >
-              <Copy />
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={removing}
-              onClick={onRemove}
-              aria-label={`Remove ${site.hostname}`}
-            >
-              {removing ? <Loader2 className="animate-spin" /> : <Trash2 />}
-            </Button>
+            <Tooltip label={`Open ${site.hostname} in browser`}>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => void openInBrowser(siteUrl(site))}
+                aria-label={`Open ${site.hostname} in browser`}
+              >
+                <ExternalLink />
+              </Button>
+            </Tooltip>
+            <OverflowMenu label={`More actions for ${site.hostname}`} items={actions} />
           </div>
         </td>
+        {/* A portal: it renders to the body, so the row's markup is unchanged. */}
+        {menu.panel}
       </tr>
       {open ? (
         <tr className="border-t border-border bg-background">
-          <td className="p-0" colSpan={5}>
+          <td className="p-0" colSpan={6}>
             {children}
           </td>
         </tr>
@@ -615,11 +969,12 @@ function SiteDetail({
 }: {
   site: SiteStatus;
   phpChoices: string[];
-  onAliasAdd: (alias: string) => void;
+  onAliasAdd: (alias: string) => Promise<unknown>;
   onAliasDelete: (alias: string) => void;
   aliasBusy: boolean;
 }) {
   const queryClient = useQueryClient();
+  const toast = useToast();
   const [draftDocroot, setDraftDocroot] = useState(site.docroot);
   const [draftPhp, setDraftPhp] = useState(site.php_version);
   const [draftHttps, setDraftHttps] = useState(site.https);
@@ -633,6 +988,10 @@ function SiteDetail({
   const save = useMutation({
     mutationFn: () =>
       ipc.siteAdd(site.hostname, draftDocroot.trim(), draftPhp, draftHttps, draftServer),
+    onSuccess: () =>
+      toast.success("Changes saved", {
+        description: `${site.hostname} is served with the new settings.`,
+      }),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["sites"] }),
   });
 
@@ -692,15 +1051,20 @@ function SiteDetail({
             {save.isPending ? <Loader2 className="animate-spin" /> : null}
             Save changes
           </Button>
-          <span className="font-mono text-xs text-muted-foreground" data-selectable>
+          {/* §95: the path gives way to the button instead of pushing it off
+              the row; the full value stays one hover away. */}
+          <span
+            className="min-w-0 truncate font-mono text-xs text-muted-foreground"
+            data-selectable
+            title={site.docroot}
+          >
             {site.docroot}
           </span>
         </div>
         {saveError ? (
-          <p className="flex items-center gap-2 text-sm text-destructive" role="alert">
-            <CircleAlert className="size-4" />
-            {saveError.message}
-          </p>
+          <Callout variant="destructive" title="Could not save the changes.">
+            <p>{saveError.message}</p>
+          </Callout>
         ) : null}
       </section>
 
@@ -765,49 +1129,64 @@ function PingButton({ hostname }: { hostname: string }) {
 
   if (ping.isPending) {
     return (
-      <Button variant="ghost" size="sm" disabled aria-label={`Checking ${hostname}`}>
-        <Loader2 className="animate-spin" />
-      </Button>
+      <Tooltip label={`Checking ${hostname}`}>
+        <Button variant="ghost" size="sm" disabled aria-label={`Checking ${hostname}`}>
+          <Loader2 className="animate-spin" />
+        </Button>
+      </Tooltip>
     );
   }
 
+  // §39/§94: the badge names the failure; the backend's own words sit behind
+  // the same tooltip a truncated cell uses, since `title` alone reaches
+  // neither the keyboard nor the screen reader.
   if (ping.isError) {
     return (
-      <Badge variant="warning" className="max-w-40 truncate" title={String(ping.error)}>
-        check failed
-      </Badge>
+      <Tooltip label={ping.error.message}>
+        <Badge
+          variant="warning"
+          className="max-w-40 truncate"
+          title={ping.error.message}
+        >
+          check failed
+        </Badge>
+      </Tooltip>
     );
   }
 
   const result = ping.data;
   if (result === undefined) {
     return (
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={() => ping.mutate()}
-        aria-label={`Check ${hostname}`}
-      >
-        <Activity />
-      </Button>
+      <Tooltip label={`Check ${hostname}`}>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => ping.mutate()}
+          aria-label={`Check ${hostname}`}
+        >
+          <Activity />
+        </Button>
+      </Tooltip>
     );
   }
 
   const ok = result.status !== null && result.status < 500;
+  const detail =
+    result.error ?? `HTTP ${result.status} in ${result.latency_ms} ms. Click to re-check.`;
   return (
-    <button
-      type="button"
-      onClick={() => ping.mutate()}
-      title={
-        result.error ?? `HTTP ${result.status} in ${result.latency_ms} ms — click to re-check`
-      }
-      className="cursor-pointer"
-      aria-label={`Re-check ${hostname}`}
-    >
-      <Badge variant={ok ? "success" : "warning"}>
-        {result.status !== null ? `${result.status} · ${result.latency_ms} ms` : "no response"}
-      </Badge>
-    </button>
+    <Tooltip label={detail}>
+      <button
+        type="button"
+        onClick={() => ping.mutate()}
+        title={detail}
+        className="cursor-pointer"
+        aria-label={`Re-check ${hostname}`}
+      >
+        <Badge variant={ok ? "success" : "warning"}>
+          {result.status !== null ? `${result.status} · ${result.latency_ms} ms` : "no response"}
+        </Badge>
+      </button>
+    </Tooltip>
   );
 }
 
@@ -823,7 +1202,7 @@ function AliasPanel({
 }: {
   site: SiteStatus;
   busy: boolean;
-  onAdd: (alias: string) => void;
+  onAdd: (alias: string) => Promise<unknown>;
   onDelete: (alias: string) => void;
 }) {
   const [alias, setAlias] = useState("");
@@ -839,23 +1218,26 @@ function AliasPanel({
               <span className="font-mono text-xs" data-selectable>
                 {name}
               </span>
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={busy}
-                onClick={() => onDelete(name)}
-                aria-label={`Delete ${name}`}
-              >
-                <Trash2 />
-              </Button>
+              <Tooltip label={`Delete ${name}`}>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() => onDelete(name)}
+                  aria-label={`Delete ${name}`}
+                >
+                  <Trash2 />
+                </Button>
+              </Tooltip>
             </li>
           ))}
         </ul>
       ) : (
-        <p className="text-sm text-muted-foreground">
-          No aliases. Add extra host names the site answers to alongside{" "}
-          {site.hostname}.
-        </p>
+        <EmptyState
+          icon={<Globe />}
+          title="No aliases."
+          description={`Add extra host names the site answers to alongside ${site.hostname}.`}
+        />
       )}
 
       <form
@@ -866,8 +1248,12 @@ function AliasPanel({
           if (trimmed.length === 0) {
             return;
           }
-          onAdd(trimmed);
-          setAlias("");
+          // §54: the field clears only after the backend took the alias, so a
+          // rejected add keeps the typed name for a one-click retry; the
+          // mutation's own toast has already reported the failure.
+          void onAdd(trimmed)
+            .then(() => setAlias(""))
+            .catch(() => undefined);
         }}
       >
         <div className="space-y-1.5">
@@ -899,6 +1285,7 @@ function AliasPanel({
  */
 function EnvPanel({ site }: { site: SiteStatus }) {
   const queryClient = useQueryClient();
+  const toast = useToast();
   const [key, setKey] = useState("");
   const [value, setValue] = useState("");
 
@@ -908,11 +1295,21 @@ function EnvPanel({ site }: { site: SiteStatus }) {
   const setEnv = useMutation({
     mutationFn: ({ key: k, value: v }: { key: string; value: string }) =>
       ipc.siteEnvSet(site.hostname, k, v),
-    onSuccess: invalidate,
+    onSuccess: (_result, { key: k }) => {
+      invalidate();
+      toast.success("Environment variable saved", {
+        description: `${k} reaches ${site.hostname} on the next request.`,
+      });
+    },
   });
   const deleteEnv = useMutation({
     mutationFn: (k: string) => ipc.siteEnvDelete(site.hostname, k),
-    onSuccess: invalidate,
+    onSuccess: (_result, k) => {
+      invalidate();
+      toast.success("Environment variable removed", {
+        description: `${k} is no longer set for ${site.hostname}.`,
+      });
+    },
   });
 
   const error =
@@ -935,27 +1332,36 @@ function EnvPanel({ site }: { site: SiteStatus }) {
         <ul className="space-y-1.5">
           {entries.map(([k, v]) => (
             <li key={k} className="flex items-center justify-between gap-3">
-              <span className="min-w-0 truncate font-mono text-xs" data-selectable>
+              {/* §95: the row truncates, so the full assignment stays in the
+                  native tooltip rather than being lost behind the ellipsis. */}
+              <span
+                className="min-w-0 truncate font-mono text-xs"
+                data-selectable
+                title={`${k} = ${v}`}
+              >
                 <span className="font-medium">{k}</span>
                 <span className="text-muted-foreground"> = {v}</span>
               </span>
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={deleteEnv.isPending}
-                onClick={() => deleteEnv.mutate(k)}
-                aria-label={`Delete ${k}`}
-              >
-                <Trash2 />
-              </Button>
+              <Tooltip label={`Delete ${k}`}>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={deleteEnv.isPending}
+                  onClick={() => deleteEnv.mutate(k)}
+                  aria-label={`Delete ${k}`}
+                >
+                  <Trash2 />
+                </Button>
+              </Tooltip>
             </li>
           ))}
         </ul>
       ) : (
-        <p className="text-sm text-muted-foreground">
-          No environment variables yet. They are exposed to the site's PHP
-          requests, like a server-level .env.
-        </p>
+        <EmptyState
+          icon={<Variable />}
+          title="No environment variables yet."
+          description="They are exposed to the site's PHP requests, like a server-level .env."
+        />
       )}
 
       <form
@@ -1001,10 +1407,9 @@ function EnvPanel({ site }: { site: SiteStatus }) {
       </form>
 
       {error ? (
-        <p className="flex items-center gap-2 text-sm text-destructive" role="alert">
-          <CircleAlert className="size-4" />
-          {error.message}
-        </p>
+        <Callout variant="destructive" title="Could not update the environment variable.">
+          <p>{error.message}</p>
+        </Callout>
       ) : null}
     </div>
   );
@@ -1027,12 +1432,15 @@ function RequestsPanel({ hostname }: { hostname: string }) {
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-3">
-        <p className="text-sm text-muted-foreground">
-          {entries.length > 0
-            ? `${entries.length} most recent request${entries.length === 1 ? "" : "s"}`
-            : "No requests logged yet. Load the site in a browser, then wait for the next poll."}
-        </p>
-        <label className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+        {/* The empty case is the body's own EmptyState (§38), so the header
+            carries the count only when there is one; `ml-auto` keeps the
+            toggle on the right either way. */}
+        {entries.length > 0 ? (
+          <p className="text-sm text-muted-foreground">
+            {entries.length} most recent request{entries.length === 1 ? "" : "s"}
+          </p>
+        ) : null}
+        <label className="ml-auto flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
           Live
           <Switch
             checked={live}
@@ -1048,10 +1456,17 @@ function RequestsPanel({ hostname }: { hostname: string }) {
           Reading access log…
         </p>
       ) : requests.isError ? (
-        <p className="flex items-center gap-2 text-sm text-destructive" role="alert">
-          <CircleAlert className="size-4" />
-          {requests.error.message}
-        </p>
+        <Callout variant="destructive" title="Could not read the request log.">
+          <p>{requests.error.message}</p>
+          <Button
+            size="sm"
+            variant="outline"
+            className="mt-2"
+            onClick={() => void requests.refetch()}
+          >
+            Try again
+          </Button>
+        </Callout>
       ) : entries.length > 0 ? (
         <div className="max-h-64 overflow-y-auto rounded-sm border border-border">
           <table className="w-full text-left text-xs">
@@ -1098,7 +1513,13 @@ function RequestsPanel({ hostname }: { hostname: string }) {
             </tbody>
           </table>
         </div>
-      ) : null}
+      ) : (
+        <EmptyState
+          icon={<Activity />}
+          title="No requests logged yet."
+          description="Load the site in a browser, then wait for the next poll."
+        />
+      )}
     </div>
   );
 }
@@ -1129,6 +1550,7 @@ function formatBytes(bytes: number): string {
  */
 function AuthPanel({ site }: { site: SiteStatus }) {
   const queryClient = useQueryClient();
+  const toast = useToast();
   const [username, setUsername] = useState(site.auth?.username ?? "");
   const [password, setPassword] = useState("");
 
@@ -1140,7 +1562,15 @@ function AuthPanel({ site }: { site: SiteStatus }) {
   const setAuth = useMutation({
     mutationFn: (args: { user: string | null; pass: string | null }) =>
       ipc.siteAuthSet(site.hostname, args.user, args.pass),
-    onSuccess: invalidate,
+    onSuccess: (_result, { user }) => {
+      invalidate();
+      toast.success(user === null ? "Protection removed" : "Basic Auth enabled", {
+        description:
+          user === null
+            ? `${site.hostname} is public again.`
+            : `${site.hostname} now asks for a user name and password.`,
+      });
+    },
   });
 
   const error = setAuth.error instanceof Error ? setAuth.error : null;
@@ -1151,7 +1581,7 @@ function AuthPanel({ site }: { site: SiteStatus }) {
         <p className="flex items-center gap-2 text-sm">
           <Lock className="size-4 text-muted-foreground" aria-hidden />
           <span>
-            Protected — user{" "}
+            Protected. User{" "}
             <span className="font-mono text-xs" data-selectable>
               {site.auth.username}
             </span>
@@ -1216,10 +1646,9 @@ function AuthPanel({ site }: { site: SiteStatus }) {
       </form>
 
       {error ? (
-        <p className="flex items-center gap-2 text-sm text-destructive" role="alert">
-          <CircleAlert className="size-4" />
-          {error.message}
-        </p>
+        <Callout variant="destructive" title="Could not change Basic Auth.">
+          <p>{error.message}</p>
+        </Callout>
       ) : null}
     </div>
   );
@@ -1232,6 +1661,7 @@ function AuthPanel({ site }: { site: SiteStatus }) {
  */
 function TemplatesSection({ phpChoices }: { phpChoices: string[] }) {
   const queryClient = useQueryClient();
+  const toast = useToast();
   const templates = useQuery({ queryKey: ["templates"], queryFn: ipc.templateList });
 
   const [open, setOpen] = useState(false);
@@ -1252,6 +1682,10 @@ function TemplatesSection({ phpChoices }: { phpChoices: string[] }) {
         templateId === "git" ? gitUrl.trim() || null : null,
       ),
     onSuccess: () => {
+      const created = hostname.trim();
+      toast.success("Site created", {
+        description: `${created} was scaffolded and registered.`,
+      });
       setHostname("");
       setDocroot("");
       queryClient.invalidateQueries({ queryKey: ["sites"] });
@@ -1271,7 +1705,7 @@ function TemplatesSection({ phpChoices }: { phpChoices: string[] }) {
         <Plus className="size-4" aria-hidden />
         Create from template…
         <span className="ml-auto hidden text-xs xl:block">
-          WordPress, Laravel, static or a git clone — scaffolded and registered in one step.
+          WordPress, Laravel, static or a git clone, scaffolded and registered in one step.
         </span>
       </button>
     );
@@ -1361,7 +1795,7 @@ function TemplatesSection({ phpChoices }: { phpChoices: string[] }) {
           onClick={() => create.mutate()}
         >
           {create.isPending ? <Loader2 className="animate-spin" /> : <Plus />}
-          Create site
+          Create from template
         </Button>
         <Button type="button" variant="ghost" size="sm" onClick={() => setOpen(false)}>
           Close
@@ -1375,16 +1809,20 @@ function TemplatesSection({ phpChoices }: { phpChoices: string[] }) {
             Finish the scaffold in the Terminal (runtimes are already on
             PATH):
           </p>
-          <code className="font-mono text-xs" data-selectable>
+          {/* §95: a scaffold command can be longer than the panel. */}
+          <code className="block break-all font-mono text-xs" data-selectable>
             {create.data.follow_up_command}
           </code>
         </div>
       ) : null}
       {error ? (
-        <p className="mt-3 flex items-center gap-2 text-sm text-destructive" role="alert">
-          <CircleAlert className="size-4" />
-          {error.message}
-        </p>
+        <Callout
+          variant="destructive"
+          title="Could not create the site from the template."
+          className="mt-3"
+        >
+          <p>{error.message}</p>
+        </Callout>
       ) : null}
     </div>
   );

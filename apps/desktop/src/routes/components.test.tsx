@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -179,5 +179,72 @@ describe("ComponentsPage", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "checksum mismatch for php.zip",
     );
+  });
+
+  it("explains an empty catalog instead of rendering a blank sidebar", async () => {
+    mocks.catalogList.mockResolvedValue([]);
+
+    renderWithProviders(<ComponentsPage />);
+
+    expect(
+      await screen.findByText("No components in the catalog."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "The catalog this build carries lists no components, so there is nothing to install or remove.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("re-reads the catalog from its empty state (§38)", async () => {
+    const user = userEvent.setup();
+    mocks.catalogList.mockResolvedValueOnce([]);
+
+    renderWithProviders(<ComponentsPage />);
+
+    await user.click(await screen.findByRole("button", { name: "Try again" }));
+
+    await waitFor(() =>
+      expect(
+        screen.queryByText("No components in the catalog."),
+      ).not.toBeInTheDocument(),
+    );
+    expect((await screen.findAllByText("PHP")).length).toBeGreaterThan(0);
+    expect(mocks.catalogList).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not report an unreadable install list as an empty machine", async () => {
+    mocks.installedVersions.mockRejectedValue(new Error("failed to read runtimes"));
+
+    renderWithProviders(<ComponentsPage />);
+
+    expect(
+      await screen.findByText("Could not read the installed versions."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/0 versions installed on this machine/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("confirms before removing an installed version", async () => {
+    const user = userEvent.setup();
+    mocks.installedVersions.mockResolvedValue([
+      { component_id: "php", version: "8.4.25", path: "C:\\devx\\php\\8.4.25" },
+    ]);
+
+    renderWithProviders(<ComponentsPage />);
+
+    await user.click(await screen.findByRole("button", { name: /remove/i }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Remove php 8.4.25?")).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole("button", { name: "Remove version" }));
+
+    await waitFor(() => expect(mocks.componentUninstall).toHaveBeenCalledTimes(1));
+    expect(mocks.componentUninstall.mock.calls[0]?.slice(0, 2)).toEqual([
+      "php",
+      "8.4.25",
+    ]);
   });
 });
