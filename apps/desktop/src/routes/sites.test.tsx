@@ -57,7 +57,7 @@ describe("SitesPage", () => {
     // The docroot comes from the native folder dialog; each test sets the
     // path it "picked", or leaves the mock returning nothing (a cancel).
     mocks.pickDirectory.mockResolvedValue(undefined);
-    mocks.openFolder.mockResolvedValue(true);
+    mocks.openFolder.mockResolvedValue(null);
     mocks.siteList.mockResolvedValue([]);
     mocks.configGet.mockResolvedValue(configFixture());
     mocks.templateList.mockResolvedValue([]);

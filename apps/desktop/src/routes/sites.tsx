@@ -245,9 +245,12 @@ export function SitesPage() {
   };
 
   const openFolderFor = async (site: SiteStatus) => {
-    const opened = await openFolder(site.docroot);
-    if (!opened) {
-      toast.error("Could not open the folder", { details: site.docroot });
+    const failure = await openFolder(site.docroot);
+    if (failure !== null) {
+      toast.error("Could not open the folder", {
+        description: `${site.docroot} could not be opened.`,
+        details: failure,
+      });
     }
   };
 

@@ -1,5 +1,6 @@
 //! Shared application state owned by the Tauri runtime.
 
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 use devx_core::{AppPaths, ConfigHealth, ConfigStore, Result};
@@ -30,6 +31,9 @@ pub struct AppState {
     /// Cancellation tokens for installs currently running, so a cancel
     /// command can reach the install running in another task.
     pub install_tokens: InstallTokens,
+    /// Service components whose config has already been pre-rendered this
+    /// session, so the install list renders each service's config once.
+    pub service_config_rendered: Mutex<HashSet<String>>,
     /// Supervised background services.
     pub services: Arc<ServiceRegistry>,
     /// The bundled DNS resolver, once started; `None` until needed and
@@ -109,6 +113,7 @@ impl AppState {
             resolver,
             installer,
             install_tokens: Default::default(),
+            service_config_rendered: Mutex::new(HashSet::new()),
             services: Arc::new(ServiceRegistry::new()),
             dns: Mutex::new(None),
         })

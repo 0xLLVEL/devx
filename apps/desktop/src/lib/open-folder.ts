@@ -3,16 +3,21 @@ import { openPath } from "@tauri-apps/plugin-opener";
 /**
  * Opens a directory in the OS file manager.
  *
- * Returns `false` when the shell refused (no Tauri runtime, missing path), so
- * the caller can say so instead of leaving a button that looks like it worked.
- * `reveal_managed_dir` is not an option here: it only accepts DevX's own
- * directories, and a site's docroot is wherever the user pointed it.
+ * Returns an error string when the open failed, `null` on success. The string
+ * carries the underlying cause so the caller can show why instead of a bare
+ * "it failed" — a button that reports failure for a folder the user can see on
+ * disk is the complaint this exists to answer.
+ *
+ * DevX's own directories should prefer `ipc.revealManagedDir`, which validates
+ * the path, creates it when missing, and opens it in one backend call; this
+ * helper covers paths the backend cannot vouch for, such as a site's docroot
+ * anywhere on the machine.
  */
-export async function openFolder(path: string): Promise<boolean> {
+export async function openFolder(path: string): Promise<string | null> {
   try {
     await openPath(path);
-    return true;
-  } catch {
-    return false;
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
   }
 }

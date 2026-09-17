@@ -7,18 +7,28 @@ use tauri::State;
 
 /// Reveals a DevX directory in File Explorer.
 ///
-/// Restricted to the managed directories so the command cannot be used to open
+/// Restricted to the managed directories (and anything beneath them, such as a
+/// single service's config folder) so the command cannot be used to open
 /// arbitrary paths from the webview.
+///
+/// The directory is created first when missing: several of DevX's folders (a
+/// service's `service-config/<id>`, for instance) only come into existence
+/// after the service has run once, and a button that reports failure for a
+/// folder DevX simply has not written yet reads as broken to the user.
 #[tauri::command]
 #[specta::specta]
 pub fn reveal_managed_dir(state: State<'_, AppState>, path: String) -> Result<(), Error> {
     let requested = std::path::PathBuf::from(&path);
 
-    let allowed = state
-        .paths
-        .managed_dirs()
-        .into_iter()
-        .any(|dir| dir == requested);
+    // Accept the managed roots themselves and anything below them. The same
+    // canonical form on both sides matters: the frontend receives the roots
+    // from `paths_get`, and on Windows the same directory can be spelled with
+    // a different casing or separator, so the check compares canonically.
+    let canonical = canonicalise(&requested);
+    let allowed = state.paths.managed_dirs().into_iter().any(|dir| {
+        let managed = canonicalise(&dir);
+        canonical == managed || canonical.starts_with(&managed)
+    });
 
     if !allowed {
         return Err(Error::invalid_input(format!(
@@ -30,6 +40,35 @@ pub fn reveal_managed_dir(state: State<'_, AppState>, path: String) -> Result<()
 
     tauri_plugin_opener::open_path(&requested, None::<&str>)
         .map_err(|err| Error::internal(format!("failed to open {path}: {err}")))
+}
+
+/// Best-effort canonical form of a path: absolute, with normalized casing.
+///
+/// Falls back to the plain absolute path when the path does not exist yet,
+/// where there is nothing to canonicalise against the filesystem.
+fn canonicalise(path: &std::path::Path) -> std::path::PathBuf {
+    match path.canonicalize() {
+        Ok(resolved) => resolved,
+        Err(_) => {
+            let absolute = if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                std::env::current_dir()
+                    .map(|cwd| cwd.join(path))
+                    .unwrap_or_else(|_| path.to_path_buf())
+            };
+            // Windows paths are case-insensitive; normalize the drive letter so
+            // `c:\` and `C:\` compare equal.
+            match absolute.to_str() {
+                Some(text) if text.len() >= 2 && text.as_bytes()[1] == b':' => {
+                    let mut chars = text.chars();
+                    let drive = chars.next().unwrap_or_default().to_ascii_uppercase();
+                    std::path::PathBuf::from(format!("{drive}{}", chars.as_str()))
+                }
+                _ => absolute,
+            }
+        }
+    }
 }
 
 /// Applies `general.start_with_windows` to the OS autostart entry.
@@ -64,6 +103,33 @@ pub(crate) fn sync_autostart_setting(app: &tauri::AppHandle) -> Result<bool, Err
     manager
         .is_enabled()
         .map_err(|err| Error::internal(format!("reading autostart state: {err}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn canonicalise_normalises_the_drive_letter() {
+        let lower = canonicalise(std::path::Path::new("c:\\devx\\config"));
+        let upper = canonicalise(std::path::Path::new("C:\\devx\\config"));
+        assert_eq!(lower, upper);
+    }
+
+    #[test]
+    fn canonicalise_preserves_relative_fallback() {
+        // A non-existent path cannot be canonicalised against the filesystem;
+        // it must still come back absolute-ish rather than empty.
+        let ghost = canonicalise(std::path::Path::new("C:\\devx\\service-config\\nginx"));
+        assert!(ghost.starts_with("C:\\"));
+    }
+
+    #[test]
+    fn managed_subdirectories_are_within_a_managed_root() {
+        let root = canonicalise(std::path::Path::new("C:\\devx\\service-config"));
+        let child = canonicalise(std::path::Path::new("C:\\devx\\service-config\\nginx"));
+        assert!(child.starts_with(root));
+    }
 }
 
 /// Whether a newer DevX release is available upstream.

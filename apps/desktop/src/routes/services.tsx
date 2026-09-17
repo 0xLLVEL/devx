@@ -791,11 +791,21 @@ function ServerRow({
           if (!configPath) {
             return;
           }
-          const opened = await openFolder(configPath);
-          if (!opened) {
-            // A service that has never started has no config directory yet;
-            // saying so beats a button that looks like it worked (§54).
-            toast.error("Could not open the config folder", { details: configPath });
+          // The backend command validates the path is under a DevX-managed
+          // root, creates it when it does not exist yet (a service that has
+          // never run has no config directory), and opens it — one call that
+          // cannot fail on a folder DevX simply has not written yet.
+          try {
+            await ipc.revealManagedDir(configPath);
+          } catch {
+            // Outside the managed roots (or an older backend), fall back to
+            // opening it directly from the webview.
+            const fallback = await openFolder(configPath);
+            if (fallback !== null) {
+              toast.error("Could not open the config folder", {
+                details: fallback === "missing" ? configPath : fallback,
+              });
+            }
           }
         })();
       },

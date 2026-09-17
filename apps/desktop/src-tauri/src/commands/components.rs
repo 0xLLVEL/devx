@@ -192,6 +192,15 @@ pub fn service_component_ids() -> Result<Vec<String>, Error> {
 }
 
 /// Lists every installed component version found on disk.
+///
+/// For supervisable services this also pre-renders the service's config
+/// directory. Without that, `service-config/<id>` only came into existence at
+/// first start, so a freshly installed service's "Open config folder" pointed
+/// at a folder that did not exist yet. Rendering is idempotent and the plan is
+/// rebuilt at start anyway, so pre-rendering here can never go stale in a way
+/// that matters. Rendering failures are logged, not fatal: a broken template
+/// would otherwise hide the whole install list, and the start path surfaces
+/// the same error with its own context when it reaches the same code.
 #[tauri::command]
 #[specta::specta]
 pub fn installed_versions(state: State<'_, AppState>) -> Result<Vec<InstalledVersion>, Error> {
@@ -215,6 +224,41 @@ pub fn installed_versions(state: State<'_, AppState>) -> Result<Vec<InstalledVer
         for version in versions.flatten() {
             let version_str = version.file_name().to_string_lossy().into_owned();
             if state.installer.is_installed(&component_id, &version_str) {
+                // The one version that speaks for the component's service (see
+                // the Services page's own join) is whichever comes first here;
+                // pre-rendering once per component is enough.
+                let already_rendered = state
+                    .service_config_rendered
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .contains(&component_id);
+                if devx_provision::is_service(&component_id) && !already_rendered {
+                    match crate::services::plan_service(
+                        &state.paths,
+                        &component_id,
+                        &version_str,
+                        &[],
+                        None,
+                    ) {
+                        Ok(plan) => {
+                            state
+                                .service_config_rendered
+                                .lock()
+                                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                                .insert(component_id.clone());
+                            let _ = plan; // Rendering wrote the config files.
+                        }
+                        Err(err) => {
+                            tracing::warn!(
+                                component = %component_id,
+                                version = %version_str,
+                                error = %err,
+                                "could not pre-render service config"
+                            );
+                        }
+                    }
+                }
+
                 installed.push(InstalledVersion {
                     component_id: component_id.clone(),
                     version: version_str,

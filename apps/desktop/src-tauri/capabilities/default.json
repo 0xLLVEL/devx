@@ -6,8 +6,19 @@
   ],
   "permissions": [
     "core:default",
-    "opener:allow-open-url",
-    "opener:allow-open-path",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        { "url": "http://**" },
+        { "url": "https://**" }
+      ]
+    },
+    {
+      "identifier": "opener:allow-open-path",
+      "allow": [
+        { "path": "**" }
+      ]
+    },
     "notification:default",
     "dialog:default"
   ]

@@ -33,6 +33,7 @@ const mocks = vi.hoisted(() => ({
   cronDelete: vi.fn(),
   configGet: vi.fn(),
   serviceSetPort: vi.fn(),
+  revealManagedDir: vi.fn(),
 }));
 
 vi.mock("@/lib/ipc", async () => {
@@ -78,6 +79,7 @@ describe("ServicesPage", () => {
     }
     mocks.installedVersions.mockResolvedValue([]);
     mocks.serviceLogs.mockResolvedValue([]);
+    mocks.revealManagedDir.mockResolvedValue(undefined);
     // The row's state comes from the metrics sample, which lists every
     // registered service; an empty sample is "nothing is registered".
     mocks.serviceMetrics.mockResolvedValue([]);

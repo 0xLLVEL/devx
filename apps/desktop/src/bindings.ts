@@ -169,7 +169,18 @@ export const commands = {
 	componentInstallCancel: (componentId: string, version: string) => typedError<boolean, DevxError>(__TAURI_INVOKE("component_install_cancel", { componentId, version })),
 	/**  Removes an installed component version. */
 	componentUninstall: (componentId: string, version: string) => typedError<null, DevxError>(__TAURI_INVOKE("component_uninstall", { componentId, version })),
-	/**  Lists every installed component version found on disk. */
+	/**
+	 *  Lists every installed component version found on disk.
+	 * 
+	 *  For supervisable services this also pre-renders the service's config
+	 *  directory. Without that, `service-config/<id>` only came into existence at
+	 *  first start, so a freshly installed service's "Open config folder" pointed
+	 *  at a folder that did not exist yet. Rendering is idempotent and the plan is
+	 *  rebuilt at start anyway, so pre-rendering here can never go stale in a way
+	 *  that matters. Rendering failures are logged, not fatal: a broken template
+	 *  would otherwise hide the whole install list, and the start path surfaces
+	 *  the same error with its own context when it reaches the same code.
+	 */
 	installedVersions: () => typedError<InstalledVersion[], DevxError>(__TAURI_INVOKE("installed_versions")),
 	/**  Lists the component ids that DevX can supervise as background services. */
 	serviceComponentIds: () => typedError<string[], DevxError>(__TAURI_INVOKE("service_component_ids")),
@@ -226,6 +237,13 @@ export const commands = {
 	 *  Pools are planned on the fly rather than persisted, so the list always
 	 *  matches what is on disk. Workers reflect the stored setting when the pool
 	 *  has one, and the default otherwise.
+	 * 
+	 *  Each listed pool's config files are (re-)rendered here. Without this the
+	 *  `service-config/<pool>` directory only came into existence at first start,
+	 *  so a freshly installed version's "Open config folder" pointed at a folder
+	 *  that did not exist yet. The pool's settings (extensions, Xdebug, limits)
+	 *  are still rendered again at start, so rendering here can never go stale in
+	 *  a way that matters.
 	 */
 	phpPoolList: () => typedError<PhpPoolStatus[], DevxError>(__TAURI_INVOKE("php_pool_list")),
 	/**  Starts (or reports) the FastCGI pool for one installed PHP version. */
@@ -455,8 +473,14 @@ export const commands = {
 	/**
 	 *  Reveals a DevX directory in File Explorer.
 	 * 
-	 *  Restricted to the managed directories so the command cannot be used to open
+	 *  Restricted to the managed directories (and anything beneath them, such as a
+	 *  single service's config folder) so the command cannot be used to open
 	 *  arbitrary paths from the webview.
+	 * 
+	 *  The directory is created first when missing: several of DevX's folders (a
+	 *  service's `service-config/<id>`, for instance) only come into existence
+	 *  after the service has run once, and a button that reports failure for a
+	 *  folder DevX simply has not written yet reads as broken to the user.
 	 */
 	revealManagedDir: (path: string) => typedError<null, DevxError>(__TAURI_INVOKE("reveal_managed_dir", { path })),
 	/**

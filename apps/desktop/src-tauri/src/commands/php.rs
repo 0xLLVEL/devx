@@ -27,6 +27,13 @@ pub struct PhpPoolStatus {
 /// Pools are planned on the fly rather than persisted, so the list always
 /// matches what is on disk. Workers reflect the stored setting when the pool
 /// has one, and the default otherwise.
+///
+/// Each listed pool's config files are (re-)rendered here. Without this the
+/// `service-config/<pool>` directory only came into existence at first start,
+/// so a freshly installed version's "Open config folder" pointed at a folder
+/// that did not exist yet. The pool's settings (extensions, Xdebug, limits)
+/// are still rendered again at start, so rendering here can never go stale in
+/// a way that matters.
 #[tauri::command]
 #[specta::specta]
 pub fn php_pool_list(state: State<'_, AppState>) -> Result<Vec<PhpPoolStatus>, Error> {
@@ -40,6 +47,28 @@ pub fn php_pool_list(state: State<'_, AppState>) -> Result<Vec<PhpPoolStatus>, E
             None => devx_provision::DEFAULT_WORKERS,
         };
         let port = pool_port(&state, &version)?;
+
+        // Render the pool's config directory up front. A failure here (disk
+        // full, permissions) is reported rather than silently skipping the
+        // pool — the row would otherwise offer a config folder that cannot be
+        // written.
+        let extensions = pool_extensions(&state, &version);
+        let xdebug = pool_xdebug(&state, &version);
+        let limits = pool_limits(&state, &version);
+        let plan = crate::services::plan_php_pool(
+            &state.paths,
+            &version,
+            port,
+            workers,
+            &extensions,
+            xdebug,
+            limits,
+        )?;
+        devx_provision::write_pool_files(
+            &state.paths.service_config_dir().join(&plan.id),
+            &plan,
+        )?;
+
         let summary = PhpPoolSummary {
             id: devx_provision::pool_id(&version),
             version: version.clone(),
