@@ -193,7 +193,17 @@ async fn start_service(state: &AppState, component_id: &str) -> Result<()> {
         )));
     };
 
-    let plan = crate::services::plan_service(&state.paths, component_id, &version, &[])?;
+    let custom_port = state.with_config(|store| {
+        let config = store.config();
+        config.service_ports.get(component_id).or_else(|| {
+            if component_id == "nginx" {
+                Some(config.network.http_port)
+            } else {
+                None
+            }
+        })
+    });
+    let plan = crate::services::plan_service(&state.paths, component_id, &version, &[], custom_port)?;
     let id = plan.spec.id.clone();
 
     crate::services::run_init_steps(&plan.init_steps).await?;

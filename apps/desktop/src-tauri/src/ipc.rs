@@ -55,6 +55,8 @@ pub fn builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::service_status,
             commands::service_logs,
             commands::service_metrics,
+            commands::service_set_port,
+            commands::service_get_ports,
             commands::logs_list,
             commands::logs_read,
             commands::php_pool_list,

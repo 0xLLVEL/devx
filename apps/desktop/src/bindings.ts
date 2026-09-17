@@ -194,6 +194,14 @@ export const commands = {
 	 *  are still listed, letting the dashboard zip this against the service list.
 	 */
 	serviceMetrics: () => typedError<ServiceMetrics[], DevxError>(__TAURI_INVOKE("service_metrics")),
+	/**
+	 *  Sets or clears a custom port for a supervised service component.
+	 * 
+	 *  If port is `Some(p)`, sets the custom port (p must be > 0). If `None`, clears the custom port.
+	 */
+	serviceSetPort: (componentId: string, port: number | null) => typedError<{ [key in string]: number }, DevxError>(__TAURI_INVOKE("service_set_port", { componentId, port })),
+	/**  Returns the configured custom service ports map. */
+	serviceGetPorts: () => typedError<{ [key in string]: number }, DevxError>(__TAURI_INVOKE("service_get_ports")),
 	/**  Lists every log file DevX has written, newest first. */
 	logsList: () => typedError<LogFileInfo[], DevxError>(__TAURI_INVOKE("logs_list")),
 	/**
@@ -285,6 +293,8 @@ export const commands = {
  *  before this field existed.
  */
 "Nginx" | 
+/**  Apache — classic web server with .htaccess support. */
+"Apache" | 
 /**  Caddy — minimal config, HTTP/2 and HTTP/3 out of the box. */
 "Caddy" | 
 /**  FrankenPHP — serves PHP directly, no FastCGI pool needed. */
@@ -852,6 +862,8 @@ export type Config_Deserialize = {
 	php_xdebug: PhpXdebug,
 	/**  Resource limits per installed PHP version. */
 	php_limits: PhpLimits,
+	/**  Custom port assignments per service. */
+	service_ports: ServicePorts,
 	/**  User-configured local sites. */
 	sites: Site_Deserialize[],
 	/**  User-configured supervised worker processes. */
@@ -885,6 +897,8 @@ export type Config_Serialize = {
 	php_xdebug: PhpXdebug,
 	/**  Resource limits per installed PHP version. */
 	php_limits: PhpLimits,
+	/**  Custom port assignments per service. */
+	service_ports: ServicePorts,
 	/**  User-configured local sites. */
 	sites: Site_Serialize[],
 	/**  User-configured supervised worker processes. */
@@ -1583,6 +1597,9 @@ export type ServiceMetrics = {
 	processes: number,
 };
 
+/**  Custom port assignments for supervised services, keyed by service id. */
+export type ServicePorts = { [key in string]: number };
+
 /**  Where a supervised service is in its lifecycle. */
 export type ServiceState = 
 /**  Not running, and not trying to. */
@@ -1856,6 +1873,8 @@ export type WebServer =
  *  before this field existed.
  */
 "Nginx" | 
+/**  Apache — classic web server with .htaccess support. */
+"Apache" | 
 /**  Caddy — minimal config, HTTP/2 and HTTP/3 out of the box. */
 "Caddy" | 
 /**  FrankenPHP — serves PHP directly, no FastCGI pool needed. */

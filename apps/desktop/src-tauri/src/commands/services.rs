@@ -54,7 +54,24 @@ pub async fn service_start(
         );
     }
 
-    let plan = crate::services::plan_service(&state.paths, &component_id, &version, &[])?;
+    let custom_port = state.with_config(|store| {
+        let config = store.config();
+        config.service_ports.get(&component_id).or_else(|| {
+            if component_id == "nginx" {
+                Some(config.network.http_port)
+            } else {
+                None
+            }
+        })
+    });
+
+    let plan = crate::services::plan_service(
+        &state.paths,
+        &component_id,
+        &version,
+        &[],
+        custom_port,
+    )?;
     let id = plan.spec.id.clone();
 
     // One-time init (initdb, mysql_install_db) must complete before launch.
@@ -71,6 +88,44 @@ pub async fn service_start(
         id,
         state: supervisor.state(),
     })
+}
+
+/// Sets or clears a custom port for a supervised service component.
+///
+/// If port is `Some(p)`, sets the custom port (p must be > 0). If `None`, clears the custom port.
+#[tauri::command]
+#[specta::specta]
+pub async fn service_set_port(
+    state: State<'_, AppState>,
+    component_id: String,
+    port: Option<u16>,
+) -> Result<std::collections::BTreeMap<String, u16>, Error> {
+    if let Some(p) = port {
+        if p == 0 {
+            return Err(Error::invalid_input("port must be greater than 0"));
+        }
+    }
+
+    state.with_config_mut(|store| {
+        store.update(|config| {
+            if let Some(p) = port {
+                config.service_ports.insert(component_id.clone(), p);
+            } else {
+                config.service_ports.remove(&component_id);
+            }
+        })
+    })?;
+
+    Ok(state.with_config(|store| store.config().service_ports.all().clone()))
+}
+
+/// Returns the configured custom service ports map.
+#[tauri::command]
+#[specta::specta]
+pub fn service_get_ports(
+    state: State<'_, AppState>,
+) -> Result<std::collections::BTreeMap<String, u16>, Error> {
+    Ok(state.with_config(|store| store.config().service_ports.all().clone()))
 }
 
 /// Stops a running supervised service.
@@ -172,27 +227,11 @@ pub async fn services_start_all(
 #[specta::specta]
 pub async fn services_stop_all(state: State<'_, AppState>) -> Result<Vec<BatchStartOutcome>, Error> {
     let ids = state.services.ids();
-    let mut jobs = tokio::task::JoinSet::new();
-    for id in ids {
-        let supervisor = state.services.get(&id);
-        jobs.spawn(async move {
-            match supervisor {
-                Some(s) if s.state().is_active() => {
-                    s.stop().await;
-                }
-                _ => {}
-            }
-            Some(BatchStartOutcome { id, error: None })
-        });
-    }
-
-    let mut outcomes: Vec<BatchStartOutcome> = Vec::new();
-    while let Some(result) = jobs.join_next().await {
-        if let Ok(Some(outcome)) = result {
-            outcomes.push(outcome);
-        }
-    }
-    outcomes.sort_by(|a, b| a.id.cmp(&b.id));
+    state.services.stop_all().await;
+    let outcomes = ids
+        .into_iter()
+        .map(|id| BatchStartOutcome { id, error: None })
+        .collect();
     Ok(outcomes)
 }
 

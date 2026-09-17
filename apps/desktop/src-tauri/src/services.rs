@@ -32,12 +32,14 @@ pub struct ServicePlan {
 /// Builds a launch plan for `component_id` at `version`.
 ///
 /// `reserved` lists ports already assigned to other services being planned in
-/// the same pass, so simultaneous starts do not collide.
+/// the same pass, so simultaneous starts do not collide. `custom_port` overrides
+/// the component's default port when provided.
 pub fn plan_service(
     paths: &AppPaths,
     component_id: &str,
     version: &str,
     reserved: &[u16],
+    custom_port: Option<u16>,
 ) -> Result<ServicePlan> {
     let definition = definition_for(component_id)?;
 
@@ -48,7 +50,8 @@ pub fn plan_service(
 
     // Decide the port before rendering config, so the config carries the port
     // the service will actually bind.
-    let port_decision = match definition.default_port {
+    let preferred_port = custom_port.or(definition.default_port);
+    let port_decision = match preferred_port {
         Some(preferred) => {
             let allocator = PortAllocator::new(|port| owner_of(port).map(describe_owner));
             allocator.allocate(preferred, reserved)
@@ -58,7 +61,7 @@ pub fn plan_service(
 
     let chosen_port = port_decision.resolved_port().filter(|&p| p != 0);
 
-    if definition.default_port.is_some() && chosen_port.is_none() {
+    if preferred_port.is_some() && chosen_port.is_none() {
         return Err(port_conflict_error(component_id, &port_decision));
     }
 
@@ -76,9 +79,20 @@ pub fn plan_service(
             )
         })?;
         devx_provision::write_fastcgi_params(&nginx_config_dir)?;
+
+        let nginx_data_dir = paths.service_data_dir().join("nginx");
+        for temp_sub in [
+            "client_body_temp",
+            "proxy_temp",
+            "fastcgi_temp",
+            "uwsgi_temp",
+            "scgi_temp",
+        ] {
+            let _ = std::fs::create_dir_all(nginx_data_dir.join(temp_sub));
+        }
     }
 
-    // Apache's DocumentRoot must exist or httpd refuses to start.
+    // Apache's DocumentRoot and sites directory must exist or httpd refuses to start.
     if component_id == "apache" {
         let www = paths.service_data_dir().join(component_id).join("www");
         std::fs::create_dir_all(&www).map_err(|err| {
@@ -87,6 +101,9 @@ pub fn plan_service(
                 format!("failed to create {}: {err}", www.display()),
             )
         })?;
+        let apache_config_dir = paths.service_config_dir().join("apache");
+        let sites_dir = apache_config_dir.join("sites");
+        let _ = std::fs::create_dir_all(&sites_dir);
     }
 
     let ctx = RenderContext {
@@ -344,7 +361,7 @@ mod tests {
     #[test]
     fn planning_an_unknown_service_is_not_found() {
         let paths = AppPaths::rooted_at(std::path::Path::new("C:\\devx-test"));
-        let err = plan_service(&paths, "php", "8.4.25", &[]).expect_err("php is not a service");
+        let err = plan_service(&paths, "php", "8.4.25", &[], None).expect_err("php is not a service");
         assert_eq!(err.code, devx_core::ErrorCode::NotFound);
     }
 
@@ -354,7 +371,7 @@ mod tests {
         let paths = AppPaths::rooted_at(dir.path());
         paths.ensure_dirs().expect("dirs");
 
-        let plan = plan_service(&paths, "mailpit", "1.31.1", &[]).expect("plan");
+        let plan = plan_service(&paths, "mailpit", "1.31.1", &[], None).expect("plan");
 
         assert_eq!(plan.spec.id, "mailpit");
         assert!(plan
@@ -375,7 +392,7 @@ mod tests {
         let paths = AppPaths::rooted_at(dir.path());
         paths.ensure_dirs().expect("dirs");
 
-        plan_service(&paths, "nginx", "1.31.5", &[]).expect("plan");
+        plan_service(&paths, "nginx", "1.31.5", &[], None).expect("plan");
 
         let file = paths
             .service_config_dir()
@@ -394,12 +411,22 @@ mod tests {
         let paths = AppPaths::rooted_at(dir.path());
         paths.ensure_dirs().expect("dirs");
 
-        let _plan = plan_service(&paths, "nginx", "1.31.5", &[]).expect("plan");
+        let _plan = plan_service(&paths, "nginx", "1.31.5", &[], None).expect("plan");
 
         let conf = paths.service_config_dir().join("nginx").join("nginx.conf");
         assert!(conf.is_file(), "nginx.conf should be rendered");
         let body = std::fs::read_to_string(conf).expect("read");
         assert!(body.contains("listen"), "{body}");
+    }
+
+    #[test]
+    fn planning_with_custom_port_overrides_default() {
+        let dir = tempfile::tempdir().expect("temp");
+        let paths = AppPaths::rooted_at(dir.path());
+        paths.ensure_dirs().expect("dirs");
+
+        let plan = plan_service(&paths, "apache", "2.4.68", &[], Some(9999)).expect("plan");
+        assert_eq!(plan.port.resolved_port(), Some(9999));
     }
 
     // --- PHP pools ---------------------------------------------------------

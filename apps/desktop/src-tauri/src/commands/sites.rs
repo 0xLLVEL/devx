@@ -541,30 +541,46 @@ async fn mutate_site_aliases(
     site_list(state)
 }
 
-/// Restarts nginx when it is running, re-planning its spec first so the new
-/// process loads freshly rendered configuration.
+/// Restarts active web servers (nginx, apache) when they are running, re-planning
+/// their specs first so the new process loads freshly rendered configuration.
 ///
-/// A stopped nginx simply picks the new config up on its next start, so in
-/// that case there is nothing to do. The restart follows the same
-/// stop-then-re-register order as `php_ext_set`: the registry refuses to
-/// replace an active supervisor.
-async fn restart_nginx_if_running(state: &State<'_, AppState>) -> Result<(), Error> {
-    let Some(supervisor) = state.services.get("nginx") else {
-        return Ok(());
-    };
-    if !supervisor.state().is_active() {
-        return Ok(());
+/// A stopped server simply picks the new config up on its next start, so in
+/// that case there is nothing to do.
+async fn restart_web_servers_if_running(state: &State<'_, AppState>) -> Result<(), Error> {
+    for server_id in ["nginx", "apache"] {
+        if let Some(supervisor) = state.services.get(server_id) {
+            if supervisor.state().is_active() {
+                supervisor.stop().await;
+
+                let custom_port = state.with_config(|store| {
+                    let config = store.config();
+                    config.service_ports.get(server_id).or_else(|| {
+                        if server_id == "nginx" {
+                            Some(config.network.http_port)
+                        } else {
+                            None
+                        }
+                    })
+                });
+
+                let newest = newest_installed_component(&state.paths, server_id)?;
+                let plan = crate::services::plan_service(
+                    &state.paths,
+                    server_id,
+                    &newest,
+                    &[],
+                    custom_port,
+                )?;
+                let replacement = state.services.register(plan.spec)?;
+                replacement.start().await?;
+            }
+        }
     }
-
-    supervisor.stop().await;
-
-    // Re-plan with the newest installed version resolved from disk, so the
-    // restarted nginx matches what is on disk.
-    let newest = newest_installed_component(&state.paths, "nginx")?;
-    let plan = crate::services::plan_service(&state.paths, "nginx", &newest, &[])?;
-    let replacement = state.services.register(plan.spec)?;
-    replacement.start().await?;
     Ok(())
+}
+
+async fn restart_nginx_if_running(state: &State<'_, AppState>) -> Result<(), Error> {
+    restart_web_servers_if_running(state).await
 }
 
 /// The newest installed version of a component, from the runtimes directory.
@@ -589,51 +605,43 @@ pub(crate) fn newest_installed_component(
         .ok_or_else(|| Error::not_found(format!("{component_id} is not installed")))
 }
 
-/// (Re)writes every site's nginx block and prunes stale ones.
+/// (Re)writes every site's server block and prunes stale ones.
 ///
 /// One sync per mutation keeps the include directory exactly equal to the
-/// configured set, which is what makes nginx restarts deterministic.
+/// configured set, which is what makes web server restarts deterministic.
 pub(crate) fn sync_site_blocks(state: &State<'_, AppState>) -> Result<(), Error> {
     let sites = state.with_config(|store| store.config().sites.clone());
+    let (http_port, https_port) = state.with_config(|store| {
+        let config = store.config();
+        (config.network.http_port, config.network.https_port)
+    });
+
+    let sync_sites: Vec<devx_provision::SyncSite> = sites
+        .into_iter()
+        .map(|site| {
+            let php = site.php().map(str::to_owned);
+            devx_provision::SyncSite {
+                hostname: site.hostname,
+                docroot: std::path::PathBuf::from(site.docroot),
+                php_version: php,
+                https: site.https,
+                env: site.env.into_iter().collect(),
+                aliases: site.aliases,
+                web_server: site.web_server.into(),
+                auth: site.auth,
+            }
+        })
+        .collect();
+
+    let ctx = devx_provision::SyncContext {
+        service_config_dir: &state.paths.service_config_dir(),
+        certs_dir: &state.paths.certs_dir(),
+        http_port,
+        https_port,
+    };
+
     let sites_dir = state.paths.service_config_dir().join("nginx").join("sites");
-
-    for site in &sites {
-        let spec = devx_provision::SiteSpec {
-            hostname: site.hostname.clone(),
-            docroot: std::path::PathBuf::from(&site.docroot),
-            php_version: site.php().map(str::to_owned),
-            env: site.env.clone().into_iter().collect(),
-            aliases: site.aliases.clone(),
-            web_server: site.web_server.into(),
-            auth: site.auth.clone(),
-        };
-        let endpoint = match spec.php_version.clone() {
-            Some(version) => Some(devx_provision::pool_endpoint_for(
-                &state.paths.service_config_dir(),
-                &version,
-            )?),
-            None => None,
-        };
-
-        // HTTPS sites get their certificate minted (or reused) during the
-        // sync, so nginx never references a cert file that does not exist.
-        let tls = if site.https {
-            devx_provision::ensure_site_cert(&state.paths.certs_dir(), &site.hostname)?;
-            let https_port = state.with_config(|store| store.config().network.https_port);
-            Some(devx_provision::tls_listen_snippet(
-                &site.hostname,
-                https_port,
-                &state.paths.certs_dir(),
-            ))
-        } else {
-            None
-        };
-
-        devx_provision::write_site_block(&sites_dir, &spec, endpoint.as_deref(), tls.as_deref())?;
-    }
-
-    let live: Vec<String> = sites.iter().map(|s| s.hostname.clone()).collect();
-    devx_provision::prune_stale_blocks(&sites_dir, &live)?;
+    devx_provision::sync_site_blocks(&sites_dir, &sync_sites, ctx)?;
 
     Ok(())
 }

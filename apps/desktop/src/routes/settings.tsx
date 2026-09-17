@@ -483,6 +483,64 @@ export function SettingsPage() {
 
         <Card>
           <CardHeader>
+            <CardTitle>Service Ports</CardTitle>
+            <CardDescription>
+              Configure default listening ports for supervised services
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {[
+              { id: "nginx", label: "Nginx HTTP port", fallback: draft.network.http_port },
+              { id: "apache", label: "Apache port", fallback: 8080 },
+              { id: "mariadb", label: "MariaDB / MySQL port", fallback: 3306 },
+              { id: "postgresql", label: "PostgreSQL port", fallback: 5432 },
+              { id: "redis", label: "Redis port", fallback: 6379 },
+              { id: "mailpit", label: "Mailpit SMTP port", fallback: 1025 },
+              { id: "meilisearch", label: "Meilisearch port", fallback: 7700 },
+              { id: "mongodb", label: "MongoDB port", fallback: 27017 },
+              { id: "nats-server", label: "NATS port", fallback: 4222 },
+              { id: "etcd", label: "etcd client port", fallback: 2379 },
+              { id: "caddy", label: "Caddy port", fallback: 2019 },
+              { id: "traefik", label: "Traefik port", fallback: 80 },
+            ].map((svc) => {
+              const currentVal = draft.service_ports?.[svc.id] ?? "";
+              return (
+                <div key={svc.id} className="space-y-1.5">
+                  <Label htmlFor={`port-${svc.id}`}>{svc.label}</Label>
+                  <Input
+                    id={`port-${svc.id}`}
+                    type="number"
+                    min={1}
+                    max={65535}
+                    placeholder={`Default: ${svc.fallback}`}
+                    value={currentVal}
+                    onChange={(event) => {
+                      const text = event.target.value.trim();
+                      patch((config) => {
+                        config.service_ports = config.service_ports ?? {};
+                        if (text === "") {
+                          delete config.service_ports[svc.id];
+                        } else {
+                          const num = Number(text);
+                          if (!isNaN(num) && num > 0 && num <= 65535) {
+                            config.service_ports[svc.id] = num;
+                          }
+                        }
+                        return config;
+                      });
+                    }}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Leave empty to use default ({svc.fallback}).
+                  </p>
+                </div>
+              );
+            })}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
             <CardTitle>Application</CardTitle>
             <CardDescription>Appearance and startup behaviour</CardDescription>
           </CardHeader>

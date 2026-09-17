@@ -160,6 +160,29 @@ impl ServiceRegistry {
             })
             .collect()
     }
+
+    /// Stops every registered active service concurrently and waits for them to exit.
+    pub async fn stop_all(&self) {
+        let active: Vec<Arc<Supervisor>> = self
+            .services
+            .lock()
+            .values()
+            .filter(|s| s.state().is_active())
+            .cloned()
+            .collect();
+
+        if active.is_empty() {
+            return;
+        }
+
+        let mut jobs = tokio::task::JoinSet::new();
+        for supervisor in active {
+            jobs.spawn(async move {
+                supervisor.stop().await;
+            });
+        }
+        while let Some(_) = jobs.join_next().await {}
+    }
 }
 
 #[cfg(test)]
@@ -246,5 +269,35 @@ mod tests {
             "the crash reason must travel with the event, got {:?}",
             event.exit
         );
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn stop_all_stops_active_services() {
+        let registry = ServiceRegistry::new();
+        let mut s1 = spec("ping1");
+        s1.args = vec!["/c".into(), "ping".into(), "-n".into(), "10".into(), "127.0.0.1".into()];
+        s1.health = HealthCheck::Uptime(Duration::from_millis(200));
+        s1.health_timeout = Duration::from_secs(5);
+        s1.restart = RestartPolicy::Never;
+        let sup1 = registry.register(s1).expect("register 1");
+
+        let mut s2 = spec("ping2");
+        s2.args = vec!["/c".into(), "ping".into(), "-n".into(), "10".into(), "127.0.0.1".into()];
+        s2.health = HealthCheck::Uptime(Duration::from_millis(200));
+        s2.health_timeout = Duration::from_secs(5);
+        s2.restart = RestartPolicy::Never;
+        let sup2 = registry.register(s2).expect("register 2");
+
+        sup1.start().await.expect("start 1");
+        sup2.start().await.expect("start 2");
+
+        assert_eq!(sup1.state(), ServiceState::Running);
+        assert_eq!(sup2.state(), ServiceState::Running);
+
+        registry.stop_all().await;
+
+        assert_eq!(sup1.state(), ServiceState::Stopped);
+        assert_eq!(sup2.state(), ServiceState::Stopped);
     }
 }

@@ -67,8 +67,8 @@ export function SummaryCard({
           aria-hidden
           className={cn(
             "flex size-7 shrink-0 items-center justify-center rounded-md border border-border bg-surface-2 text-ink-secondary",
-            "transition-[color,border-color] duration-[160ms]",
-            "group-hover:border-primary/40 group-hover:text-primary",
+            "transition-[color,border-color,box-shadow] duration-[160ms]",
+            "group-hover:border-primary/40 group-hover:text-primary group-hover:shadow-[0_0_8px_var(--accent-soft)]",
           )}
         >
           <Icon className="size-4" />

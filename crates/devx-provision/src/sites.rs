@@ -65,6 +65,8 @@ pub enum WebServerKind {
     /// nginx server blocks under `service-config/nginx/sites`.
     #[default]
     Nginx,
+    /// Apache virtual hosts under `service-config/apache/sites`.
+    Apache,
     /// Caddy site entries under `service-config/caddy/sites`.
     Caddy,
     /// FrankenPHP (no pool; PHP served by the binary itself).
@@ -75,6 +77,7 @@ impl From<devx_core::config::WebServer> for WebServerKind {
     fn from(value: devx_core::config::WebServer) -> Self {
         match value {
             devx_core::config::WebServer::Nginx => WebServerKind::Nginx,
+            devx_core::config::WebServer::Apache => WebServerKind::Apache,
             devx_core::config::WebServer::Caddy => WebServerKind::Caddy,
             devx_core::config::WebServer::FrankenPhp => WebServerKind::FrankenPhp,
         }
@@ -163,6 +166,16 @@ pub fn render_server_block(
     php_endpoint: Option<&str>,
     tls: Option<&str>,
 ) -> String {
+    render_server_block_with_port(spec, php_endpoint, tls, 80)
+}
+
+/// Renders one nginx `server` block for `spec` on `http_port`.
+pub fn render_server_block_with_port(
+    spec: &SiteSpec,
+    php_endpoint: Option<&str>,
+    tls: Option<&str>,
+    http_port: u16,
+) -> String {
     let docroot = slash(&spec.docroot);
 
     let env_lines = render_env_params(&spec.env);
@@ -192,7 +205,7 @@ pub fn render_server_block(
     format!(
         r#"# devx-managed site: {hostname}
 server {{
-    listen       80;
+    listen       {http_port};
     server_name  {hostname};
 {tls}    root   {docroot};
     index  {index};
@@ -206,6 +219,7 @@ server {{
 }}
 "#,
         hostname = spec_hostname(spec),
+        http_port = http_port,
         docroot = docroot,
         index = index,
         php_location = php_location,
@@ -261,6 +275,80 @@ fn spec_hostname(spec: &SiteSpec) -> String {
     let mut names = vec![spec.hostname.clone()];
     names.extend(spec.aliases.iter().cloned());
     names.join(" ")
+}
+
+/// Renders one site as an Apache VirtualHost block.
+pub fn render_apache_site(
+    spec: &SiteSpec,
+    php_endpoint: Option<&str>,
+    http_port: u16,
+) -> String {
+    let docroot = slash(&spec.docroot);
+    let index = if spec.php_version.is_some() {
+        "index.php index.html index.htm"
+    } else {
+        "index.html index.htm"
+    };
+
+    let server_alias = if spec.aliases.is_empty() {
+        String::new()
+    } else {
+        format!("\n    ServerAlias {}", spec.aliases.join(" "))
+    };
+
+    let php_handler = match php_endpoint {
+        Some(endpoint) => format!(
+            "\n    <FilesMatch \\.php$>\n        SetHandler \"proxy:fcgi://{endpoint}/\"\n    </FilesMatch>"
+        ),
+        None => String::new(),
+    };
+
+    let env_lines = render_apache_env(&spec.env);
+    let auth_lines = match &spec.auth {
+        Some(auth) => {
+            let _ = auth;
+            format!(
+                "\n        AuthType Basic\n        AuthName \"Restricted\"\n        AuthUserFile auth/{}.htpasswd\n        Require valid-user",
+                spec.hostname
+            )
+        }
+        None => String::new(),
+    };
+
+    format!(
+        r#"# devx-managed site: {hostname}
+<VirtualHost *:{http_port}>
+    ServerName {hostname}{server_alias}
+    DocumentRoot "{docroot}"
+    DirectoryIndex {index}
+
+    <Directory "{docroot}">
+        Options Indexes FollowSymLinks
+        AllowOverride All
+        Require all granted{auth_lines}
+    </Directory>{env_lines}{php_handler}
+
+    ErrorLog  logs/{hostname}.error.log
+    CustomLog logs/{hostname}.access.log common
+</VirtualHost>
+"#,
+        hostname = spec.hostname,
+        server_alias = server_alias,
+        http_port = http_port,
+        docroot = docroot,
+        index = index,
+        auth_lines = auth_lines,
+        env_lines = env_lines,
+        php_handler = php_handler,
+    )
+}
+
+fn render_apache_env(env: &[(String, String)]) -> String {
+    let mut lines = String::new();
+    for (key, value) in env {
+        lines.push_str(&format!("\n    SetEnv {key} \"{value}\""));
+    }
+    lines
 }
 
 /// Renders one site as a Caddyfile site entry.
@@ -431,6 +519,17 @@ pub fn write_site_block(
     php_endpoint: Option<&str>,
     tls: Option<&str>,
 ) -> Result<PathBuf> {
+    write_site_block_with_port(sites_dir, spec, php_endpoint, tls, 80)
+}
+
+/// Writes (or replaces) the server block for `spec` on `http_port` and reports the outcome.
+pub fn write_site_block_with_port(
+    sites_dir: &Path,
+    spec: &SiteSpec,
+    php_endpoint: Option<&str>,
+    tls: Option<&str>,
+    http_port: u16,
+) -> Result<PathBuf> {
     validate_hostname(&spec.hostname)?;
     validate_docroot(&spec.docroot)?;
 
@@ -441,7 +540,7 @@ pub fn write_site_block(
         )
     })?;
 
-    let body = render_server_block(spec, php_endpoint, tls);
+    let body = render_server_block_with_port(spec, php_endpoint, tls, http_port);
     let path = sites_dir.join(block_file_name(&spec.hostname));
     devx_core::fsx::write_atomic(&path, body)?;
     Ok(path)
@@ -493,14 +592,16 @@ pub struct SyncContext<'a> {
     pub service_config_dir: &'a Path,
     /// Where per-site certificates are minted and read.
     pub certs_dir: &'a Path,
+    /// The configured HTTP port for site blocks.
+    pub http_port: u16,
     /// The configured HTTPS port for `listen 443` blocks.
     pub https_port: u16,
 }
 
-/// (Re)writes every configured site's nginx block and prunes stale ones.
+/// (Re)writes every configured site's server block and prunes stale ones.
 ///
 /// One sync per mutation keeps the include directory exactly equal to the
-/// configured set, which is what makes nginx restarts deterministic. The
+/// configured set, which is what makes web server restarts deterministic. The
 /// whole pipeline lives here — endpoint resolution, certificate minting,
 /// block rendering, pruning — so the desktop app and the CLI cannot drift:
 /// both call this and neither owns ordering rules.
@@ -530,10 +631,7 @@ pub fn sync_site_blocks(
         };
 
         let endpoint = match (&spec.php_version, site.web_server) {
-            (Some(version), WebServerKind::Nginx) => {
-                Some(pool_endpoint_for(ctx.service_config_dir, version)?)
-            }
-            (Some(version), WebServerKind::Caddy) => {
+            (Some(version), WebServerKind::Nginx | WebServerKind::Apache | WebServerKind::Caddy) => {
                 Some(pool_endpoint_for(ctx.service_config_dir, version)?)
             }
             // FrankenPHP serves PHP directly; there is no pool to find.
@@ -555,9 +653,42 @@ pub fn sync_site_blocks(
             None
         };
 
-        // Auth files live beside the blocks: nginx under `auth/`, Caddy
-        // carries the hash inline so it needs no file at all.
-        let auth_dir = sites_dir.join("auth");
+        let target_dir = match site.web_server {
+            WebServerKind::Nginx => sites_dir.to_path_buf(),
+            WebServerKind::Apache => {
+                let dir = ctx.service_config_dir.join("apache").join("sites");
+                if dir.exists() || dir.parent().map(|p| p.exists()).unwrap_or(false) {
+                    dir
+                } else {
+                    sites_dir.to_path_buf()
+                }
+            }
+            WebServerKind::Caddy => {
+                let dir = ctx.service_config_dir.join("caddy").join("sites");
+                if dir.exists() || dir.parent().map(|p| p.exists()).unwrap_or(false) {
+                    dir
+                } else {
+                    sites_dir.to_path_buf()
+                }
+            }
+            WebServerKind::FrankenPhp => {
+                let dir = ctx.service_config_dir.join("frankenphp").join("sites");
+                if dir.exists() || dir.parent().map(|p| p.exists()).unwrap_or(false) {
+                    dir
+                } else {
+                    sites_dir.to_path_buf()
+                }
+            }
+        };
+        std::fs::create_dir_all(&target_dir).map_err(|err| {
+            Error::new(
+                ErrorCode::Io,
+                format!("failed to create {}: {err}", target_dir.display()),
+            )
+        })?;
+
+        // Auth files live beside the blocks
+        let auth_dir = target_dir.join("auth");
         match &site.auth {
             Some(auth) => write_htpasswd(&auth_dir, &site.hostname, auth)?,
             None => remove_htpasswd(&auth_dir, &site.hostname),
@@ -565,16 +696,21 @@ pub fn sync_site_blocks(
 
         match site.web_server {
             WebServerKind::Nginx => {
-                write_site_block(sites_dir, &spec, endpoint.as_deref(), tls.as_deref())?;
+                write_site_block_with_port(&target_dir, &spec, endpoint.as_deref(), tls.as_deref(), ctx.http_port)?;
+            }
+            WebServerKind::Apache => {
+                let body = render_apache_site(&spec, endpoint.as_deref(), ctx.http_port);
+                let path = target_dir.join(block_file_name(&spec.hostname));
+                devx_core::fsx::write_atomic(&path, body)?;
             }
             WebServerKind::Caddy => {
                 let body = render_caddy_site(&spec, endpoint.as_deref(), tls.as_deref());
-                let path = sites_dir.join(block_file_name(&spec.hostname));
+                let path = target_dir.join(block_file_name(&spec.hostname));
                 devx_core::fsx::write_atomic(&path, body)?;
             }
             WebServerKind::FrankenPhp => {
                 let body = render_frankenphp_site(&spec, tls.as_deref());
-                let path = sites_dir.join(block_file_name(&spec.hostname));
+                let path = target_dir.join(block_file_name(&spec.hostname));
                 devx_core::fsx::write_atomic(&path, body)?;
             }
         }
@@ -582,7 +718,23 @@ pub fn sync_site_blocks(
     }
 
     let live: Vec<String> = sites.iter().map(|s| s.hostname.clone()).collect();
-    let pruned = prune_stale_blocks(sites_dir, &live)?;
+    let mut pruned = prune_stale_blocks(sites_dir, &live)?;
+    for extra in ["apache", "caddy", "frankenphp"] {
+        let dir = ctx.service_config_dir.join(extra).join("sites");
+        if dir.is_dir() && dir != sites_dir {
+            let live_extra: Vec<String> = sites
+                .iter()
+                .filter(|s| match (extra, s.web_server) {
+                    ("apache", WebServerKind::Apache) => true,
+                    ("caddy", WebServerKind::Caddy) => true,
+                    ("frankenphp", WebServerKind::FrankenPhp) => true,
+                    _ => false,
+                })
+                .map(|s| s.hostname.clone())
+                .collect();
+            pruned.extend(prune_stale_blocks(&dir, &live_extra)?);
+        }
+    }
 
     Ok(SiteSyncReport { written, pruned })
 }
@@ -893,6 +1045,7 @@ mod tests {
             SyncContext {
                 service_config_dir: dir.path(),
                 certs_dir: &certs,
+                http_port: 80,
                 https_port: 443,
             },
         )
@@ -908,5 +1061,20 @@ mod tests {
         // references a cert that does not exist.
         assert!(certs.join("sites").join("app.test").is_dir());
         assert!(!certs.join("sites").join("plain.test").exists());
+    }
+
+    #[test]
+    fn apache_site_renders_virtualhost_and_fastcgi() {
+        let mut site = spec("app.test", Some("8.4.25"));
+        site.aliases = vec!["www.app.test".into()];
+        site.env = vec![("APP_ENV".into(), "production".into())];
+
+        let block = render_apache_site(&site, Some("127.0.0.1:9100"), 8085);
+        assert!(block.contains("<VirtualHost *:8085>"), "{block}");
+        assert!(block.contains("ServerName app.test"), "{block}");
+        assert!(block.contains("ServerAlias www.app.test"), "{block}");
+        assert!(block.contains("SetHandler \"proxy:fcgi://127.0.0.1:9100/\""), "{block}");
+        assert!(block.contains("SetEnv APP_ENV \"production\""), "{block}");
+        assert!(block.contains("DirectoryIndex index.php index.html index.htm"), "{block}");
     }
 }

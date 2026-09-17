@@ -1110,6 +1110,28 @@ function ServerPorts({
   portsError: Error | null;
   onRetryPorts: () => void;
 }) {
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  const config = useQuery({ queryKey: ["config"], queryFn: ipc.configGet });
+  const configuredPort = config.data?.service_ports?.[server.id] ?? (server.id === "nginx" ? config.data?.network.http_port : null);
+  const [editingPort, setEditingPort] = useState(false);
+  const [portInput, setPortInput] = useState("");
+
+  const setPortMutation = useMutation({
+    mutationFn: (newPort: number | null) => ipc.serviceSetPort(server.id, newPort),
+    onSuccess: () => {
+      toast.success("Port updated", {
+        description: `Port for ${server.name} has been updated. Restart the service to apply.`,
+      });
+      setEditingPort(false);
+      void queryClient.invalidateQueries({ queryKey: ["config"] });
+      void queryClient.invalidateQueries({ queryKey: ["port-map"] });
+    },
+    onError: (err: Error) => {
+      toast.error("Failed to update port", { details: err.message });
+    },
+  });
+
   return (
     <div className="space-y-3">
       {server.pool ? (
@@ -1119,7 +1141,70 @@ function ServerPorts({
             127.0.0.1:{server.pool.port}
           </span>
         </p>
-      ) : null}
+      ) : (
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted/20 p-3 text-sm">
+          <span className="font-medium text-foreground">Configured Port:</span>
+          {editingPort ? (
+            <div className="flex items-center gap-2">
+              <Input
+                type="number"
+                min={1}
+                max={65535}
+                className="h-8 w-28 text-xs"
+                placeholder="Default"
+                value={portInput}
+                onChange={(e) => setPortInput(e.target.value)}
+                autoFocus
+              />
+              <Button
+                size="sm"
+                className="h-8"
+                disabled={setPortMutation.isPending}
+                onClick={() => {
+                  const val = portInput.trim();
+                  if (val === "") {
+                    setPortMutation.mutate(null);
+                  } else {
+                    const num = Number(val);
+                    if (!isNaN(num) && num > 0 && num <= 65535) {
+                      setPortMutation.mutate(num);
+                    } else {
+                      toast.error("Invalid port number");
+                    }
+                  }
+                }}
+              >
+                Save
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8"
+                onClick={() => setEditingPort(false)}
+              >
+                Cancel
+              </Button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <span className="data-value text-foreground font-mono" data-selectable>
+                {configuredPort ?? "Default"}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs"
+                onClick={() => {
+                  setPortInput(configuredPort ? String(configuredPort) : "");
+                  setEditingPort(true);
+                }}
+              >
+                Change port
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
 
       {ports.length > 0 ? (
         <table className="w-full max-w-lg text-left text-sm">

@@ -175,6 +175,8 @@ pub enum WebServer {
     /// before this field existed.
     #[default]
     Nginx,
+    /// Apache — classic web server with .htaccess support.
+    Apache,
     /// Caddy — minimal config, HTTP/2 and HTTP/3 out of the box.
     Caddy,
     /// FrankenPHP — serves PHP directly, no FastCGI pool needed.
@@ -186,6 +188,7 @@ impl WebServer {
     pub fn component_id(self) -> &'static str {
         match self {
             WebServer::Nginx => "nginx",
+            WebServer::Apache => "apache",
             WebServer::Caddy => "caddy",
             WebServer::FrankenPhp => "frankenphp",
         }
@@ -448,6 +451,34 @@ pub const MAX_CRON_JOBS: usize = 64;
 /// Maximum minutes between runs: one week.
 pub const MAX_CRON_MINUTES: u32 = 7 * 24 * 60;
 
+/// Custom port assignments for supervised services, keyed by service id.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct ServicePorts(
+    pub std::collections::BTreeMap<String, u16>,
+);
+
+impl ServicePorts {
+    /// Returns the port for `service`, when configured.
+    pub fn get(&self, service: &str) -> Option<u16> {
+        self.0.get(service).copied()
+    }
+
+    /// Records the port for `service`.
+    pub fn insert(&mut self, service: impl Into<String>, port: u16) {
+        self.0.insert(service.into(), port);
+    }
+
+    /// Removes any custom port for `service`.
+    pub fn remove(&mut self, service: &str) -> Option<u16> {
+        self.0.remove(service)
+    }
+
+    /// Returns a reference to the underlying map.
+    pub fn all(&self) -> &std::collections::BTreeMap<String, u16> {
+        &self.0
+    }
+}
+
 /// Complete DevX configuration.
 ///
 /// Deliberately has no `#[serde(default)]`: every field is required on the wire
@@ -472,6 +503,8 @@ pub struct Config {
     pub php_xdebug: PhpXdebug,
     /// Resource limits per installed PHP version.
     pub php_limits: PhpLimits,
+    /// Custom port assignments per service.
+    pub service_ports: ServicePorts,
     /// User-configured local sites.
     pub sites: Vec<Site>,
     /// User-configured supervised worker processes.
@@ -491,6 +524,7 @@ impl Default for Config {
             php_extensions: PhpExtensions::default(),
             php_xdebug: PhpXdebug::default(),
             php_limits: PhpLimits::default(),
+            service_ports: ServicePorts::default(),
             sites: Vec::new(),
             workers: Vec::new(),
             cron: Vec::new(),
@@ -513,6 +547,14 @@ impl Config {
         ] {
             if port == 0 {
                 return Err(Error::invalid_input(format!("{label} must not be 0")));
+            }
+        }
+
+        for (service, &port) in &self.service_ports.0 {
+            if port == 0 {
+                return Err(Error::invalid_input(format!(
+                    "service_ports.\"{service}\" must not be 0"
+                )));
             }
         }
 
@@ -1617,5 +1659,29 @@ mod tests {
             .expect("must not fail");
 
         assert_eq!(version, CURRENT_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn web_server_apache_has_correct_component_id() {
+        assert_eq!(WebServer::Apache.component_id(), "apache");
+    }
+
+    #[test]
+    fn service_ports_insert_and_get() {
+        let mut ports = ServicePorts::default();
+        assert_eq!(ports.get("apache"), None);
+        ports.insert("apache", 8085);
+        assert_eq!(ports.get("apache"), Some(8085));
+        ports.insert("nginx", 80);
+        assert_eq!(ports.get("nginx"), Some(80));
+        assert_eq!(ports.remove("apache"), Some(8085));
+        assert_eq!(ports.get("apache"), None);
+    }
+
+    #[test]
+    fn config_rejects_zero_service_port() {
+        let mut cfg = Config::default();
+        cfg.service_ports.insert("mariadb", 0);
+        assert!(cfg.validate().is_err());
     }
 }

@@ -45,6 +45,11 @@ pub fn is_service(component_id: &str) -> bool {
     definition_for(component_id).is_ok()
 }
 
+/// Returns the default port for `component_id`, if declared.
+pub fn default_port_for(component_id: &str) -> Option<u16> {
+    definition_for(component_id).ok().and_then(|def| def.default_port)
+}
+
 /// Ids of every component with a service definition.
 pub fn service_ids() -> Vec<&'static str> {
     vec![
@@ -435,6 +440,10 @@ fn apache() -> ServiceDefinition {
 Listen 127.0.0.1:{{ port }}
 ServerName localhost
 
+LoadModule auth_basic_module modules/mod_auth_basic.so
+LoadModule authn_core_module modules/mod_authn_core.so
+LoadModule authn_file_module modules/mod_authn_file.so
+LoadModule authz_user_module modules/mod_authz_user.so
 LoadModule authz_core_module modules/mod_authz_core.so
 LoadModule authz_host_module modules/mod_authz_host.so
 LoadModule log_config_module modules/mod_log_config.so
@@ -469,6 +478,8 @@ DocumentRoot "{{ data_dir }}/www"
 ErrorLog  "{{ log_dir }}/apache-error.log"
 CustomLog "{{ log_dir }}/apache-access.log" common
 PidFile   "{{ data_dir }}/httpd.pid"
+
+IncludeOptional "{{ config_dir }}/sites/*.conf"
 "##;
 
     ServiceDefinition {
@@ -481,7 +492,12 @@ PidFile   "{{ data_dir }}/httpd.pid"
         }],
         init_steps: vec![],
         program: "Apache24/bin/httpd.exe".into(),
-        args: vec!["-f".into(), "{{ config_dir }}/httpd.conf".into()],
+        args: vec![
+            "-d".into(),
+            "{{ install_dir }}/Apache24".into(),
+            "-f".into(),
+            "{{ config_dir }}/httpd.conf".into(),
+        ],
         env: vec![],
         working_dir: None,
         readiness: Readiness::TcpPort,

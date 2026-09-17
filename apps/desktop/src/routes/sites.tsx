@@ -14,7 +14,7 @@ import {
   Trash2,
   Variable,
 } from "lucide-react";
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { FilterBar, type ActiveFilter } from "@/components/filter-bar";
 import { HostsButton } from "@/components/hosts-panel";
@@ -34,6 +34,7 @@ import { Tooltip } from "@/components/ui/tooltip";
 import { openFolder } from "@/lib/open-folder";
 import { openInBrowser } from "@/lib/open-url";
 import { pickDirectory } from "@/lib/pick-directory";
+import { useInstalledVersions } from "@/lib/queries";
 import {
   ipc,
   type CaStatus,
@@ -42,7 +43,7 @@ import {
   type SiteStatus,
 } from "@/lib/ipc";
 
-type WebServerChoice = "Nginx" | "Caddy" | "FrankenPhp";
+type WebServerChoice = "Nginx" | "Apache" | "Caddy" | "FrankenPhp";
 
 /**
  * Document-root picker: a Browse button that opens the native Windows
@@ -90,7 +91,13 @@ function DocrootField({
 
 /** Display label for a web server kind. */
 function serverLabel(server: SiteStatus["web_server"]): string {
-  return server === "Nginx" ? "nginx" : server === "Caddy" ? "Caddy" : "FrankenPHP";
+  return server === "Nginx"
+    ? "nginx"
+    : server === "Apache"
+      ? "Apache"
+      : server === "Caddy"
+        ? "Caddy"
+        : "FrankenPHP";
 }
 
 /** The base URL a site is served on, scheme included. */
@@ -637,12 +644,32 @@ function CreateSiteDialog({
 }) {
   const queryClient = useQueryClient();
   const toast = useToast();
+  const installed = useInstalledVersions();
+  const installedComponentIds = useMemo(
+    () => new Set((installed.data ?? []).map((v) => v.component_id)),
+    [installed.data],
+  );
+
+  const availableServers = useMemo(() => {
+    const servers: WebServerChoice[] = [];
+    if (installedComponentIds.has("nginx")) servers.push("Nginx");
+    if (installedComponentIds.has("apache")) servers.push("Apache");
+    if (installedComponentIds.has("caddy")) servers.push("Caddy");
+    if (installedComponentIds.has("frankenphp")) servers.push("FrankenPhp");
+    return servers.length > 0 ? servers : (["Nginx", "Apache", "Caddy", "FrankenPhp"] as WebServerChoice[]);
+  }, [installedComponentIds]);
 
   const [hostname, setHostname] = useState("");
   const [docroot, setDocroot] = useState("");
   const [phpVersion, setPhpVersion] = useState("");
   const [https, setHttps] = useState(false);
   const [webServer, setWebServer] = useState<WebServerChoice>("Nginx");
+
+  useEffect(() => {
+    if (open && availableServers.length > 0 && !availableServers.includes(webServer)) {
+      setWebServer(availableServers[0]);
+    }
+  }, [open, availableServers, webServer]);
 
   const add = useMutation({
     mutationFn: () =>
@@ -656,7 +683,7 @@ function CreateSiteDialog({
       setDocroot("");
       setPhpVersion("");
       setHttps(false);
-      setWebServer("Nginx");
+      setWebServer(availableServers[0] ?? "Nginx");
       onClose();
       void queryClient.invalidateQueries({ queryKey: ["sites"] });
     },
@@ -718,6 +745,9 @@ function CreateSiteDialog({
             autoComplete="off"
             spellCheck={false}
           />
+          <p className="text-xs text-muted-foreground">
+            Must end in <code>.test</code> to match the local resolver.
+          </p>
         </div>
 
         <DocrootField id="site-docroot" value={docroot} onChange={setDocroot} />
@@ -782,13 +812,16 @@ function CreateSiteDialog({
               value={webServer}
               onChange={(event) => setWebServer(event.target.value as WebServerChoice)}
             >
-              <option value="Nginx">nginx</option>
-              <option value="Caddy">Caddy</option>
-              <option value="FrankenPhp">FrankenPHP</option>
+              {availableServers.map((server) => (
+                <option key={server} value={server}>
+                  {serverLabel(server)}
+                </option>
+              ))}
             </Select>
             <p className="text-xs text-muted-foreground">
-              Only nginx serves PHP through a FastCGI pool; Caddy and
-              FrankenPHP handle it themselves.
+              {webServer === "Nginx" || webServer === "Apache"
+                ? `${serverLabel(webServer)} routes PHP through FastCGI pools.`
+                : "Caddy and FrankenPHP handle serving themselves."}
             </p>
           </div>
         </details>
@@ -980,6 +1013,21 @@ function SiteDetail({
 }) {
   const queryClient = useQueryClient();
   const toast = useToast();
+  const installed = useInstalledVersions();
+  const installedComponentIds = useMemo(
+    () => new Set((installed.data ?? []).map((v) => v.component_id)),
+    [installed.data],
+  );
+
+  const availableServers = useMemo(() => {
+    const servers: WebServerChoice[] = [];
+    if (installedComponentIds.has("nginx") || site.web_server === "Nginx") servers.push("Nginx");
+    if (installedComponentIds.has("apache") || site.web_server === "Apache") servers.push("Apache");
+    if (installedComponentIds.has("caddy") || site.web_server === "Caddy") servers.push("Caddy");
+    if (installedComponentIds.has("frankenphp") || site.web_server === "FrankenPhp") servers.push("FrankenPhp");
+    return servers.length > 0 ? servers : (["Nginx", "Apache", "Caddy", "FrankenPhp"] as WebServerChoice[]);
+  }, [installedComponentIds, site.web_server]);
+
   const [draftDocroot, setDraftDocroot] = useState(site.docroot);
   const [draftPhp, setDraftPhp] = useState(site.php_version);
   const [draftHttps, setDraftHttps] = useState(site.https);
@@ -1034,9 +1082,11 @@ function SiteDetail({
               value={draftServer}
               onChange={(event) => setDraftServer(event.target.value as WebServerChoice)}
             >
-              <option value="Nginx">nginx</option>
-              <option value="Caddy">Caddy</option>
-              <option value="FrankenPhp">FrankenPHP</option>
+              {availableServers.map((server) => (
+                <option key={server} value={server}>
+                  {serverLabel(server)}
+                </option>
+              ))}
             </Select>
           </div>
           <div className="space-y-1.5">

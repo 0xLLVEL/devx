@@ -26,10 +26,12 @@ export function Progress({
     >
       <div
         className={cn(
-          "h-full rounded-full bg-primary transition-[width] duration-200",
-          pct === undefined && "animate-pulse",
+          "h-full rounded-full transition-[width] duration-200",
+          pct === undefined
+            ? "shimmer-skeleton"
+            : "bg-gradient-to-r from-primary to-primary-hover",
         )}
-        style={{ width: `${pct ?? 30}%` }}
+        style={{ width: `${pct ?? 100}%` }}
       />
     </div>
   );

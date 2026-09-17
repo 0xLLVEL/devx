@@ -34,6 +34,7 @@ export function configFixture(overrides: Partial<Config> = {}): Config {
     php_extensions: {},
     php_xdebug: {},
     php_limits: {},
+    service_ports: {},
     sites: [],
     workers: [],
     cron: [],

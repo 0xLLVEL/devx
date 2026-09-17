@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   dnsStop: vi.fn(),
   configGet: vi.fn(),
   templateList: vi.fn(),
+  installedVersions: vi.fn(),
   pickDirectory: vi.fn(),
   openInBrowser: vi.fn(),
   openFolder: vi.fn(),
@@ -70,6 +71,7 @@ describe("SitesPage", () => {
       nrpt_active: null,
       suffix: "test",
     });
+    mocks.installedVersions.mockResolvedValue([]);
   });
 
   it("shows an empty state when no sites are configured", async () => {

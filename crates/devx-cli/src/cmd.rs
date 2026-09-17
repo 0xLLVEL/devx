@@ -256,6 +256,7 @@ fn sync_site_blocks(paths: &AppPaths, store: &ConfigStore) -> anyhow::Result<()>
         devx_provision::SyncContext {
             service_config_dir: &paths.service_config_dir(),
             certs_dir: &paths.certs_dir(),
+            http_port: store.config().network.http_port,
             https_port: store.config().network.https_port,
         },
     )

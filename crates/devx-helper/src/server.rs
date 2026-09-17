@@ -111,10 +111,14 @@ fn serve_client<R, W>(
 
         tracing::debug!(?request, "helper received a request");
         if matches!(request, PrivilegedRequest::Shutdown) {
-            // Answer first so the client sees the Applied, then flip the
-            // flag the outer loop polls between connections.
+            // Answer first so the client sees the Applied, then exit the helper process.
             let _ = devx_ipc::write_frame_sync(writer, &PrivilegedResponse::Applied);
+            let _ = writer.flush();
             shutdown.store(true, std::sync::atomic::Ordering::Relaxed);
+            std::thread::spawn(|| {
+                std::thread::sleep(std::time::Duration::from_millis(150));
+                std::process::exit(0);
+            });
             break;
         }
         let response = handle(backends, &request);

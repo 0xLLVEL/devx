@@ -165,6 +165,9 @@ export const ipc = {
   serviceLogs: (id: string, after: number) =>
     unwrap(commands.serviceLogs(id, after)),
   serviceMetrics: () => unwrap(commands.serviceMetrics()),
+  serviceSetPort: (componentId: string, port: number | null) =>
+    unwrap(commands.serviceSetPort(componentId, port)),
+  serviceGetPorts: () => unwrap(commands.serviceGetPorts()),
   logsList: () => unwrap(commands.logsList()),
   logsRead: (fileName: string, tail: number) =>
     unwrap(commands.logsRead(fileName, tail)),

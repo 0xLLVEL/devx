@@ -32,9 +32,11 @@ export function Switch({
       disabled={disabled}
       onClick={() => onCheckedChange(!checked)}
       className={cn(
-        /* §51 toggle: 180–220ms thumb travel. */
-        "inline-flex h-5 w-9 shrink-0 items-center rounded-full border border-transparent transition-colors duration-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:cursor-not-allowed disabled:opacity-50",
-        checked ? "bg-primary" : "bg-input",
+        /* §51 toggle: 180–220ms thumb travel, with track glow when checked. */
+        "inline-flex h-5 w-9 shrink-0 items-center rounded-full border border-transparent transition-[color,background-color,box-shadow] duration-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:cursor-not-allowed disabled:opacity-50",
+        checked
+          ? "bg-primary shadow-[inset_0_0_6px_var(--accent-soft)]"
+          : "bg-input",
         className,
       )}
       {...rest}
@@ -42,8 +44,8 @@ export function Switch({
       <span
         aria-hidden
         className={cn(
-          "pointer-events-none block size-4 rounded-full bg-elevated shadow transition-transform duration-200 ease-standard",
-          checked ? "translate-x-4" : "translate-x-0.5",
+          "pointer-events-none block size-4 rounded-full bg-elevated shadow-sm transition-[transform,box-shadow] duration-200 ease-standard",
+          checked ? "translate-x-4 shadow-md" : "translate-x-0.5",
         )}
       />
     </button>

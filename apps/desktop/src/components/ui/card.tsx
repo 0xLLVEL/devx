@@ -3,13 +3,15 @@ import type { ComponentProps } from "react";
 import { cn } from "@/lib/utils";
 
 /** Surface container used for grouping related information. */
-export function Card({ className, ...props }: ComponentProps<"div">) {
+export function Card({ className, interactive, ...props }: ComponentProps<"div"> & { interactive?: boolean }) {
   return (
     <div
       /* §12 cards are 12px; §14 keeps them real opaque surfaces — glass stays
-         an accent layer for chrome. */
+         an accent layer for chrome. Interactive cards lift on hover. */
       className={cn(
         "rounded-lg border border-border bg-card text-card-foreground shadow-sm",
+        interactive &&
+          "transition-[transform,border-color,box-shadow] duration-[160ms] hover:-translate-y-px hover:border-primary/30 hover:shadow-md motion-reduce:hover:translate-y-0",
         className,
       )}
       {...props}

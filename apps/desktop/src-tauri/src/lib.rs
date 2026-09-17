@@ -113,9 +113,49 @@ pub fn run() {
         .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
                 persist_session(app);
+                shutdown_services(app);
                 shutdown_privileged(app);
             }
         });
+}
+
+/// Shuts down all supervised background services and the DNS resolver on full app exit.
+///
+/// Running services are persisted to `session.json` *before* this function runs so
+/// that next launch can restore them if configured. Services are stopped concurrently
+/// with a 5-second timeout, ensuring clean termination without hanging the exit.
+fn shutdown_services(app: &tauri::AppHandle) {
+    let Some(state) = app.try_state::<state::AppState>() else {
+        return;
+    };
+
+    let teardown = async {
+        // 1. Stop the bundled DNS resolver if active.
+        let dns_handle = state
+            .dns
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take();
+        if let Some(handle) = dns_handle {
+            handle.stop().await;
+            tracing::info!("DNS resolver stopped on exit");
+        }
+
+        // 2. Stop all active supervised services concurrently.
+        state.services.stop_all().await;
+        tracing::info!("all background services stopped on exit");
+    };
+
+    let bounded = async {
+        tokio::select! {
+            _ = teardown => tracing::info!("services shutdown completed cleanly"),
+            _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {
+                tracing::warn!("services shutdown timed out after 5s; proceeding with exit");
+            }
+        }
+    };
+
+    tauri::async_runtime::block_on(bounded);
 }
 
 /// Captures the running services so the next launch can restore them.
