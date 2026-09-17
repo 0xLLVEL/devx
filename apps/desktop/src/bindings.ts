@@ -159,6 +159,14 @@ export const commands = {
 	 *  events keyed by component and version so the UI can update the right row.
 	 */
 	componentInstall: (componentId: string, version: string) => typedError<string, DevxError>(__TAURI_INVOKE("component_install", { componentId, version })),
+	/**
+	 *  Cancels a running [`component_install`].
+	 * 
+	 *  Returns whether an install was actually running. The install aborts at the
+	 *  next chunk boundary and cleans up: the partial download is kept so the next
+	 *  attempt resumes from it, while the staging directory is removed.
+	 */
+	componentInstallCancel: (componentId: string, version: string) => typedError<boolean, DevxError>(__TAURI_INVOKE("component_install_cancel", { componentId, version })),
 	/**  Removes an installed component version. */
 	componentUninstall: (componentId: string, version: string) => typedError<null, DevxError>(__TAURI_INVOKE("component_uninstall", { componentId, version })),
 	/**  Lists every installed component version found on disk. */

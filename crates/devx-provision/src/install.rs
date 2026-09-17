@@ -9,12 +9,16 @@
 use std::path::{Path, PathBuf};
 
 use devx_core::{AppPaths, Error, ErrorCode, Result};
+use tokio_util::sync::CancellationToken;
 
 use crate::catalog::Layout;
 use crate::download::{DownloadOptions, Downloader, Progress};
 use crate::http::HttpClient;
 use crate::verify::{parse_sums_document, verify_sha256};
 use crate::version::{Checksum, ComponentVersion};
+
+/// Error code carried by a cancelled install (re-exported from the downloader).
+pub use crate::download::CANCELLED;
 
 /// Stage an install is currently in, reported to the UI.
 #[derive(Debug, Clone, PartialEq)]
@@ -89,13 +93,25 @@ impl Installer {
     /// Idempotent: an already-installed version returns immediately. On any
     /// failure the staging directory and partial download are removed, leaving
     /// no trace.
+    ///
+    /// Pass a [`CancellationToken`] as `cancelled` to abort the install. A cancel
+    /// during the download deliberately keeps the `.partial` file (a restart
+    /// resumes from it); every other failure and a cancel during verify/extract
+    /// leaves nothing behind, as usual.
     pub async fn install(
         &self,
         version: &ComponentVersion,
         layout: &Layout,
+        cancelled: Option<&CancellationToken>,
         mut on_stage: impl FnMut(InstallStage),
     ) -> Result<PathBuf> {
         let install_dir = self.install_dir(&version.component_id, &version.version);
+
+        if let Some(token) = cancelled {
+            if token.is_cancelled() {
+                return Err(Error::new(CANCELLED, "install cancelled"));
+            }
+        }
 
         if self.is_installed(&version.component_id, &version.version) {
             on_stage(InstallStage::Done);
@@ -119,12 +135,13 @@ impl Installer {
         ));
 
         self.downloader
-            .download(&version.artifact.url, &archive, |progress| {
+            .download(&version.artifact.url, &archive, cancelled, |progress| {
                 on_stage(InstallStage::Downloading(progress));
             })
             .await?;
 
-        // From here, clean up the archive on any failure path too.
+        // From here, clean up the archive on any failure path too — including
+        // a cancel that lands during verify or extraction.
         let result = self
             .verify_and_extract(
                 version,
@@ -135,6 +152,22 @@ impl Installer {
                 &mut on_stage,
             )
             .await;
+
+        // A cancel that landed before the download finished must not wipe the
+        // partial file: it is what makes the next attempt resume.
+        if let Err(err) = &result {
+            if err.code == CANCELLED {
+                let partial = archive.with_file_name(format!(
+                    "{}.partial",
+                    archive
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| "archive".to_owned())
+                ));
+                let _ = std::fs::remove_file(&partial);
+                return Err(err.clone());
+            }
+        }
 
         if result.is_err() || !self.keep_archives {
             let _ = std::fs::remove_file(&archive);

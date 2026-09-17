@@ -13,6 +13,14 @@ use std::time::Duration;
 use devx_core::{Error, ErrorCode, Result};
 use futures::StreamExt;
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
+use tokio_util::sync::CancellationToken;
+
+/// Error code used for a deliberately cancelled download or install.
+///
+/// `InvalidInput` would read as a caller mistake, and `Io`/`Network` would look
+/// like something to retry; a cancellation is neither, so it gets its own code
+/// the UI can recognise and stay quiet about.
+pub const CANCELLED: ErrorCode = ErrorCode::Process;
 
 /// Progress of an in-flight download.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -107,10 +115,15 @@ impl Downloader {
     /// request when the server supports it, and discarded and restarted when it
     /// does not. Progress callbacks are throttled by the caller if needed; this
     /// method calls back on every chunk.
+    ///
+    /// Pass a [`CancellationToken`] as `cancelled` to abort mid-transfer: the
+    /// partial file is left on disk so a later run resumes from where this one
+    /// stopped, and the returned error carries [`CANCELLED`].
     pub async fn download(
         &self,
         url: &str,
         dest: impl AsRef<Path>,
+        cancelled: Option<&CancellationToken>,
         mut on_progress: impl FnMut(Progress),
     ) -> Result<()> {
         let dest = dest.as_ref();
@@ -123,6 +136,12 @@ impl Downloader {
             })?;
         }
 
+        if let Some(token) = cancelled {
+            if token.is_cancelled() {
+                return Err(Error::new(CANCELLED, "download cancelled"));
+            }
+        }
+
         let partial = partial_path(dest);
         let mut last_error = None;
 
@@ -133,7 +152,7 @@ impl Downloader {
                 .unwrap_or(0);
 
             match self
-                .attempt(url, &partial, already_have, &mut on_progress)
+                .attempt(url, &partial, already_have, cancelled, &mut on_progress)
                 .await
             {
                 Ok(()) => {
@@ -147,6 +166,12 @@ impl Downloader {
                     return Ok(());
                 }
                 Err(err) => {
+                    // A cancellation is final: no retries, no backoff sleep
+                    // prolonging the shutdown.
+                    if err.code == CANCELLED {
+                        return Err(err);
+                    }
+
                     let retryable = err.code == ErrorCode::Network;
                     tracing::warn!(url, attempt, retryable, error = %err, "download attempt failed");
                     last_error = Some(err);
@@ -171,6 +196,7 @@ impl Downloader {
         url: &str,
         partial: &Path,
         resume_from: u64,
+        cancelled: Option<&CancellationToken>,
         on_progress: &mut impl FnMut(Progress),
     ) -> Result<()> {
         // No per-request timeout: connect and read timeouts on the client cover
@@ -229,13 +255,29 @@ impl Downloader {
         on_progress(Progress { downloaded, total });
 
         let mut stream = response.bytes_stream();
-        while let Some(chunk) = stream.next().await {
+        loop {
+            // Both waiting for the next chunk and writing it race the cancel
+            // token, so a cancelled install stops promptly even mid-write or
+            // while stalled between chunks.
+            let next = if let Some(token) = cancelled {
+                tokio::select! {
+                    _ = token.cancelled() => {
+                        return Err(Error::new(CANCELLED, "download cancelled"));
+                    }
+                    chunk = stream.next() => chunk,
+                }
+            } else {
+                stream.next().await
+            };
+
+            let Some(chunk) = next else { break };
             let chunk = chunk.map_err(|err| {
                 Error::new(
                     ErrorCode::Network,
                     format!("stream from {url} broke: {err}"),
                 )
             })?;
+
             file.write_all(&chunk)
                 .await
                 .map_err(|err| io_error(err, partial, "write download"))?;

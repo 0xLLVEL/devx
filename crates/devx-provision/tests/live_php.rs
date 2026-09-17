@@ -37,7 +37,7 @@ async fn php_pool_starts_and_speaks_fastcgi() {
 
     let installer = Installer::new(paths.clone(), http).expect("installer");
     let install_dir = installer
-        .install(latest, &component.layout, |_| {})
+        .install(latest, &component.layout, None, |_| {})
         .await
         .expect("install php");
 

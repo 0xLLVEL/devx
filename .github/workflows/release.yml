@@ -1,0 +1,116 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+# Never cancel an in-flight release build: the published release must either
+# appear complete or not at all.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  release:
+    name: build and publish release (windows)
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: apps/desktop
+        run: npm ci
+
+      # Accepts `v1.2.3`, `v1.2.3-rc.1`, etc. Strips the leading `v` so the
+      # bundler sees a plain semver. A manually dispatched run (no tag) falls
+      # back to the version from tauri.conf.json.
+      - name: Derive version from tag
+        id: version
+        shell: pwsh
+        run: |
+          $tag = '${{ github.ref_name }}'
+          if ($tag -match '^v(\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?)$') {
+              $version = $Matches[1]
+              "version=$version" >> $env:GITHUB_OUTPUT
+              "tag=$tag" >> $env:GITHUB_OUTPUT
+              Write-Host "==> releasing version $version (tag $tag)"
+          }
+          elseif ('${{ github.event_name }}' -eq 'workflow_dispatch') {
+              "version=" >> $env:GITHUB_OUTPUT
+              "tag=" >> $env:GITHUB_OUTPUT
+              Write-Host '==> no tag (workflow_dispatch); using version from tauri.conf.json'
+          }
+          else {
+              Write-Error "Tag '$tag' is not a valid version tag (expected v<semver>, e.g. v1.2.3 or v1.2.3-rc.1)."
+              exit 1
+          }
+
+      - name: Build release installer
+        shell: pwsh
+        run: ./scripts/make-installer.ps1 -AppVersion '${{ steps.version.outputs.version }}'
+
+      - name: Locate installer
+        id: installer
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem 'target/release/bundle/nsis' -Filter '*-setup.exe' |
+              Select-Object -First 1
+          if (-not $setup) {
+              Write-Error 'No NSIS installer found in target/release/bundle/nsis.'
+              exit 1
+          }
+          "path=$($setup.FullName)" >> $env:GITHUB_OUTPUT
+          "name=$($setup.Name)" >> $env:GITHUB_OUTPUT
+          Write-Host "==> installer: $($setup.Name)"
+
+      # SHA256SUMS-style file so users can verify the installer download.
+      - name: Generate checksum
+        id: checksum
+        shell: pwsh
+        run: |
+          $setup = '${{ steps.installer.outputs.path }}'
+          $hash = (Get-FileHash $setup -Algorithm SHA256).Hash.ToLowerInvariant()
+          $file = Join-Path (Split-Path -Parent $setup) 'SHA256SUMS'
+          "$hash  $(Split-Path -Leaf $setup)" |
+              Set-Content -Path $file -Encoding ascii -NoNewline
+          "path=$file" >> $env:GITHUB_OUTPUT
+          Get-Content $file
+
+      # Publishes a stable "latest" release with notes generated from the
+      # commits since the previous tag.
+      - name: Publish GitHub Release
+        if: steps.version.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $tag = '${{ steps.version.outputs.tag }}'
+          gh release create $tag '${{ steps.installer.outputs.path }}' '${{ steps.checksum.outputs.path }}' `
+            --title 'DevX ${{ steps.version.outputs.version }}' `
+            --generate-notes `
+            --latest
+          Write-Host "==> release published: $tag"

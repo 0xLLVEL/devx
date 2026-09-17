@@ -150,6 +150,8 @@ export const ipc = {
     unwrap(commands.componentVersions(componentId)),
   componentInstall: (componentId: string, version: string) =>
     unwrap(commands.componentInstall(componentId, version)),
+  componentInstallCancel: (componentId: string, version: string) =>
+    unwrap(commands.componentInstallCancel(componentId, version)),
   componentUninstall: (componentId: string, version: string) =>
     unwrap(commands.componentUninstall(componentId, version)),
   installedVersions: () => unwrap(commands.installedVersions()),

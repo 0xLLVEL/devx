@@ -40,7 +40,7 @@ async fn install(paths: &AppPaths, component_id: &str) -> (String, std::path::Pa
 
     let installer = Installer::new(paths.clone(), http).expect("installer");
     let install_dir = installer
-        .install(latest, &component.layout, |_| {})
+        .install(latest, &component.layout, None, |_| {})
         .await
         .unwrap_or_else(|e| panic!("install {component_id}: {e}"));
 

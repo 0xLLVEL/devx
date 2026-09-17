@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import {
   Boxes,
+  CircleSlash,
   Download,
   Loader2,
   Lock,
@@ -24,12 +25,15 @@ import { useToast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
 import {
   ipc,
+  IpcError,
   type ComponentKind,
   type ComponentSummary,
   type ComponentVersion,
 } from "@/lib/ipc";
 import {
+  describeDownload,
   describePhase,
+  formatSpeed,
   phaseFraction,
   useInstall,
 } from "@/lib/use-install";
@@ -378,6 +382,11 @@ function VersionRow({
   const phase = install.phaseOf(componentId, version.version);
   const busy = phase !== undefined && phase.stage !== "done";
   const fraction = phase ? phaseFraction(phase) : null;
+  const downloadInfo = phase ? describeDownload(phase) : null;
+  const downloadSpeed =
+    phase?.stage === "downloading"
+      ? install.speedOf(componentId, version.version)
+      : undefined;
   const [confirmRemove, setConfirmRemove] = useState(false);
   const toast = useToast();
 
@@ -387,6 +396,16 @@ function VersionRow({
     install.install.variables?.version === version.version
       ? install.install.error
       : null;
+
+  // A deliberate cancel is not a failure: the backend reports it through a
+  // dedicated code, and the row just returns to its idle Install state.
+  const cancelled =
+    installError instanceof IpcError && installError.code === "process" &&
+    install.install.variables?.componentId === componentId &&
+    install.install.variables?.version === version.version
+      ? installError
+      : null;
+  const shownError = cancelled ? null : installError;
 
   return (
     <li className="px-3 py-2 text-sm">
@@ -430,35 +449,67 @@ function VersionRow({
               {install.uninstall.isPending ? <Loader2 className="animate-spin" /> : <Trash2 />}
               Remove
             </Button>
+          ) : busy ? (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={install.cancelInstall.isPending}
+              onClick={() =>
+                install.cancelInstall.mutate({ componentId, version: version.version })
+              }
+            >
+              <CircleSlash />
+              Cancel
+            </Button>
           ) : (
             <Button
               variant="outline"
               size="sm"
-              disabled={busy}
               onClick={() =>
                 install.install.mutate({ componentId, version: version.version })
               }
             >
-              {busy ? <Loader2 className="animate-spin" /> : <Download />}
-              {busy && phase ? describePhase(phase) : "Install"}
+              <Download />
+              Install
             </Button>
           )}
         </div>
       </div>
 
-      {busy && fraction !== null ? (
-        <div className="mt-2">
-          <Progress value={fraction} label={`Installing ${componentId} ${version.version}`} />
+      {/* The phase label and progress stay visible while the cancel request
+          is in flight; only the button itself swaps to Cancel. */}
+      {busy && phase && fraction === null && phase.stage !== "downloading" ? (
+        <p className="mt-1 text-xs text-muted-foreground">{describePhase(phase)}</p>
+      ) : null}
+
+      {busy && phase?.stage === "downloading" ? (
+        <div className="mt-2 space-y-1">
+          {/* Indeterminate when the server reported no total length. */}
+          <Progress
+            value={fraction ?? undefined}
+            label={`Downloading ${componentId} ${version.version}`}
+          />
+          <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+            {/* Byte counts when the server reported a length, the running
+                count alone when it did not. */}
+            <span>
+              {downloadInfo}
+              {downloadSpeed !== undefined
+                ? ` · ${formatSpeed(downloadSpeed)}`
+                : ""}
+            </span>
+            {fraction !== null ? <span>{Math.round(fraction * 100)}%</span> : null}
+          </div>
         </div>
       ) : null}
 
-      {installError ? (
+      {shownError ? (
         <Callout
           variant="destructive"
           title={`Could not install ${version.version}.`}
           className="mt-2"
         >
-          <p>{installError.message}</p>
+          <p>{shownError.message}</p>
         </Callout>
       ) : null}
 

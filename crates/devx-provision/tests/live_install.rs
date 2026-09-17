@@ -33,7 +33,7 @@ async fn installs_real_php_and_runs_it() {
 
     let installer = Installer::new(paths.clone(), http).expect("installer");
     let install_dir = installer
-        .install(latest, &php.layout, |stage| {
+        .install(latest, &php.layout, None, |stage| {
             println!("  {stage:?}");
         })
         .await
@@ -93,7 +93,7 @@ async fn installs_real_node_lts_and_runs_it() {
 
     let installer = Installer::new(paths, http).expect("installer");
     let install_dir = installer
-        .install(target, &node.layout, |stage| println!("  {stage:?}"))
+        .install(target, &node.layout, None, |stage| println!("  {stage:?}"))
         .await
         .expect("install node");
 

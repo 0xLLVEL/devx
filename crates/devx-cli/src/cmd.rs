@@ -291,7 +291,7 @@ async fn install_cmd(paths: &AppPaths, component_id: &str, version: &str) -> any
 
     let installer = Installer::new(paths.clone(), http)?;
     let install_dir = installer
-        .install(&target, &component.layout, |stage| match stage {
+        .install(&target, &component.layout, None, |stage| match stage {
             devx_provision::InstallStage::ResolvingChecksum => {
                 println!("resolving checksum…");
             }

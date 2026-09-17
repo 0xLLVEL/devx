@@ -12,7 +12,12 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$Configuration = 'release'
+    [string]$Configuration = 'release',
+    # Optional semantic version override (e.g. '0.2.0'). When set, the bundled
+    # app version comes from this value instead of tauri.conf.json. Used by the
+    # release workflow so the installer version matches the pushed tag without
+    # committing version bumps.
+    [string]$AppVersion = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -46,7 +51,17 @@ Get-ChildItem $binDir | ForEach-Object { Write-Host "    $($_.Name)" }
 Write-Host '==> tauri build' -ForegroundColor Cyan
 Push-Location (Join-Path $repoRoot 'apps\desktop')
 try {
-    npx tauri build
+    if ($AppVersion) {
+        # Pass the override as a JSON file: inline JSON strings lose their
+        # quotes when Windows PowerShell 5.1 spawns native commands.
+        $configFile = Join-Path ([IO.Path]::GetTempPath()) 'devx-tauri-version.json'
+        @{ version = $AppVersion } | ConvertTo-Json -Compress |
+            Set-Content -Path $configFile -Encoding utf8
+        npx tauri build --config $configFile
+    }
+    else {
+        npx tauri build
+    }
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 finally {

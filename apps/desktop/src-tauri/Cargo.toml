@@ -30,6 +30,7 @@ devx-privileged = { workspace = true }
 devx-sys = { workspace = true }
 serde = { workspace = true }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 reqwest = { workspace = true }
 bcrypt = { workspace = true }
 time = { workspace = true }

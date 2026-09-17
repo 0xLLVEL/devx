@@ -45,6 +45,7 @@ pub fn builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::catalog_list,
             commands::component_versions,
             commands::component_install,
+            commands::component_install_cancel,
             commands::component_uninstall,
             commands::installed_versions,
             commands::service_component_ids,

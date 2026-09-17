@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   catalogList: vi.fn(),
   componentVersions: vi.fn(),
   componentInstall: vi.fn(),
+  componentInstallCancel: vi.fn(),
   componentUninstall: vi.fn(),
   installedVersions: vi.fn(),
 }));
@@ -146,6 +147,65 @@ describe("ComponentsPage", () => {
     ]);
   });
 
+  it("shows downloaded bytes of the total and the percent while downloading", async () => {
+    const user = userEvent.setup();
+    mocks.componentInstall.mockImplementation(() => new Promise(() => {}));
+
+    renderWithProviders(<ComponentsPage />);
+
+    await screen.findByText("8.4.25");
+    await user.click(screen.getAllByRole("button", { name: /^install$/i })[0]!);
+
+    // The event handler is captured by the mocked `listen`; drive it directly.
+    const handler = listeners.install.mock.calls[0]?.[0] as (event: {
+      payload: { component_id: string; version: string; phase: unknown };
+    }) => void;
+    expect(handler).toBeDefined();
+
+    // 15 MiB of a 30 MiB artifact = 50%.
+    handler({
+      payload: {
+        component_id: "php",
+        version: "8.4.25",
+        phase: {
+          stage: "downloading",
+          downloaded: 15_728_640,
+          total: 31_457_280,
+        },
+      },
+    });
+
+    expect(await screen.findByText("15.0 MiB / 30.0 MiB")).toBeInTheDocument();
+    expect(screen.getByText("50%")).toBeInTheDocument();
+    // A busy row offers the cancel affordance instead of an Install button.
+    expect(screen.getAllByRole("button", { name: /cancel/i }).length).toBeGreaterThan(0);
+  });
+
+  it("shows the byte count alone when the server reports no total", async () => {
+    const user = userEvent.setup();
+    mocks.componentInstall.mockImplementation(() => new Promise(() => {}));
+
+    renderWithProviders(<ComponentsPage />);
+
+    await screen.findByText("8.4.25");
+    await user.click(screen.getAllByRole("button", { name: /^install$/i })[0]!);
+
+    const handler = listeners.install.mock.calls[0]?.[0] as (event: {
+      payload: { component_id: string; version: string; phase: unknown };
+    }) => void;
+
+    handler({
+      payload: {
+        component_id: "php",
+        version: "8.4.25",
+        phase: { stage: "downloading", downloaded: 2_097_152, total: null },
+      },
+    });
+
+    expect(await screen.findByText("2.0 MiB")).toBeInTheDocument();
+    expect(screen.queryByText(/^\d+%$/)).not.toBeInTheDocument();
+  });
+
   it("shows a Remove button for an already-installed version", async () => {
     mocks.installedVersions.mockResolvedValue([
       { component_id: "php", version: "8.4.25", path: "C:\\devx\\php\\8.4.25" },
@@ -179,6 +239,60 @@ describe("ComponentsPage", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "checksum mismatch for php.zip",
     );
+  });
+
+  it("cancels a running install through the cancel command", async () => {
+    const user = userEvent.setup();
+    mocks.componentInstall.mockImplementation(() => new Promise(() => {}));
+    mocks.componentInstallCancel.mockResolvedValue(true);
+
+    renderWithProviders(<ComponentsPage />);
+
+    await screen.findByText("8.4.25");
+    await user.click(screen.getAllByRole("button", { name: /^install$/i })[0]!);
+
+    // Drive one downloading phase so the row enters the busy state.
+    const handler = listeners.install.mock.calls[0]?.[0] as (event: {
+      payload: { component_id: string; version: string; phase: unknown };
+    }) => void;
+    handler({
+      payload: {
+        component_id: "php",
+        version: "8.4.25",
+        phase: { stage: "downloading", downloaded: 1024, total: 31_457_280 },
+      },
+    });
+
+    await user.click(await screen.findByRole("button", { name: /cancel/i }));
+
+    await waitFor(() =>
+      expect(mocks.componentInstallCancel).toHaveBeenCalledWith("php", "8.4.25"),
+    );
+  });
+
+  it("hides the failure alert when an install was cancelled on purpose", async () => {
+    const user = userEvent.setup();
+    const { IpcError } = await import("@/lib/ipc");
+    mocks.componentInstall.mockRejectedValue(
+      new IpcError({
+        code: "process",
+        message: "install cancelled",
+        hint: null,
+      }),
+    );
+    mocks.componentInstallCancel.mockResolvedValue(true);
+
+    renderWithProviders(<ComponentsPage />);
+
+    await screen.findByText("8.4.25");
+    await user.click(screen.getAllByRole("button", { name: /^install$/i })[0]!);
+
+    // The mutation settles with the cancellation error; the row must return
+    // to its idle state without an alert.
+    await waitFor(() =>
+      expect(screen.getAllByRole("button", { name: /^install$/i }).length).toBeGreaterThan(0),
+    );
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("explains an empty catalog instead of rendering a blank sidebar", async () => {

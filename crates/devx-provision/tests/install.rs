@@ -98,6 +98,7 @@ async fn installs_verifies_and_normalises_layout() {
         .install(
             &version(&server.uri(), &hash),
             &Layout::default(),
+            None,
             |stage| stages.push(stage),
         )
         .await
@@ -139,7 +140,7 @@ async fn a_checksum_mismatch_aborts_and_leaves_nothing_behind() {
     // Advertise the wrong hash.
     let wrong = "a".repeat(64);
     let err = installer
-        .install(&version(&server.uri(), &wrong), &Layout::default(), |_| {})
+        .install(&version(&server.uri(), &wrong), &Layout::default(), None, |_| {})
         .await
         .expect_err("mismatch must fail");
 
@@ -188,7 +189,7 @@ async fn a_malicious_archive_is_refused_during_extraction() {
         .await;
 
     let err = installer
-        .install(&version(&server.uri(), &hash), &Layout::default(), |_| {})
+        .install(&version(&server.uri(), &hash), &Layout::default(), None, |_| {})
         .await
         .expect_err("zip slip must be refused");
 
@@ -217,13 +218,13 @@ async fn an_already_installed_version_is_a_no_op() {
 
     let component = version(&server.uri(), &hash);
     installer
-        .install(&component, &Layout::default(), |_| {})
+        .install(&component, &Layout::default(), None, |_| {})
         .await
         .expect("first install");
 
     let mut stages = Vec::new();
     installer
-        .install(&component, &Layout::default(), |stage| stages.push(stage))
+        .install(&component, &Layout::default(), None, |stage| stages.push(stage))
         .await
         .expect("second install is a no-op");
 
@@ -265,7 +266,7 @@ async fn a_bare_executable_is_installed_under_its_configured_name() {
     };
 
     let install_dir = installer
-        .install(&component, &layout, |_| {})
+        .install(&component, &layout, None, |_| {})
         .await
         .expect("install");
 
@@ -307,7 +308,7 @@ async fn checksum_is_resolved_from_a_sums_document() {
 
     let mut stages = Vec::new();
     installer
-        .install(&component, &Layout::default(), |stage| stages.push(stage))
+        .install(&component, &Layout::default(), None, |stage| stages.push(stage))
         .await
         .expect("install with resolved checksum");
 
@@ -361,7 +362,7 @@ async fn an_interrupted_download_resumes_from_the_partial_file() {
         .await;
 
     installer
-        .install(&version(&server.uri(), &hash), &Layout::default(), |_| {})
+        .install(&version(&server.uri(), &hash), &Layout::default(), None, |_| {})
         .await
         .expect("resume must complete the download from the partial file");
 
@@ -384,7 +385,7 @@ async fn uninstall_removes_an_installed_version() {
         .await;
 
     installer
-        .install(&version(&server.uri(), &hash), &Layout::default(), |_| {})
+        .install(&version(&server.uri(), &hash), &Layout::default(), None, |_| {})
         .await
         .expect("install");
     assert!(installer.is_installed("php", "8.4.25"));
@@ -410,7 +411,7 @@ async fn keep_archives_retains_the_download() {
         .await;
 
     installer
-        .install(&version(&server.uri(), &hash), &Layout::default(), |_| {})
+        .install(&version(&server.uri(), &hash), &Layout::default(), None, |_| {})
         .await
         .expect("install");
 
@@ -419,4 +420,100 @@ async fn keep_archives_retains_the_download() {
         .filter_map(|e| e.ok())
         .collect();
     assert_eq!(archives.len(), 1, "the archive should be retained");
+}
+
+#[tokio::test]
+async fn a_cancelled_install_stops_and_keeps_the_partial_download() {
+    let server = MockServer::start().await;
+    let dir = tempfile::tempdir().expect("temp");
+    let paths = AppPaths::rooted_at(dir.path());
+    let installer = installer(&paths);
+
+    let zip = wrapped_zip();
+    let hash = sha256_hex(&zip);
+
+    // Delay the response so the cancel reliably lands mid-download.
+    Mock::given(method("GET"))
+        .and(path("/php.zip"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(zip.clone())
+                .set_delay(Duration::from_secs(2)),
+        )
+        .mount(&server)
+        .await;
+
+    let token = tokio_util::sync::CancellationToken::new();
+    let cancel_token = token.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        cancel_token.cancel();
+    });
+
+    let err = installer
+        .install(
+            &version(&server.uri(), &hash),
+            &Layout::default(),
+            Some(&token),
+            |_| {},
+        )
+        .await
+        .expect_err("cancelled install must not succeed");
+
+    assert_eq!(err.code, ErrorCode::Process, "cancel carries the CANCELLED code");
+    assert!(!installer.is_installed("php", "8.4.25"));
+    assert!(!installer.install_dir("php", "8.4.25").exists());
+
+    // The `.partial` file survives (or the download never began) so a later
+    // run can resume; but nothing else may be left behind.
+    let leftovers: Vec<_> = std::fs::read_dir(paths.downloads_dir())
+        .expect("downloads")
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    for name in &leftovers {
+        assert!(
+            name.ends_with(".partial"),
+            "only partial files may remain, found: {name}"
+        );
+    }
+
+    let staging: Vec<_> = std::fs::read_dir(paths.staging_dir())
+        .expect("staging")
+        .filter_map(|e| e.ok())
+        .collect();
+    assert!(staging.is_empty(), "staging must be cleaned up on cancel");
+}
+
+#[tokio::test]
+async fn a_pre_cancelled_install_fails_immediately() {
+    let server = MockServer::start().await;
+    let dir = tempfile::tempdir().expect("temp");
+    let paths = AppPaths::rooted_at(dir.path());
+    let installer = installer(&paths);
+
+    let zip = wrapped_zip();
+    let hash = sha256_hex(&zip);
+    Mock::given(method("GET"))
+        .and(path("/php.zip"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(zip))
+        .expect(0)
+        .mount(&server)
+        .await;
+
+    let token = tokio_util::sync::CancellationToken::new();
+    token.cancel();
+
+    let err = installer
+        .install(
+            &version(&server.uri(), &hash),
+            &Layout::default(),
+            Some(&token),
+            |_| {},
+        )
+        .await
+        .expect_err("pre-cancelled install must fail fast");
+
+    assert_eq!(err.code, ErrorCode::Process);
+    // The server saw no request at all: the install bailed before fetching.
 }

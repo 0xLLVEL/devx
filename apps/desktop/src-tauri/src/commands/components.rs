@@ -1,11 +1,59 @@
 //! Component catalog and install pipeline commands.
 
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+use tokio_util::sync::CancellationToken;
+
 use crate::events::{InstallPhase, InstallProgress};
 use crate::state::AppState;
 use devx_core::Error;
 use devx_provision::{ComponentSummary, VersionListing};
 use tauri::State;
 use tauri_specta::Event as _;
+
+/// Cancellation tokens for the installs currently running, keyed by
+/// `component_id@version`.
+///
+/// Tauri command state is per-invocation, so the map lives in a shared handle
+/// that both `component_install` and `component_install_cancel` receive.
+#[derive(Default)]
+pub struct InstallTokens {
+    tokens: Mutex<HashMap<String, Arc<CancellationToken>>>,
+}
+
+impl InstallTokens {
+    /// Registers a token for a running install and returns it.
+    fn register(&self, id: String) -> Arc<CancellationToken> {
+        let token = Arc::new(CancellationToken::new());
+        self.tokens
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(id, token.clone());
+        token
+    }
+
+    /// Cancels the install registered under `id`, if one is running.
+    fn cancel(&self, id: &str) -> bool {
+        self.tokens
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(id)
+            .map(|token| {
+                token.cancel();
+                true
+            })
+            .unwrap_or(false)
+    }
+
+    /// Drops the entry for `id` when its install finishes (either way).
+    fn remove(&self, id: &str) {
+        self.tokens
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(id);
+    }
+}
 
 /// A version of a component that is installed on disk.
 #[derive(Debug, Clone, serde::Serialize, specta::Type)]
@@ -72,20 +120,54 @@ pub async fn component_install(
 
     let emit_id = component_id.clone();
     let emit_version = version.clone();
+    let token = state.install_tokens.register(install_key(&component_id, &version));
+
     let install_dir = state
         .installer
-        .install(&target, &component.layout, move |stage| {
-            // A failed emit only costs a progress update, never the install.
-            let _ = InstallProgress {
-                component_id: emit_id.clone(),
-                version: emit_version.clone(),
-                phase: InstallPhase::from(stage),
-            }
-            .emit(&app);
-        })
-        .await?;
+        .install(
+            &target,
+            &component.layout,
+            Some(token.as_ref()),
+            move |stage| {
+                // A failed emit only costs a progress update, never the install.
+                let _ = InstallProgress {
+                    component_id: emit_id.clone(),
+                    version: emit_version.clone(),
+                    phase: InstallPhase::from(stage),
+                }
+                .emit(&app);
+            },
+        )
+        .await;
 
+    state
+        .install_tokens
+        .remove(&install_key(&component_id, &version));
+
+    let install_dir = install_dir?;
     Ok(install_dir.to_string_lossy().into_owned())
+}
+
+/// Cancels a running [`component_install`].
+///
+ /// Returns whether an install was actually running. The install aborts at the
+/// next chunk boundary and cleans up: the partial download is kept so the next
+/// attempt resumes from it, while the staging directory is removed.
+#[tauri::command]
+#[specta::specta]
+pub fn component_install_cancel(
+    state: State<'_, AppState>,
+    component_id: String,
+    version: String,
+) -> Result<bool, Error> {
+    Ok(state
+        .install_tokens
+        .cancel(&install_key(&component_id, &version)))
+}
+
+/// Key under which a running install is tracked and progress is routed.
+fn install_key(component_id: &str, version: &str) -> String {
+    format!("{component_id}@{version}")
 }
 
 /// Removes an installed component version.

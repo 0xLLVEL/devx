@@ -6,6 +6,8 @@ use devx_core::{AppPaths, ConfigHealth, ConfigStore, Result};
 use devx_proc::ServiceRegistry;
 use devx_provision::{Catalog, HttpClient, Installer, Resolver};
 
+use crate::commands::components::InstallTokens;
+
 /// State injected into every command handler.
 ///
 /// The configuration store sits behind a `Mutex` because commands run on a
@@ -25,6 +27,9 @@ pub struct AppState {
     pub resolver: Resolver,
     /// Download, verify, extract and install pipeline.
     pub installer: Installer,
+    /// Cancellation tokens for installs currently running, so a cancel
+    /// command can reach the install running in another task.
+    pub install_tokens: InstallTokens,
     /// Supervised background services.
     pub services: Arc<ServiceRegistry>,
     /// The bundled DNS resolver, once started; `None` until needed and
@@ -103,6 +108,7 @@ impl AppState {
             http,
             resolver,
             installer,
+            install_tokens: Default::default(),
             services: Arc::new(ServiceRegistry::new()),
             dns: Mutex::new(None),
         })
