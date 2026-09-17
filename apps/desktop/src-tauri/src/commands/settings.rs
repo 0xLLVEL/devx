@@ -46,7 +46,7 @@ pub fn reveal_managed_dir(state: State<'_, AppState>, path: String) -> Result<()
 ///
 /// Falls back to the plain absolute path when the path does not exist yet,
 /// where there is nothing to canonicalise against the filesystem.
-fn canonicalise(path: &std::path::Path) -> std::path::PathBuf {
+pub(super) fn canonicalise(path: &std::path::Path) -> std::path::PathBuf {
     match path.canonicalize() {
         Ok(resolved) => resolved,
         Err(_) => {

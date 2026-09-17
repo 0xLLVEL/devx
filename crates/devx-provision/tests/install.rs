@@ -475,6 +475,8 @@ async fn a_cancelled_install_stops_and_keeps_the_partial_download() {
     let token = tokio_util::sync::CancellationToken::new();
     let cancel_token = token.clone();
     tokio::spawn(async move {
+        // Fire the cancel while the response is still delayed, so it lands
+        // regardless of how quickly the (single-chunk) body streams in.
         tokio::time::sleep(Duration::from_millis(150)).await;
         cancel_token.cancel();
     });

@@ -38,6 +38,7 @@ export function configFixture(overrides: Partial<Config> = {}): Config {
     sites: [],
     workers: [],
     cron: [],
+    projects: [],
     ...overrides,
   };
 }

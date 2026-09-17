@@ -17,6 +17,9 @@ import { DashboardPage } from "@/routes/dashboard";
  * chunk, and the dashboard is left as a static import on purpose, since it is
  * the route the window opens on.
  */
+const ProjectsPage = lazy(() =>
+  import("@/routes/projects").then((module) => ({ default: module.ProjectsPage })),
+);
 const ComponentsPage = lazy(() =>
   import("@/routes/components").then((module) => ({ default: module.ComponentsPage })),
 );
@@ -59,6 +62,7 @@ export function App() {
       <Suspense fallback={<RouteSkeleton />}>
         <Routes>
           <Route path="/" element={<DashboardPage />} />
+          <Route path="/projects" element={<ProjectsPage />} />
           <Route path="/components" element={<ComponentsPage />} />
           <Route path="/services" element={<ServicesPage />} />
           <Route path="/sites" element={<SitesPage />} />

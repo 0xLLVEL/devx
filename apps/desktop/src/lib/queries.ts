@@ -22,6 +22,7 @@ export const queryKeys = {
   workers: ["worker-list"] as const,
   cron: ["cron-list"] as const,
   sites: ["sites"] as const,
+  projects: ["projects"] as const,
   ca: ["ca"] as const,
   dns: ["dns"] as const,
 };
@@ -71,6 +72,18 @@ export function useCronJobs() {
 /** The configured sites, with resolved endpoints and env vars. */
 export function useSites() {
   return useQuery({ queryKey: queryKeys.sites, queryFn: ipc.siteList });
+}
+
+/** Folder-grouped projects derived from sites, workers and scheduled tasks. */
+export function useProjects() {
+  return useQuery({
+    queryKey: queryKeys.projects,
+    queryFn: ipc.projectsList,
+    // Projects recompute from the sites/workers/cron caches on invalidation,
+    // so a short poll is enough to catch external config edits.
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
+  });
 }
 
 /** Local CA trust status. */

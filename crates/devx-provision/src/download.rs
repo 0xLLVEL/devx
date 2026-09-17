@@ -181,7 +181,18 @@ impl Downloader {
                     }
 
                     let backoff = self.options.backoff_base * 2u32.pow(attempt - 1);
-                    tokio::time::sleep(backoff).await;
+                    // A cancel during the backoff wait ends the download at
+                    // once instead of after the sleep.
+                    if let Some(token) = cancelled {
+                        tokio::select! {
+                            _ = token.cancelled() => {
+                                return Err(Error::new(CANCELLED, "download cancelled"));
+                            }
+                            () = tokio::time::sleep(backoff) => {}
+                        }
+                    } else {
+                        tokio::time::sleep(backoff).await;
+                    }
                 }
             }
         }
@@ -207,7 +218,21 @@ impl Downloader {
             request = request.header(reqwest::header::RANGE, format!("bytes={resume_from}-"));
         }
 
-        let response = request.send().await.map_err(|err| {
+        // Waiting for the response headers races the cancel token too: a slow
+        // (or deliberately delayed) server must not let an install complete
+        // after the user pressed cancel.
+        let send = request.send();
+        let response = if let Some(token) = cancelled {
+            tokio::select! {
+                _ = token.cancelled() => {
+                    return Err(Error::new(CANCELLED, "download cancelled"));
+                }
+                response = send => response,
+            }
+        } else {
+            send.await
+        }
+        .map_err(|err| {
             Error::new(
                 ErrorCode::Network,
                 format!("request to {url} failed: {err}"),

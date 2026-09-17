@@ -451,6 +451,41 @@ pub const MAX_CRON_JOBS: usize = 64;
 /// Maximum minutes between runs: one week.
 pub const MAX_CRON_MINUTES: u32 = 7 * 24 * 60;
 
+/// Maximum registered projects.
+pub const MAX_PROJECTS: usize = 32;
+
+/// A user-registered project folder, with per-project preferences.
+///
+/// Stored under `[[projects]]`. Registration is what makes a project show up
+/// on the Projects page before any site or worker points into it; the
+/// runtime defaults are preferences shown and applied by the UI layer, not
+/// enforced by the config parser.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct ProjectSettings {
+    /// Absolute folder path on disk; unique (case-insensitively).
+    pub path: String,
+    /// Optional display name; defaults to the folder name.
+    pub label: Option<String>,
+    /// Preferred PHP version, e.g. `8.4.25`; `None` means the global default.
+    pub default_php: Option<String>,
+    /// Preferred Node.js version; `None` means the global default.
+    pub default_node: Option<String>,
+    /// Preferred Python version; `None` means the global default.
+    pub default_python: Option<String>,
+    /// Environment variables applied to this project's processes.
+    pub env: std::collections::BTreeMap<String, String>,
+}
+
+impl ProjectSettings {
+    /// The name the project displays as.
+    pub fn display_name(&self) -> &str {
+        match &self.label {
+            Some(label) if !label.is_empty() => label,
+            _ => "",
+        }
+    }
+}
+
 /// Custom port assignments for supervised services, keyed by service id.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 pub struct ServicePorts(pub std::collections::BTreeMap<String, u16>);
@@ -509,6 +544,8 @@ pub struct Config {
     pub workers: Vec<Worker>,
     /// User-configured scheduled tasks.
     pub cron: Vec<CronJob>,
+    /// User-registered project folders with per-project preferences.
+    pub projects: Vec<ProjectSettings>,
 }
 
 impl Default for Config {
@@ -526,6 +563,7 @@ impl Default for Config {
             sites: Vec::new(),
             workers: Vec::new(),
             cron: Vec::new(),
+            projects: Vec::new(),
         }
     }
 }
@@ -638,6 +676,24 @@ impl Config {
         if self.workers.len() > MAX_WORKERS {
             return Err(Error::invalid_input(format!(
                 "at most {MAX_WORKERS} workers are supported"
+            )));
+        }
+
+        let mut project_paths = std::collections::BTreeSet::new();
+        for project in &self.projects {
+            if project.path.trim().is_empty() {
+                return Err(Error::invalid_input("project path must not be empty"));
+            }
+            if !project_paths.insert(project.path.to_lowercase()) {
+                return Err(Error::invalid_input(format!(
+                    "duplicate project path `{}`",
+                    project.path
+                )));
+            }
+        }
+        if self.projects.len() > MAX_PROJECTS {
+            return Err(Error::invalid_input(format!(
+                "at most {MAX_PROJECTS} projects are supported"
             )));
         }
 

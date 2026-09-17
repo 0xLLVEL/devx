@@ -33,6 +33,32 @@ export const commands = {
 	/**  Lists the saved profiles, alphabetically. */
 	profileList: () => typedError<ProfileEntry[], DevxError>(__TAURI_INVOKE("profile_list")),
 	/**
+	 *  Lists every project folder: user-registered projects always appear (even
+	 *  with nothing pointing into them yet), plus folders derived from configured
+	 *  sites, workers and scheduled tasks.
+	 */
+	projectsList: () => typedError<ProjectSummary[], DevxError>(__TAURI_INVOKE("projects_list")),
+	/**
+	 *  Registers a folder as a managed project.
+	 * 
+	 *  The folder must already exist — the picker creates it on disk, not us —
+	 *  and re-adding an existing path (case-insensitively) is the edit path for
+	 *  the label, not an error.
+	 */
+	projectAdd: (path: string, label: string | null) => typedError<ProjectSummary[], DevxError>(__TAURI_INVOKE("project_add", { path, label })),
+	/**
+	 *  Removes a project from the registered list. The folder on disk is left
+	 *  untouched — this only stops DevX from showing it as a managed project.
+	 */
+	projectRemove: (path: string) => typedError<ProjectSummary[], DevxError>(__TAURI_INVOKE("project_remove", { path })),
+	/**
+	 *  Updates a registered project's label and default runtime versions.
+	 * 
+	 *  A `None` argument leaves the field as-is; `Some("")` clears it back to
+	 *  "follow the global default". Only registered projects can be updated.
+	 */
+	projectUpdate: (path: string, label: string | null, defaultPhp: string | null, defaultNode: string | null, defaultPython: string | null) => typedError<ProjectSummary[], DevxError>(__TAURI_INVOKE("project_update", { path, label, defaultPhp, defaultNode, defaultPython })),
+	/**
 	 *  Saves the current configuration as a named profile, overwriting an
 	 *  existing profile of the same name on purpose.
 	 */
@@ -897,6 +923,8 @@ export type Config_Deserialize = {
 	workers: Worker[],
 	/**  User-configured scheduled tasks. */
 	cron: CronJob[],
+	/**  User-registered project folders with per-project preferences. */
+	projects: ProjectSettings[],
 };
 
 /**
@@ -932,6 +960,8 @@ export type Config_Serialize = {
 	workers: Worker[],
 	/**  User-configured scheduled tasks. */
 	cron: CronJob[],
+	/**  User-registered project folders with per-project preferences. */
+	projects: ProjectSettings[],
 };
 
 /**  How to reach one database server. */
@@ -1559,6 +1589,65 @@ export type ProfileEntry = {
 	name: string,
 	/**  Last modification as Unix seconds; `null` when unavailable. */
 	modified_unix: number | null,
+};
+
+/**
+ *  A user-registered project folder, with per-project preferences.
+ * 
+ *  Stored under `[[projects]]`. Registration is what makes a project show up
+ *  on the Projects page before any site or worker points into it; the
+ *  runtime defaults are preferences shown and applied by the UI layer, not
+ *  enforced by the config parser.
+ */
+export type ProjectSettings = {
+	/**  Absolute folder path on disk; unique (case-insensitively). */
+	path: string,
+	/**  Optional display name; defaults to the folder name. */
+	label: string | null,
+	/**  Preferred PHP version, e.g. `8.4.25`; `None` means the global default. */
+	default_php: string | null,
+	/**  Preferred Node.js version; `None` means the global default. */
+	default_node: string | null,
+	/**  Preferred Python version; `None` means the global default. */
+	default_python: string | null,
+	/**  Environment variables applied to this project's processes. */
+	env: { [key in string]: string },
+};
+
+/**  One folder-grouped project, as the UI shows it. */
+export type ProjectSummary = {
+	/**  Folder name, e.g. `myapp`. */
+	name: string,
+	/**  Absolute folder path. */
+	path: string,
+	/**
+	 *  Whether the project was explicitly registered by the user (vs derived
+	 *  from sites/workers that merely point into the folder).
+	 */
+	managed: boolean,
+	/**  Optional display label from the registered settings. */
+	label: string | null,
+	/**  Sites whose docroot lives under this folder. */
+	sites: SiteStatus[],
+	/**  Workers whose working directory lives under this folder. */
+	workers: WorkerStatus[],
+	/**  Scheduled tasks whose working directory lives under this folder. */
+	cron: CronStatus[],
+	/**  PHP versions the project's sites and workers use, sorted. */
+	php_versions: string[],
+	/**  Registered default PHP version for the project, when set. */
+	default_php: string | null,
+	/**  Registered default Node.js version for the project, when set. */
+	default_node: string | null,
+	/**  Registered default Python version for the project, when set. */
+	default_python: string | null,
+	/**
+	 *  How many supervised things belonging to the project are running
+	 *  (worker instances plus cron-adjacent services).
+	 */
+	running_workers: number,
+	/**  How many worker instances are configured in total. */
+	total_workers: number,
 };
 
 /**  Component download and installation behaviour. */

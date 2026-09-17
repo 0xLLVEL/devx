@@ -2,6 +2,7 @@ import {
   Boxes,
   Database,
   FileText,
+  FolderKanban,
   Globe,
   LayoutDashboard,
   Mail,
@@ -92,6 +93,13 @@ export const NAV_SECTIONS: readonly NavSection[] = [
     id: "workspace",
     label: "Workspace",
     items: [
+      {
+        to: "/projects",
+        label: "Projects",
+        icon: FolderKanban,
+        keywords: ["project", "folder", "workspace", "app", "group"],
+        shortcut: "0",
+      },
       {
         to: "/terminal",
         label: "Terminal",
