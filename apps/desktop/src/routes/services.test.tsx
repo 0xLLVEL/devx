@@ -31,6 +31,8 @@ const mocks = vi.hoisted(() => ({
   workerRemove: vi.fn(),
   cronList: vi.fn(),
   cronDelete: vi.fn(),
+  configGet: vi.fn(),
+  serviceSetPort: vi.fn(),
 }));
 
 vi.mock("@/lib/ipc", async () => {
@@ -115,6 +117,14 @@ describe("ServicesPage", () => {
       "minio",
       "meilisearch",
     ]);
+    mocks.configGet.mockResolvedValue({
+      general: { restore_services_on_start: true },
+      network: { http_port: 80, https_port: 443 },
+      service_ports: {},
+      php_pools: {},
+      sites: [],
+    });
+    mocks.serviceSetPort.mockResolvedValue({});
   });
 
   it("prompts to install when nothing supervisable is present", async () => {
@@ -610,4 +620,60 @@ describe("ServicesPage", () => {
     expect(screen.getByText(/every 1 min/i)).toBeInTheDocument();
     expect(screen.getByText("2026-09-16 22:00")).toBeInTheDocument();
   });
+
+  it("displays default port for stopped service and allows inline port editing", async () => {
+    const user = userEvent.setup();
+    mocks.installedVersions.mockResolvedValue([MAILPIT]);
+
+    renderWithProviders(<ServicesPage />);
+
+    // Mailpit default port 1025 should be displayed even when stopped
+    expect(await screen.findByText("1025")).toBeInTheDocument();
+
+    // Click the change port pencil button
+    const editBtn = screen.getByRole("button", { name: /change port for mailpit/i });
+    await user.click(editBtn);
+
+    const input = screen.getByRole("spinbutton");
+    expect(input).toBeInTheDocument();
+    await user.clear(input);
+    await user.type(input, "1026");
+
+    const saveBtn = screen.getByRole("button", { name: "Save port" });
+    await user.click(saveBtn);
+
+    await waitFor(() =>
+      expect(mocks.serviceSetPort).toHaveBeenCalledWith("mailpit", 1026),
+    );
+  });
+
+  it("allows changing port for a PHP pool from ServerPorts", async () => {
+    const user = userEvent.setup();
+    mocks.phpPoolList.mockResolvedValue([POOL]);
+
+    renderWithProviders(<ServicesPage />);
+
+    await screen.findByText("PHP 8.4.25");
+    await user.click(screen.getByRole("button", { name: /show details for php 8.4.25/i }));
+    await user.click(screen.getByRole("tab", { name: "Ports" }));
+
+    expect(await screen.findByText("127.0.0.1:9100")).toBeInTheDocument();
+
+    const changePortBtn = within(detail("PHP 8.4.25")).getByRole("button", {
+      name: /change port/i,
+    });
+    await user.click(changePortBtn);
+
+    const input = within(detail("PHP 8.4.25")).getByRole("spinbutton");
+    await user.clear(input);
+    await user.type(input, "9200");
+
+    const saveBtn = within(detail("PHP 8.4.25")).getByRole("button", { name: /save/i });
+    await user.click(saveBtn);
+
+    await waitFor(() =>
+      expect(mocks.serviceSetPort).toHaveBeenCalledWith("php-pool-8.4.25", 9200),
+    );
+  });
 });
+

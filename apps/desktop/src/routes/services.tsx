@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Bug,
   CalendarClock,
+  Check,
   ChevronRight,
   Copy,
   ExternalLink,
@@ -10,14 +11,17 @@ import {
   Globe,
   Loader2,
   Package,
+  Pencil,
   Play,
   Plug,
   Plus,
   Puzzle,
+  RotateCcw,
   RotateCw,
   Search,
   Square,
   Trash2,
+  X,
   type LucideIcon,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -458,6 +462,22 @@ const WEB_SERVER_ID: Record<string, SiteStatus["web_server"]> = {
   frankenphp: "FrankenPhp",
 };
 
+/** Default ports for supervisable components when no override is configured. */
+export const DEFAULT_SERVICE_PORTS: Record<string, number> = {
+  nginx: 80,
+  apache: 8085,
+  caddy: 8080,
+  frankenphp: 8080,
+  mariadb: 3306,
+  postgresql: 5432,
+  redis: 6379,
+  mailpit: 1025,
+  meilisearch: 7700,
+  "nats-server": 4222,
+  etcd: 2379,
+  mongodb: 27017,
+};
+
 /** Joins a managed root with path segments, keeping the root's own separator. */
 function joinPath(root: string, ...segments: string[]): string {
   const separator = root.includes("\\") ? "\\" : "/";
@@ -709,9 +729,56 @@ function ServerRow({
   const busy = start.isPending || stop.isPending || restart.isPending;
   const configPath = dataDir ? configPathFor(dataDir, server.id) : null;
   const logPath = dataDir ? logPathFor(dataDir, server.id) : null;
-  const port = server.pool
-    ? server.pool.port
-    : (ports.find((entry) => entry.active)?.port ?? ports[0]?.port ?? null);
+
+  const config = useQuery({
+    queryKey: ["config"],
+    queryFn: () => (ipc.configGet ? ipc.configGet() : Promise.resolve(null as any)),
+  });
+  const [quickEditing, setQuickEditing] = useState(false);
+  const [portInput, setPortInput] = useState("");
+
+  const defaultPort = server.pool
+    ? 9100
+    : (DEFAULT_SERVICE_PORTS[server.id] ?? (server.id === "nginx" ? (config.data?.network.http_port ?? 80) : null));
+
+  const configuredPort =
+    config.data?.service_ports?.[server.id] ??
+    (server.pool ? config.data?.service_ports?.[server.version] : null) ??
+    (server.pool ? server.pool.port : defaultPort);
+
+  const activePort = ports.find((entry) => entry.active)?.port ?? (active ? (ports[0]?.port ?? configuredPort) : null);
+  const displayPort = active ? (activePort ?? configuredPort) : configuredPort;
+
+  const setPortMutation = useMutation({
+    mutationFn: (newPort: number | null) => ipc.serviceSetPort(server.id, newPort),
+    onSuccess: () => {
+      toast.success("Port updated", {
+        description: `Port for ${server.name} has been updated.${active ? " Service restarted." : ""}`,
+      });
+      setQuickEditing(false);
+      void queryClient.invalidateQueries({ queryKey: ["config"] });
+      void queryClient.invalidateQueries({ queryKey: ["port-map"] });
+      void queryClient.invalidateQueries({ queryKey: ["php-pools"] });
+      void queryClient.invalidateQueries({ queryKey: ["service-metrics"] });
+    },
+    onError: (err: Error) => {
+      toast.error("Failed to update port", { details: err.message });
+    },
+  });
+
+  const savePort = () => {
+    const val = portInput.trim();
+    if (val === "") {
+      setPortMutation.mutate(null);
+    } else {
+      const num = Number(val);
+      if (!isNaN(num) && num > 0 && num <= 65535) {
+        setPortMutation.mutate(num);
+      } else {
+        toast.error("Invalid port number", { description: "Port must be between 1 and 65535." });
+      }
+    }
+  };
 
   const actions: MenuItem[] = [
     {
@@ -801,14 +868,96 @@ function ServerRow({
           <ServerState state={state} />
         </td>
         <td className="px-3 py-2">
-          {port === null ? (
-            <NotReported what={portsError ? "Could not be read" : "Not reported"} />
+          {quickEditing ? (
+            <div
+              className="flex items-center gap-1"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <Input
+                type="number"
+                min={1}
+                max={65535}
+                className="h-7 w-20 text-xs px-1.5 py-0 font-mono"
+                placeholder={defaultPort ? String(defaultPort) : "Port"}
+                value={portInput}
+                onChange={(e) => setPortInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    savePort();
+                  } else if (e.key === "Escape") {
+                    setQuickEditing(false);
+                  }
+                }}
+                autoFocus
+              />
+              <Button
+                size="sm"
+                className="h-7 px-2 text-xs"
+                disabled={setPortMutation.isPending}
+                onClick={savePort}
+                title="Save port"
+              >
+                {setPortMutation.isPending ? (
+                  <Loader2 className="size-3 animate-spin" />
+                ) : (
+                  <Check className="size-3" />
+                )}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 px-1.5 text-xs"
+                onClick={() => setQuickEditing(false)}
+                title="Cancel"
+              >
+                <X className="size-3" />
+              </Button>
+            </div>
           ) : (
-            <span className="data-value text-foreground" data-selectable>
-              {port}
-            </span>
+            <div className="group flex items-center gap-1.5">
+              {displayPort === null ? (
+                <NotReported what={portsError ? "Could not be read" : "Not reported"} />
+              ) : (
+                <div className="flex items-center gap-1.5 font-mono text-xs">
+                  {active ? (
+                    <span
+                      className="size-1.5 rounded-full bg-emerald-500 shrink-0"
+                      title="Listening"
+                    />
+                  ) : (
+                    <span
+                      className="size-1.5 rounded-full bg-muted-foreground/30 shrink-0"
+                      title="Configured (stopped)"
+                    />
+                  )}
+                  <span
+                    className={cn(
+                      "data-value font-mono",
+                      active ? "text-foreground font-medium" : "text-muted-foreground",
+                    )}
+                    data-selectable
+                  >
+                    {displayPort}
+                  </span>
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setPortInput(displayPort ? String(displayPort) : "");
+                  setQuickEditing(true);
+                }}
+                title={`Change port for ${server.name}`}
+                aria-label={`Change port for ${server.name}`}
+                className="opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-muted/80 rounded text-muted-foreground hover:text-foreground cursor-pointer"
+              >
+                <Pencil className="size-3" />
+              </button>
+            </div>
           )}
         </td>
+
         <td className="hidden px-3 py-2 xl:table-cell">
           {configPath ? (
             <span
@@ -1112,8 +1261,17 @@ function ServerPorts({
 }) {
   const queryClient = useQueryClient();
   const toast = useToast();
-  const config = useQuery({ queryKey: ["config"], queryFn: ipc.configGet });
-  const configuredPort = config.data?.service_ports?.[server.id] ?? (server.id === "nginx" ? config.data?.network.http_port : null);
+  const config = useQuery({ queryKey: ["config"], queryFn: () => (ipc.configGet ? ipc.configGet() : Promise.resolve(null as any)) });
+
+  const defaultPort = server.pool
+    ? 9100
+    : (DEFAULT_SERVICE_PORTS[server.id] ?? (server.id === "nginx" ? (config.data?.network.http_port ?? 80) : null));
+
+  const configuredPort =
+    config.data?.service_ports?.[server.id] ??
+    (server.pool ? config.data?.service_ports?.[server.version] : null) ??
+    (server.pool ? server.pool.port : defaultPort);
+
   const [editingPort, setEditingPort] = useState(false);
   const [portInput, setPortInput] = useState("");
 
@@ -1121,11 +1279,13 @@ function ServerPorts({
     mutationFn: (newPort: number | null) => ipc.serviceSetPort(server.id, newPort),
     onSuccess: () => {
       toast.success("Port updated", {
-        description: `Port for ${server.name} has been updated. Restart the service to apply.`,
+        description: `Port for ${server.name} has been updated.`,
       });
       setEditingPort(false);
       void queryClient.invalidateQueries({ queryKey: ["config"] });
       void queryClient.invalidateQueries({ queryKey: ["port-map"] });
+      void queryClient.invalidateQueries({ queryKey: ["php-pools"] });
+      void queryClient.invalidateQueries({ queryKey: ["service-metrics"] });
     },
     onError: (err: Error) => {
       toast.error("Failed to update port", { details: err.message });
@@ -1134,77 +1294,94 @@ function ServerPorts({
 
   return (
     <div className="space-y-3">
-      {server.pool ? (
-        <p className="text-sm text-muted-foreground">
-          The FastCGI socket this pool serves PHP on:{" "}
-          <span className="data-value text-foreground" data-selectable>
-            127.0.0.1:{server.pool.port}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-muted/20 p-3 text-sm">
+        <div className="space-y-0.5">
+          <span className="font-medium text-foreground">
+            {server.pool ? "PHP FastCGI Socket:" : "Configured Port:"}
           </span>
-        </p>
-      ) : (
-        <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted/20 p-3 text-sm">
-          <span className="font-medium text-foreground">Configured Port:</span>
-          {editingPort ? (
-            <div className="flex items-center gap-2">
-              <Input
-                type="number"
-                min={1}
-                max={65535}
-                className="h-8 w-28 text-xs"
-                placeholder="Default"
-                value={portInput}
-                onChange={(e) => setPortInput(e.target.value)}
-                autoFocus
-              />
-              <Button
-                size="sm"
-                className="h-8"
-                disabled={setPortMutation.isPending}
-                onClick={() => {
-                  const val = portInput.trim();
-                  if (val === "") {
-                    setPortMutation.mutate(null);
+          {server.pool ? (
+            <p className="text-xs text-muted-foreground">
+              The socket this pool serves PHP requests on.
+            </p>
+          ) : null}
+        </div>
+
+        {editingPort ? (
+          <div className="flex items-center gap-2">
+            <Input
+              type="number"
+              min={1}
+              max={65535}
+              className="h-8 w-28 text-xs font-mono"
+              placeholder={defaultPort ? String(defaultPort) : "Default"}
+              value={portInput}
+              onChange={(e) => setPortInput(e.target.value)}
+              autoFocus
+            />
+            <Button
+              size="sm"
+              className="h-8"
+              disabled={setPortMutation.isPending}
+              onClick={() => {
+                const val = portInput.trim();
+                if (val === "") {
+                  setPortMutation.mutate(null);
+                } else {
+                  const num = Number(val);
+                  if (!isNaN(num) && num > 0 && num <= 65535) {
+                    setPortMutation.mutate(num);
                   } else {
-                    const num = Number(val);
-                    if (!isNaN(num) && num > 0 && num <= 65535) {
-                      setPortMutation.mutate(num);
-                    } else {
-                      toast.error("Invalid port number");
-                    }
+                    toast.error("Invalid port number", { description: "Port must be between 1 and 65535." });
                   }
-                }}
-              >
-                Save
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-8"
-                onClick={() => setEditingPort(false)}
-              >
-                Cancel
-              </Button>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2">
-              <span className="data-value text-foreground font-mono" data-selectable>
-                {configuredPort ?? "Default"}
-              </span>
+                }
+              }}
+            >
+              Save
+            </Button>
+            {configuredPort !== defaultPort ? (
               <Button
                 variant="outline"
                 size="sm"
-                className="h-7 text-xs"
-                onClick={() => {
-                  setPortInput(configuredPort ? String(configuredPort) : "");
-                  setEditingPort(true);
-                }}
+                className="h-8 text-xs"
+                disabled={setPortMutation.isPending}
+                onClick={() => setPortMutation.mutate(null)}
+                title="Reset to default port"
               >
-                Change port
+                <RotateCcw className="size-3 mr-1" />
+                Reset
               </Button>
-            </div>
-          )}
-        </div>
-      )}
+            ) : null}
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8"
+              onClick={() => setEditingPort(false)}
+            >
+              Cancel
+            </Button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2">
+            <span className="data-value text-foreground font-mono font-medium" data-selectable>
+              {server.pool
+                ? `127.0.0.1:${configuredPort ?? server.pool.port}`
+                : (configuredPort ?? "Default")}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs"
+              onClick={() => {
+                setPortInput(configuredPort ? String(configuredPort) : "");
+                setEditingPort(true);
+              }}
+            >
+              <Pencil className="size-3 mr-1" />
+              Change port
+            </Button>
+          </div>
+        )}
+      </div>
 
       {ports.length > 0 ? (
         <table className="w-full max-w-lg text-left text-sm">

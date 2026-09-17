@@ -111,6 +111,7 @@ export function DatabasesPage() {
   const backupCountKnown = backupLists.every((list) => list.data !== undefined);
 
   const [selected, setSelected] = useState("");
+  const [activeClientId, setActiveClientId] = useState<string | null>(null);
   const [tab, setTab] = useState<TabId>("overview");
   // The chosen database is remembered with the engine it belongs to, so
   // filtering that engine away can never point the next query at a schema
@@ -341,16 +342,23 @@ export function DatabasesPage() {
               databaseCount={countOf(server.service_id)}
               databaseCountPending={countPending(server.service_id)}
               selected={server.service_id === chosen?.service_id}
+              active={activeClientId === server.service_id}
               // Picking another card changes which engine the detail is
               // about; it does not throw away the surface the user is on.
-              onSelect={() => selectServer(server.service_id, tab)}
-              onOpenClient={() =>
+              onSelect={() => {
+                selectServer(server.service_id, tab);
+              }}
+              onOpenClient={() => {
+                setActiveClientId(server.service_id);
                 selectServer(
                   server.service_id,
                   server.engine === "redis" ? "databases" : "query",
-                )
-              }
-              onOpenTab={(nextTab) => selectServer(server.service_id, nextTab)}
+                );
+              }}
+              onOpenTab={(nextTab) => {
+                setActiveClientId(server.service_id);
+                selectServer(server.service_id, nextTab);
+              }}
             />
           ))}
         </div>
@@ -425,6 +433,7 @@ function DatabaseCard({
   databaseCount,
   databaseCountPending,
   selected,
+  active = false,
   onSelect,
   onOpenClient,
   onOpenTab,
@@ -435,6 +444,7 @@ function DatabaseCard({
   databaseCount: number | undefined;
   databaseCountPending: boolean;
   selected: boolean;
+  active?: boolean;
   onSelect: () => void;
   onOpenClient: () => void;
   onOpenTab: (tab: TabId) => void;
@@ -509,8 +519,8 @@ function DatabaseCard({
       // accent border and must not have it overwritten on hover.
       className={cn(
         "flex flex-col transition-colors duration-150",
-        selected
-          ? "border-primary bg-primary-soft"
+        active
+          ? "border-primary bg-primary-soft shadow-sm ring-1 ring-primary/20"
           : "hover:border-line-strong hover:bg-hover",
       )}
     >
@@ -582,7 +592,12 @@ function DatabaseCard({
               ? `accepting connections on :${server.port}`
               : `nothing listening on :${server.port}`}
           </span>
-          <Button type="button" size="sm" onClick={onOpenClient}>
+          <Button
+            type="button"
+            size="sm"
+            variant={active ? "default" : "outline"}
+            onClick={onOpenClient}
+          >
             Open client
           </Button>
         </div>

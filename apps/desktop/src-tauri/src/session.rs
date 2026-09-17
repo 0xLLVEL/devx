@@ -221,18 +221,7 @@ async fn start_pool(state: &AppState, version: &str) -> Result<()> {
         .with_config(|store| store.config().php_pools.get(version))
         .unwrap_or(devx_provision::DEFAULT_WORKERS);
 
-    let config_dir = state
-        .paths
-        .service_config_dir()
-        .join(devx_provision::pool_id(version));
-    let port = match devx_provision::pool_listen_addr(&config_dir) {
-        Ok(listen) => listen
-            .rsplit(':')
-            .next()
-            .and_then(|p| p.parse().ok())
-            .unwrap_or_else(|| next_pool_port(state)),
-        Err(_) => next_pool_port(state),
-    };
+    let port = crate::commands::php::pool_port(state, version).unwrap_or_else(|_| next_pool_port(state));
 
     let plan = crate::services::plan_php_pool(
         &state.paths,

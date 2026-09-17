@@ -36,8 +36,17 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
       className="flex shrink-0 flex-col border-r border-sidebar-border bg-sidebar transition-[width] duration-[220ms] ease-standard"
     >
       <div className="flex h-14 items-center gap-2 px-4">
-        <span className="font-mono text-sm font-semibold tracking-tight text-foreground">
-          {collapsed ? "D" : "DevX"}
+        <span
+          aria-label={collapsed ? "DevX" : undefined}
+          className="font-mono text-sm font-semibold tracking-tight text-foreground flex items-center"
+        >
+          {collapsed ? (
+            "D"
+          ) : (
+            <>
+              Dev<span className="bg-gradient-to-r from-accent to-accent-hover bg-clip-text text-transparent font-bold">X</span>
+            </>
+          )}
         </span>
         {!collapsed && appInfo.data ? (
           <span className="font-mono text-caption text-ink-muted">
@@ -50,7 +59,7 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
         {NAV_SECTIONS.map((section) => (
           <div key={section.id} className="mb-3 last:mb-0">
             {collapsed ? (
-              <div aria-hidden className="mx-2 mb-2 border-t border-line-subtle" />
+              <div aria-hidden className="mx-2 mb-2 h-px bg-gradient-to-r from-transparent via-line-subtle to-transparent" />
             ) : (
               <p className="px-2.5 pb-1 text-caption tracking-wide text-ink-muted uppercase">
                 {section.label}
@@ -67,10 +76,10 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
                     {...(collapsed ? { "aria-label": item.label } : {})}
                     className={({ isActive }) =>
                       cn(
-                        "relative flex min-h-8 cursor-pointer items-center gap-2.5 rounded-md text-nav transition-colors duration-150 [&_svg]:size-5 [&_svg]:shrink-0",
+                        "group relative flex min-h-8 cursor-pointer items-center gap-2.5 rounded-md text-nav transition-[background-color,color,box-shadow] duration-150 [&_svg]:size-5 [&_svg]:shrink-0",
                         collapsed ? "justify-center px-2" : "px-2.5",
                         isActive
-                          ? "bg-hover font-medium text-foreground"
+                          ? "bg-hover font-medium text-foreground shadow-[inset_0_0_12px_rgba(255,107,74,0.06)]"
                           : "text-ink-muted hover:bg-hover/60 hover:text-ink-secondary",
                       )
                     }
@@ -81,12 +90,15 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
                         {isActive && !collapsed ? (
                           <span
                             aria-hidden
-                            className="absolute top-1/2 left-0 h-4 w-0.5 -translate-y-1/2 rounded-full bg-primary"
+                            className="absolute top-1/2 left-0 h-4 w-0.5 -translate-y-1/2 rounded-full bg-primary shadow-[0_0_6px_var(--accent-soft)]"
                           />
                         ) : null}
                         <Icon
                           aria-hidden
-                          className={isActive ? "text-primary" : undefined}
+                          className={cn(
+                            "transition-transform duration-150 group-hover:scale-105",
+                            isActive ? "text-primary" : undefined,
+                          )}
                         />
                         {collapsed ? null : (
                           <>
@@ -137,11 +149,11 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
 }
 
 const DOT_TONE: Record<SystemStatus["state"], string> = {
-  ready: "bg-success",
-  attention: "bg-warning",
-  error: "bg-destructive",
-  starting: "animate-pulse bg-warning",
-  stopping: "animate-pulse bg-warning",
+  ready: "bg-success ring-2 ring-success/20 animate-[status-pulse_3s_ease-in-out_infinite]",
+  attention: "bg-warning ring-2 ring-warning/25",
+  error: "bg-destructive ring-2 ring-destructive/30",
+  starting: "animate-pulse bg-warning ring-2 ring-warning/25",
+  stopping: "animate-pulse bg-warning ring-2 ring-warning/25",
   unknown: "bg-muted-foreground/40",
 };
 

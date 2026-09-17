@@ -534,4 +534,42 @@ describe("SitesPage", () => {
     // Without a definite "not trusted" there is nothing to install against.
     expect(screen.queryByRole("button", { name: /install ca/i })).not.toBeInTheDocument();
   });
+
+  it("switches to template scaffolding when clicking Import from template in Add site dialog", async () => {
+    const user = userEvent.setup();
+    mocks.templateList.mockResolvedValue([
+      {
+        id: "laravel",
+        name: "Laravel",
+        description: "Scaffolding runs through composer.",
+        local: false,
+      },
+      {
+        id: "static",
+        name: "Static site",
+        description: "A single index.html page.",
+        local: true,
+      },
+    ]);
+
+    renderWithProviders(<SitesPage />);
+
+    await user.click(await screen.findByRole("button", { name: /\+? ?add site/i }));
+    const dialog = await screen.findByRole("dialog", { name: "Add a site" });
+
+    const importBtn = within(dialog).getByRole("button", { name: /import from template/i });
+    expect(importBtn).toBeInTheDocument();
+
+    await user.click(importBtn);
+
+    expect(await within(dialog).findByText("Choose template")).toBeInTheDocument();
+    expect(within(dialog).getByText("Laravel")).toBeInTheDocument();
+    expect(within(dialog).getByText("Static site")).toBeInTheDocument();
+
+    const manualBtn = within(dialog).getByRole("button", { name: /manual configuration/i });
+    expect(manualBtn).toBeInTheDocument();
+    await user.click(manualBtn);
+
+    expect(within(dialog).queryByText("Choose template")).not.toBeInTheDocument();
+  });
 });

@@ -6,10 +6,10 @@ import { cn } from "@/lib/utils";
 export type ServiceUiState = "running" | "failed" | "starting" | "stopping" | "stopped";
 
 const DOT_CLASS: Record<ServiceUiState, string> = {
-  running: "bg-success",
-  failed: "bg-destructive",
-  starting: "animate-pulse bg-warning",
-  stopping: "animate-pulse bg-warning",
+  running: "bg-success ring-2 ring-success/20 animate-[status-pulse_3s_ease-in-out_infinite]",
+  failed: "bg-destructive ring-2 ring-destructive/30",
+  starting: "animate-pulse bg-warning ring-2 ring-warning/25",
+  stopping: "animate-pulse bg-warning ring-2 ring-warning/25",
   stopped: "bg-muted-foreground/40",
 };
 

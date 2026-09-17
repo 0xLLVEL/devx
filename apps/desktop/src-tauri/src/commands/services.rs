@@ -84,15 +84,33 @@ pub async fn service_start(
 
     supervisor.start().await?;
 
+    // Web servers route PHP requests to FastCGI pools; start any needed pools
+    if matches!(component_id.as_str(), "nginx" | "apache" | "caddy" | "frankenphp") {
+        let sites = state.with_config(|store| store.config().sites.clone());
+        for site in sites {
+            if let Some(php_ver) = site.php() {
+                if state.installer.is_installed("php", php_ver) {
+                    let pool_id = devx_provision::pool_id(php_ver);
+                    let is_active = state.services.get(&pool_id).is_some_and(|s| s.state().is_active());
+                    if !is_active {
+                        let workers = crate::commands::php::pool_workers(&state, php_ver);
+                        let _ = crate::commands::php::start_php_pool_internal(&state, php_ver, workers).await;
+                    }
+                }
+            }
+        }
+    }
+
     Ok(ServiceStatus {
         id,
         state: supervisor.state(),
     })
 }
 
-/// Sets or clears a custom port for a supervised service component.
+/// Sets or clears a custom port for a supervised service component or PHP pool.
 ///
 /// If port is `Some(p)`, sets the custom port (p must be > 0). If `None`, clears the custom port.
+/// Re-renders configuration, restarts active services/pools, and re-syncs site blocks.
 #[tauri::command]
 #[specta::specta]
 pub async fn service_set_port(
@@ -106,15 +124,97 @@ pub async fn service_set_port(
         }
     }
 
+    let php_version = if devx_provision::is_pool_id(&component_id) {
+        devx_provision::version_of_pool(&component_id).map(str::to_string)
+    } else if state.installer.is_installed("php", &component_id) {
+        Some(component_id.clone())
+    } else {
+        None
+    };
+
     state.with_config_mut(|store| {
         store.update(|config| {
             if let Some(p) = port {
                 config.service_ports.insert(component_id.clone(), p);
+                if let Some(ref ver) = php_version {
+                    config.service_ports.insert(devx_provision::pool_id(ver), p);
+                    config.service_ports.insert(ver.clone(), p);
+                }
             } else {
                 config.service_ports.remove(&component_id);
+                if let Some(ref ver) = php_version {
+                    config.service_ports.remove(&devx_provision::pool_id(ver));
+                    config.service_ports.remove(ver);
+                }
             }
         })
     })?;
+
+    if let Some(ref ver) = php_version {
+        // Re-render pool.conf with the new port
+        let new_port = crate::commands::php::pool_port(&state, ver)?;
+        let workers = crate::commands::php::pool_workers(&state, ver);
+        let extensions = crate::commands::php::pool_extensions(&state, ver);
+        let xdebug = crate::commands::php::pool_xdebug(&state, ver);
+        let limits = crate::commands::php::pool_limits(&state, ver);
+        let plan = crate::services::plan_php_pool(
+            &state.paths,
+            ver,
+            new_port,
+            workers,
+            &extensions,
+            xdebug,
+            limits,
+        )?;
+
+        let id = devx_provision::pool_id(ver);
+        if let Some(supervisor) = state.services.get(&id) {
+            if supervisor.state().is_active() {
+                supervisor.stop().await;
+                let spec = crate::services::pool_spec(&state.paths, &plan)?;
+                let replacement = state.services.register(spec)?;
+                replacement.start().await?;
+            }
+        }
+
+        // Sync site blocks so fastcgi_pass updates
+        let _ = crate::commands::sites::sync_site_blocks(&state);
+    } else {
+        // If nginx port changed, re-sync site server blocks
+        if component_id == "nginx" {
+            let _ = crate::commands::sites::sync_site_blocks(&state);
+        }
+
+        // If the service is running, restart it with the new port
+        if let Some(supervisor) = state.services.get(&component_id) {
+            if supervisor.state().is_active() {
+                let runtimes = state.paths.runtimes_dir().join(&component_id);
+                if let Ok(entries) = std::fs::read_dir(&runtimes) {
+                    let mut versions: Vec<String> = entries
+                        .flatten()
+                        .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+                        .map(|e| e.file_name().to_string_lossy().into_owned())
+                        .filter(|v| runtimes.join(v).join(".devx-ok").is_file())
+                        .collect();
+                    versions.sort();
+                    if let Some(version) = versions.pop() {
+                        supervisor.stop().await;
+                        if let Ok(plan) = crate::services::plan_service(
+                            &state.paths,
+                            &component_id,
+                            &version,
+                            &[],
+                            port,
+                        ) {
+                            if let Ok(replacement) = state.services.register(plan.spec) {
+                                let _ = replacement.start().await;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     Ok(state.with_config(|store| store.config().service_ports.all().clone()))
 }
@@ -189,6 +289,13 @@ pub struct BatchStartOutcome {
 pub async fn services_start_all(
     state: State<'_, AppState>,
 ) -> Result<Vec<BatchStartOutcome>, Error> {
+    // Also start installed PHP pools so sites don't hit 502 Bad Gateway
+    let php_versions = crate::commands::php::installed_php_versions(state.paths.runtimes_dir().join("php"));
+    for version in &php_versions {
+        let workers = crate::commands::php::pool_workers(&state, version);
+        let _ = crate::commands::php::start_php_pool_internal(&state, version, workers).await;
+    }
+
     let ids = state.services.ids();
     let mut jobs = tokio::task::JoinSet::new();
     for id in ids {
@@ -220,6 +327,7 @@ pub async fn services_start_all(
     outcomes.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(outcomes)
 }
+
 
 /// Stops every active supervised service, concurrently and non-fatal per
 /// service, exactly as [`services_start_all`] starts them.

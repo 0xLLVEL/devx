@@ -60,29 +60,27 @@ pub fn php_pool_list(state: State<'_, AppState>) -> Result<Vec<PhpPoolStatus>, E
 /// The pool keeps the port its rendered `pool.conf` claims, so restarting
 /// DevX never renumbers existing pools. Returns once the pool is running or
 /// the start has failed.
-#[tauri::command]
-#[specta::specta]
-pub async fn php_pool_start(
-    state: State<'_, AppState>,
-    version: String,
+pub(crate) async fn start_php_pool_internal(
+    state: &AppState,
+    version: &str,
     workers: u32,
 ) -> Result<PhpPoolStatus, Error> {
     devx_provision::validate_workers(workers)?;
 
     // Remember the choice so the list view and the next start agree.
-    if pool_workers(&state, &version) != workers {
+    if pool_workers(state, version) != workers {
         state.with_config_mut(|store| {
-            store.update(|config| config.php_pools.insert(version.clone(), workers))
+            store.update(|config| config.php_pools.insert(version.to_string(), workers))
         })?;
     }
 
-    let port = pool_port(&state, &version)?;
-    let extensions = pool_extensions(&state, &version);
-    let xdebug = pool_xdebug(&state, &version);
-    let limits = pool_limits(&state, &version);
+    let port = pool_port(state, version)?;
+    let extensions = pool_extensions(state, version);
+    let xdebug = pool_xdebug(state, version);
+    let limits = pool_limits(state, version);
     let plan = crate::services::plan_php_pool(
         &state.paths,
-        &version,
+        version,
         port,
         workers,
         &extensions,
@@ -107,6 +105,18 @@ pub async fn php_pool_start(
         ..from_summary(plan.summary())
     })
 }
+
+/// Starts (or reports) the FastCGI pool for one installed PHP version.
+#[tauri::command]
+#[specta::specta]
+pub async fn php_pool_start(
+    state: State<'_, AppState>,
+    version: String,
+    workers: u32,
+) -> Result<PhpPoolStatus, Error> {
+    start_php_pool_internal(&state, &version, workers).await
+}
+
 
 /// Stops the FastCGI pool of one PHP version.
 #[tauri::command]
@@ -398,36 +408,47 @@ pub async fn php_xdebug_set(
 }
 
 /// The enabled extensions for `version`, from the stored configuration.
-fn pool_extensions(state: &AppState, version: &str) -> Vec<String> {
+pub(crate) fn pool_extensions(state: &AppState, version: &str) -> Vec<String> {
     state.with_config(|store| store.config().php_extensions.get(version).to_vec())
 }
 
 /// The Xdebug settings for `version`, from the stored configuration.
-fn pool_xdebug(state: &AppState, version: &str) -> Option<devx_core::config::XdebugConfig> {
+pub(crate) fn pool_xdebug(state: &AppState, version: &str) -> Option<devx_core::config::XdebugConfig> {
     state
         .with_config(|store| store.config().php_xdebug.get(version).cloned())
 }
 
 /// The configured limits for `version`, when set.
-fn pool_limits(state: &AppState, version: &str) -> Option<devx_core::config::LimitConfig> {
+pub(crate) fn pool_limits(state: &AppState, version: &str) -> Option<devx_core::config::LimitConfig> {
     state
         .with_config(|store| store.config().php_limits.get(version).cloned())
 }
 
 /// The configured worker count for `version`, or the default.
-fn pool_workers(state: &AppState, version: &str) -> u32 {
+pub(crate) fn pool_workers(state: &AppState, version: &str) -> u32 {
     state
         .with_config(|store| store.config().php_pools.get(version))
         .unwrap_or(devx_provision::DEFAULT_WORKERS)
 }
 
-/// The port `version`'s pool uses: the one its rendered conf claims, or a
-/// free one for a pool that has never run.
-fn pool_port(state: &AppState, version: &str) -> Result<u16, Error> {
+/// The port `version`'s pool uses: custom configured port, the one its rendered conf claims,
+/// or a free one for a pool that has never run.
+pub(crate) fn pool_port(state: &AppState, version: &str) -> Result<u16, Error> {
+    let pool_id = devx_provision::pool_id(version);
+    if let Some(port) = state.with_config(|store| {
+        store
+            .config()
+            .service_ports
+            .get(&pool_id)
+            .or_else(|| store.config().service_ports.get(version))
+    }) {
+        return Ok(port);
+    }
+
     let config_dir = state
         .paths
         .service_config_dir()
-        .join(devx_provision::pool_id(version));
+        .join(&pool_id);
 
     if let Ok(listen) = devx_provision::pool_listen_addr(&config_dir) {
         if let Some(port) = listen.rsplit(':').next().and_then(|p| p.parse().ok()) {
@@ -449,7 +470,7 @@ fn pool_state(state: &AppState, id: &str) -> devx_proc::ServiceState {
 }
 
 /// Installed PHP versions found under the runtimes directory.
-fn installed_php_versions(runtimes: std::path::PathBuf) -> Vec<String> {
+pub(crate) fn installed_php_versions(runtimes: std::path::PathBuf) -> Vec<String> {
     let mut versions = Vec::new();
 
     let Ok(entries) = std::fs::read_dir(&runtimes) else {

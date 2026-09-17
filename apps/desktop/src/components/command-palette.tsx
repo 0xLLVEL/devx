@@ -110,14 +110,15 @@ export function CommandPalette({
           onClose();
         }
       }}
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 px-4 pt-[12vh] backdrop-blur-[6px]"
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/65 px-4 pt-[12vh] backdrop-blur-[10px]"
     >
       <div
         role="dialog"
         aria-modal="true"
         aria-label="Command palette"
-        className="glass-surface w-[640px] max-w-full rounded-command"
+        className="glass-surface relative w-[640px] max-w-full overflow-hidden rounded-command shadow-2xl dialog-enter"
       >
+        <div className="absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-accent via-accent/40 to-transparent" />
         <div className="flex items-center gap-3 border-b border-line-subtle px-4 py-3">
           <Search className="size-4 shrink-0 text-ink-muted" aria-hidden />
           <input
@@ -179,14 +180,22 @@ export function CommandPalette({
                       onMouseMove={() => setActiveIndex(index)}
                       onClick={() => run(command)}
                       className={cn(
-                        "flex cursor-pointer items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors duration-150",
-                        active ? "bg-hover text-foreground" : "text-ink-secondary",
+                        "relative flex cursor-pointer items-center gap-3 rounded-md px-3 py-2 text-sm transition-[background-color,color,transform] duration-150",
+                        active
+                          ? "bg-hover text-foreground translate-x-0.5"
+                          : "text-ink-secondary hover:translate-x-0.5 hover:text-foreground",
                       )}
                     >
+                      {active ? (
+                        <span
+                          aria-hidden
+                          className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r bg-accent"
+                        />
+                      ) : null}
                       <Icon
                         aria-hidden
                         className={cn(
-                          "size-4 shrink-0",
+                          "size-4 shrink-0 transition-colors duration-150",
                           active ? "text-primary" : "text-ink-muted",
                         )}
                       />

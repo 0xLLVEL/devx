@@ -128,6 +128,21 @@ describe("DatabasesPage", () => {
     );
   });
 
+  it("does not activate the card's active state until Open client is clicked", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<DatabasesPage />);
+
+    const mariadbCard = await screen.findByRole("group", { name: "MariaDB engine" });
+    // Initially the card is not active
+    expect(mariadbCard.className).not.toContain("bg-primary-soft");
+
+    // Clicking Open client activates the card
+    const openClientBtn = within(mariadbCard).getByRole("button", { name: /open client/i });
+    await user.click(openClientBtn);
+
+    expect(mariadbCard.className).toContain("bg-primary-soft");
+  });
+
   it("offers tabs only for surfaces with data behind them (§26)", async () => {
     renderWithProviders(<DatabasesPage />);
 

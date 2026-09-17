@@ -613,7 +613,8 @@ pub(crate) fn sync_site_blocks(state: &State<'_, AppState>) -> Result<(), Error>
     let sites = state.with_config(|store| store.config().sites.clone());
     let (http_port, https_port) = state.with_config(|store| {
         let config = store.config();
-        (config.network.http_port, config.network.https_port)
+        let http = config.service_ports.get("nginx").unwrap_or(config.network.http_port);
+        (http, config.network.https_port)
     });
 
     let sync_sites: Vec<devx_provision::SyncSite> = sites

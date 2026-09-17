@@ -67,9 +67,9 @@ export function Topbar({
 
         <div className="min-w-0">
           {section ? (
-            <p className="truncate text-caption text-ink-muted">{section.label}</p>
+            <p className="truncate text-caption text-ink-muted leading-tight">{section.label}</p>
           ) : null}
-          <p className="truncate text-sm font-medium text-foreground">
+          <p className="truncate text-sm font-semibold text-foreground tracking-tight">
             {item?.label ?? "DevX"}
           </p>
         </div>
@@ -79,11 +79,11 @@ export function Topbar({
       <button
         type="button"
         onClick={onOpenSearch}
-        className="flex h-9 w-full max-w-md items-center gap-2.5 rounded-md border border-border bg-surface-2 px-3 text-left text-sm text-ink-muted transition-colors duration-150 hover:border-line-strong hover:bg-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+        className="group flex h-9 w-full max-w-md items-center gap-2.5 rounded-md border border-border bg-gradient-to-b from-surface-2 to-surface-1 px-3 text-left text-sm text-ink-muted shadow-xs transition-[border-color,background-color,box-shadow] duration-150 hover:border-line-strong hover:bg-hover hover:shadow-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
       >
-        <Search className="size-4 shrink-0" aria-hidden />
+        <Search className="size-4 shrink-0 transition-colors duration-150 group-hover:text-foreground" aria-hidden />
         <span className="min-w-0 flex-1 truncate">Search anything...</span>
-        <kbd className="rounded-sm border border-line-subtle px-1.5 py-0.5 font-mono text-caption text-ink-muted">
+        <kbd className="rounded-sm border border-line-subtle bg-surface-2/60 px-1.5 py-0.5 font-mono text-caption text-ink-muted transition-colors duration-150 group-hover:border-line-strong group-hover:text-ink-secondary">
           Ctrl K
         </kbd>
       </button>

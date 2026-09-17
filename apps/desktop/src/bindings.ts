@@ -195,9 +195,10 @@ export const commands = {
 	 */
 	serviceMetrics: () => typedError<ServiceMetrics[], DevxError>(__TAURI_INVOKE("service_metrics")),
 	/**
-	 *  Sets or clears a custom port for a supervised service component.
+	 *  Sets or clears a custom port for a supervised service component or PHP pool.
 	 * 
 	 *  If port is `Some(p)`, sets the custom port (p must be > 0). If `None`, clears the custom port.
+	 *  Re-renders configuration, restarts active services/pools, and re-syncs site blocks.
 	 */
 	serviceSetPort: (componentId: string, port: number | null) => typedError<{ [key in string]: number }, DevxError>(__TAURI_INVOKE("service_set_port", { componentId, port })),
 	/**  Returns the configured custom service ports map. */
@@ -219,13 +220,7 @@ export const commands = {
 	 *  has one, and the default otherwise.
 	 */
 	phpPoolList: () => typedError<PhpPoolStatus[], DevxError>(__TAURI_INVOKE("php_pool_list")),
-	/**
-	 *  Starts (or reports) the FastCGI pool for one installed PHP version.
-	 * 
-	 *  The pool keeps the port its rendered `pool.conf` claims, so restarting
-	 *  DevX never renumbers existing pools. Returns once the pool is running or
-	 *  the start has failed.
-	 */
+	/**  Starts (or reports) the FastCGI pool for one installed PHP version. */
 	phpPoolStart: (version: string, workers: number) => typedError<PhpPoolStatus, DevxError>(__TAURI_INVOKE("php_pool_start", { version, workers })),
 	/**  Stops the FastCGI pool of one PHP version. */
 	phpPoolStop: (version: string) => typedError<PhpPoolStatus, DevxError>(__TAURI_INVOKE("php_pool_stop", { version })),
