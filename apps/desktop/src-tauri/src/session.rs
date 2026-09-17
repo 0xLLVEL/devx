@@ -203,7 +203,8 @@ async fn start_service(state: &AppState, component_id: &str) -> Result<()> {
             }
         })
     });
-    let plan = crate::services::plan_service(&state.paths, component_id, &version, &[], custom_port)?;
+    let plan =
+        crate::services::plan_service(&state.paths, component_id, &version, &[], custom_port)?;
     let id = plan.spec.id.clone();
 
     crate::services::run_init_steps(&plan.init_steps).await?;
@@ -221,7 +222,8 @@ async fn start_pool(state: &AppState, version: &str) -> Result<()> {
         .with_config(|store| store.config().php_pools.get(version))
         .unwrap_or(devx_provision::DEFAULT_WORKERS);
 
-    let port = crate::commands::php::pool_port(state, version).unwrap_or_else(|_| next_pool_port(state));
+    let port =
+        crate::commands::php::pool_port(state, version).unwrap_or_else(|_| next_pool_port(state));
 
     let plan = crate::services::plan_php_pool(
         &state.paths,

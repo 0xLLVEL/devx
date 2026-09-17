@@ -140,7 +140,12 @@ async fn a_checksum_mismatch_aborts_and_leaves_nothing_behind() {
     // Advertise the wrong hash.
     let wrong = "a".repeat(64);
     let err = installer
-        .install(&version(&server.uri(), &wrong), &Layout::default(), None, |_| {})
+        .install(
+            &version(&server.uri(), &wrong),
+            &Layout::default(),
+            None,
+            |_| {},
+        )
         .await
         .expect_err("mismatch must fail");
 
@@ -189,7 +194,12 @@ async fn a_malicious_archive_is_refused_during_extraction() {
         .await;
 
     let err = installer
-        .install(&version(&server.uri(), &hash), &Layout::default(), None, |_| {})
+        .install(
+            &version(&server.uri(), &hash),
+            &Layout::default(),
+            None,
+            |_| {},
+        )
         .await
         .expect_err("zip slip must be refused");
 
@@ -224,7 +234,9 @@ async fn an_already_installed_version_is_a_no_op() {
 
     let mut stages = Vec::new();
     installer
-        .install(&component, &Layout::default(), None, |stage| stages.push(stage))
+        .install(&component, &Layout::default(), None, |stage| {
+            stages.push(stage)
+        })
         .await
         .expect("second install is a no-op");
 
@@ -308,7 +320,9 @@ async fn checksum_is_resolved_from_a_sums_document() {
 
     let mut stages = Vec::new();
     installer
-        .install(&component, &Layout::default(), None, |stage| stages.push(stage))
+        .install(&component, &Layout::default(), None, |stage| {
+            stages.push(stage)
+        })
         .await
         .expect("install with resolved checksum");
 
@@ -362,7 +376,12 @@ async fn an_interrupted_download_resumes_from_the_partial_file() {
         .await;
 
     installer
-        .install(&version(&server.uri(), &hash), &Layout::default(), None, |_| {})
+        .install(
+            &version(&server.uri(), &hash),
+            &Layout::default(),
+            None,
+            |_| {},
+        )
         .await
         .expect("resume must complete the download from the partial file");
 
@@ -385,7 +404,12 @@ async fn uninstall_removes_an_installed_version() {
         .await;
 
     installer
-        .install(&version(&server.uri(), &hash), &Layout::default(), None, |_| {})
+        .install(
+            &version(&server.uri(), &hash),
+            &Layout::default(),
+            None,
+            |_| {},
+        )
         .await
         .expect("install");
     assert!(installer.is_installed("php", "8.4.25"));
@@ -411,7 +435,12 @@ async fn keep_archives_retains_the_download() {
         .await;
 
     installer
-        .install(&version(&server.uri(), &hash), &Layout::default(), None, |_| {})
+        .install(
+            &version(&server.uri(), &hash),
+            &Layout::default(),
+            None,
+            |_| {},
+        )
         .await
         .expect("install");
 
@@ -460,7 +489,11 @@ async fn a_cancelled_install_stops_and_keeps_the_partial_download() {
         .await
         .expect_err("cancelled install must not succeed");
 
-    assert_eq!(err.code, ErrorCode::Process, "cancel carries the CANCELLED code");
+    assert_eq!(
+        err.code,
+        ErrorCode::Process,
+        "cancel carries the CANCELLED code"
+    );
     assert!(!installer.is_installed("php", "8.4.25"));
     assert!(!installer.install_dir("php", "8.4.25").exists());
 

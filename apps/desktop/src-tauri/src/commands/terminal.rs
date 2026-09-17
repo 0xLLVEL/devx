@@ -226,9 +226,7 @@ pub fn terminal_use_version(
     component_id: String,
     version: String,
 ) -> Result<(), Error> {
-    devx_provision::use_shim::use_version(&state.paths, &component_id, &version)
-        .map(|_| ())
-        .map_err(Error::from)
+    devx_provision::use_shim::use_version(&state.paths, &component_id, &version).map(drop)
 }
 
 /// Clears any shims pinned for a component (the UI's unpin action).
@@ -238,9 +236,7 @@ pub fn terminal_unset_version(
     state: State<'_, AppState>,
     component_id: String,
 ) -> Result<(), Error> {
-    devx_provision::use_shim::unset_version(&state.paths, &component_id)
-        .map(|_| ())
-        .map_err(Error::from)
+    devx_provision::use_shim::unset_version(&state.paths, &component_id).map(drop)
 }
 
 /// Runs one command through `cmd /c` in `cwd`, streaming its output.

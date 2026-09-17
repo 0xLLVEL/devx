@@ -614,7 +614,10 @@ mod tests {
         );
         let before = handle(&b, &PrivilegedRequest::ListHostsEntries);
 
-        assert_eq!(handle(&b, &PrivilegedRequest::FlushDns), PrivilegedResponse::Applied);
+        assert_eq!(
+            handle(&b, &PrivilegedRequest::FlushDns),
+            PrivilegedResponse::Applied
+        );
         assert_eq!(handle(&b, &PrivilegedRequest::ListHostsEntries), before);
     }
 

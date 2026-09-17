@@ -331,10 +331,7 @@ fn use_cmd(
 ) -> anyhow::Result<u8> {
     if unset {
         let removed = devx_provision::use_shim::unset_version(paths, component_id)?;
-        println!(
-            "removed {} shim(s) for {component_id}",
-            removed.len()
-        );
+        println!("removed {} shim(s) for {component_id}", removed.len());
         return Ok(0);
     }
 

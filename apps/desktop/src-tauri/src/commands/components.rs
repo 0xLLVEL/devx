@@ -120,7 +120,9 @@ pub async fn component_install(
 
     let emit_id = component_id.clone();
     let emit_version = version.clone();
-    let token = state.install_tokens.register(install_key(&component_id, &version));
+    let token = state
+        .install_tokens
+        .register(install_key(&component_id, &version));
 
     let install_dir = state
         .installer
@@ -150,7 +152,7 @@ pub async fn component_install(
 
 /// Cancels a running [`component_install`].
 ///
- /// Returns whether an install was actually running. The install aborts at the
+/// Returns whether an install was actually running. The install aborts at the
 /// next chunk boundary and cleans up: the partial download is kept so the next
 /// attempt resumes from it, while the staging directory is removed.
 #[tauri::command]

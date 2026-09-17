@@ -34,7 +34,7 @@ async fn supervises_a_real_mailpit() {
 
     let installer = Installer::new(paths.clone(), http).expect("installer");
     let install_dir = installer
-        .install(latest, &mailpit.layout, |_| {})
+        .install(latest, &mailpit.layout, None, |_| {})
         .await
         .expect("install mailpit");
 

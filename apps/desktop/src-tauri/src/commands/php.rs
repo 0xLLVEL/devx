@@ -64,10 +64,7 @@ pub fn php_pool_list(state: State<'_, AppState>) -> Result<Vec<PhpPoolStatus>, E
             xdebug,
             limits,
         )?;
-        devx_provision::write_pool_files(
-            &state.paths.service_config_dir().join(&plan.id),
-            &plan,
-        )?;
+        devx_provision::write_pool_files(&state.paths.service_config_dir().join(&plan.id), &plan)?;
 
         let summary = PhpPoolSummary {
             id: devx_provision::pool_id(&version),
@@ -145,7 +142,6 @@ pub async fn php_pool_start(
 ) -> Result<PhpPoolStatus, Error> {
     start_php_pool_internal(&state, &version, workers).await
 }
-
 
 /// Stops the FastCGI pool of one PHP version.
 #[tauri::command]
@@ -327,8 +323,7 @@ pub fn php_xdebug_get(state: State<'_, AppState>, version: String) -> Result<Php
             .with_hint("install the PHP version first"));
     }
 
-    let stored = state
-        .with_config(|store| store.config().php_xdebug.get(&version).cloned());
+    let stored = state.with_config(|store| store.config().php_xdebug.get(&version).cloned());
     Ok(match stored {
         Some(config) => PhpXdebugInfo {
             version,
@@ -369,16 +364,13 @@ pub async fn php_xdebug_set(
         // Xdebug only ships as a Zend extension; without its DLL in `ext/` the
         // rendered ini would stop PHP from starting at all.
         let installed = devx_provision::list_php_extensions(&install_dir)?;
-        if !installed
-            .iter()
-            .any(|name| {
-                let stem = name
-                    .strip_prefix("php_")
-                    .and_then(|rest| rest.strip_suffix(".dll"))
-                    .unwrap_or(name);
-                stem == "xdebug"
-            })
-        {
+        if !installed.iter().any(|name| {
+            let stem = name
+                .strip_prefix("php_")
+                .and_then(|rest| rest.strip_suffix(".dll"))
+                .unwrap_or(name);
+            stem == "xdebug"
+        }) {
             return Err(Error::not_found(format!(
                 "php {version} does not ship the xdebug extension"
             )));
@@ -442,15 +434,19 @@ pub(crate) fn pool_extensions(state: &AppState, version: &str) -> Vec<String> {
 }
 
 /// The Xdebug settings for `version`, from the stored configuration.
-pub(crate) fn pool_xdebug(state: &AppState, version: &str) -> Option<devx_core::config::XdebugConfig> {
-    state
-        .with_config(|store| store.config().php_xdebug.get(version).cloned())
+pub(crate) fn pool_xdebug(
+    state: &AppState,
+    version: &str,
+) -> Option<devx_core::config::XdebugConfig> {
+    state.with_config(|store| store.config().php_xdebug.get(version).cloned())
 }
 
 /// The configured limits for `version`, when set.
-pub(crate) fn pool_limits(state: &AppState, version: &str) -> Option<devx_core::config::LimitConfig> {
-    state
-        .with_config(|store| store.config().php_limits.get(version).cloned())
+pub(crate) fn pool_limits(
+    state: &AppState,
+    version: &str,
+) -> Option<devx_core::config::LimitConfig> {
+    state.with_config(|store| store.config().php_limits.get(version).cloned())
 }
 
 /// The configured worker count for `version`, or the default.
@@ -474,10 +470,7 @@ pub(crate) fn pool_port(state: &AppState, version: &str) -> Result<u16, Error> {
         return Ok(port);
     }
 
-    let config_dir = state
-        .paths
-        .service_config_dir()
-        .join(&pool_id);
+    let config_dir = state.paths.service_config_dir().join(&pool_id);
 
     if let Ok(listen) = devx_provision::pool_listen_addr(&config_dir) {
         if let Some(port) = listen.rsplit(':').next().and_then(|p| p.parse().ok()) {

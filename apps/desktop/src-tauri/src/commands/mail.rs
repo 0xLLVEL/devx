@@ -129,11 +129,12 @@ pub async fn mail_send_test(_state: State<'_, AppState>) -> Result<(), Error> {
     session.helo(host).await?;
     session.mail_from("devx@test.local").await?;
     session.rcpt_to("recipient@test.local").await?;
-    session.data(
-        "DevX test email",
-        "Sent by DevX's Send test email action to verify the SMTP round-trip.",
-    )
-    .await?;
+    session
+        .data(
+            "DevX test email",
+            "Sent by DevX's Send test email action to verify the SMTP round-trip.",
+        )
+        .await?;
     session.quit().await?;
 
     Ok(())

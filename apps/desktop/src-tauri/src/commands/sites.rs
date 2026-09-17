@@ -55,13 +55,10 @@ pub fn site_list(state: State<'_, AppState>) -> Result<Vec<SiteStatus>, Error> {
             aliases: site.aliases.clone(),
             // Never expose the password hash to the UI — the user name is
             // enough to show the protected state.
-            auth: site
-                .auth
-                .as_ref()
-                .map(|a| devx_core::config::SiteAuth {
-                    username: a.username.clone(),
-                    password_hash: String::new(),
-                }),
+            auth: site.auth.as_ref().map(|a| devx_core::config::SiteAuth {
+                username: a.username.clone(),
+                password_hash: String::new(),
+            }),
         });
     }
 
@@ -225,7 +222,10 @@ pub async fn site_add(
         https,
         web_server,
         env: previous.as_ref().map(|s| s.env.clone()).unwrap_or_default(),
-        aliases: previous.as_ref().map(|s| s.aliases.clone()).unwrap_or_default(),
+        aliases: previous
+            .as_ref()
+            .map(|s| s.aliases.clone())
+            .unwrap_or_default(),
         auth: previous.as_ref().and_then(|s| s.auth.clone()),
     };
     state.with_config_mut(|store| {
@@ -389,9 +389,7 @@ pub async fn site_auth_set(
     let auth = match (username, password) {
         (Some(user), Some(pass)) if !user.trim().is_empty() && !pass.is_empty() => {
             let hash = bcrypt::hash(pass, bcrypt::DEFAULT_COST)
-                .map_err(|err| {
-                    Error::invalid_input(format!("hashing password failed: {err}"))
-                })?;
+                .map_err(|err| Error::invalid_input(format!("hashing password failed: {err}")))?;
             Some(devx_core::config::SiteAuth {
                 username: user.trim().to_string(),
                 password_hash: hash,
@@ -613,7 +611,10 @@ pub(crate) fn sync_site_blocks(state: &State<'_, AppState>) -> Result<(), Error>
     let sites = state.with_config(|store| store.config().sites.clone());
     let (http_port, https_port) = state.with_config(|store| {
         let config = store.config();
-        let http = config.service_ports.get("nginx").unwrap_or(config.network.http_port);
+        let http = config
+            .service_ports
+            .get("nginx")
+            .unwrap_or(config.network.http_port);
         (http, config.network.https_port)
     });
 
@@ -665,10 +666,7 @@ pub struct SitePing {
 /// chain — DNS, TLS, server block, and PHP when the docroot runs it.
 #[tauri::command]
 #[specta::specta]
-pub async fn site_ping(
-    state: State<'_, AppState>,
-    hostname: String,
-) -> Result<SitePing, Error> {
+pub async fn site_ping(state: State<'_, AppState>, hostname: String) -> Result<SitePing, Error> {
     devx_provision::sites::validate_hostname(&hostname)?;
 
     let site = state
@@ -776,10 +774,7 @@ pub fn site_requests(
         return Ok(Vec::new());
     };
 
-    let mut entries: Vec<SiteRequestEntry> = body
-        .lines()
-        .filter_map(parse_access_line)
-        .collect();
+    let mut entries: Vec<SiteRequestEntry> = body.lines().filter_map(parse_access_line).collect();
     entries.reverse();
     entries.truncate(limit);
     Ok(entries)
@@ -802,15 +797,13 @@ fn parse_nginx_access_line(line: &str) -> Option<SiteRequestEntry> {
     let time_start = line.find('[')? + 1;
     let time_end = line.find("]")?;
     let time_raw = &line[time_start..time_end];
-    let time_unix = time::PrimitiveDateTime::parse(time_raw, &{
-        time::format_description::parse(
-            "[day]/[month repr:short]/[year]:[hour]:[minute]:[second] [offset_hour sign:mandatory][offset_minute]",
-        )
-        .ok()?
-    })
+    let time_unix = time::PrimitiveDateTime::parse(time_raw, &time::format_description::parse_borrowed::<2>(
+        "[day]/[month repr:short]/[year]:[hour]:[minute]:[second] [offset_hour sign:mandatory][offset_minute]",
+    )
+    .ok()?)
     .ok()
     .map(|t| {
-        let offset = time::OffsetDateTime::from(t.assume_utc());
+        let offset = t.assume_utc();
         offset.unix_timestamp().max(0) as u64
     });
 
@@ -866,11 +859,7 @@ fn parse_caddy_access_line(line: &str) -> Option<SiteRequestEntry> {
     let remote = value
         .get("client_ip")
         .and_then(|v| v.as_str())
-        .or_else(|| {
-            request
-                .get("remote_ip")
-                .and_then(|v| v.as_str())
-        })
+        .or_else(|| request.get("remote_ip").and_then(|v| v.as_str()))
         .unwrap_or("-")
         .to_string();
     let headers = request.get("headers");
@@ -887,7 +876,11 @@ fn parse_caddy_access_line(line: &str) -> Option<SiteRequestEntry> {
     // Caddy logs duration in nanoseconds.
     let duration_ms = value
         .get("duration")
-        .and_then(|d| d.as_str().and_then(|s| s.parse::<f64>().ok()).or_else(|| d.as_f64()))
+        .and_then(|d| {
+            d.as_str()
+                .and_then(|s| s.parse::<f64>().ok())
+                .or_else(|| d.as_f64())
+        })
         .map(|secs| (secs * 1000.0).round() as u64);
 
     Some(SiteRequestEntry {

@@ -215,10 +215,44 @@ pub fn plan_pool(
         ("extensions", render_extension_lines(&options.extensions)),
         // Pre-rendered Xdebug directives, empty when Xdebug is off.
         ("xdebug", render_xdebug_lines(options.xdebug.as_ref())),
-        ("memory_limit", options.limits.as_ref().map(|l| l.memory_limit.clone()).unwrap_or_else(|| "256M".into())),
-        ("upload_max_filesize", options.limits.as_ref().map(|l| l.upload_max_filesize.clone()).unwrap_or_else(|| "64M".into())),
-        ("max_execution_time", options.limits.as_ref().map(|l| l.max_execution_time.to_string()).unwrap_or_else(|| "60".into())),
-        ("opcache_line", options.limits.as_ref().map(|l| if l.opcache_enabled { "opcache.enable = On".to_owned() } else { "opcache.enable = Off".to_owned() }).unwrap_or_else(|| "opcache.enable = On".to_owned())),
+        (
+            "memory_limit",
+            options
+                .limits
+                .as_ref()
+                .map(|l| l.memory_limit.clone())
+                .unwrap_or_else(|| "256M".into()),
+        ),
+        (
+            "upload_max_filesize",
+            options
+                .limits
+                .as_ref()
+                .map(|l| l.upload_max_filesize.clone())
+                .unwrap_or_else(|| "64M".into()),
+        ),
+        (
+            "max_execution_time",
+            options
+                .limits
+                .as_ref()
+                .map(|l| l.max_execution_time.to_string())
+                .unwrap_or_else(|| "60".into()),
+        ),
+        (
+            "opcache_line",
+            options
+                .limits
+                .as_ref()
+                .map(|l| {
+                    if l.opcache_enabled {
+                        "opcache.enable = On".to_owned()
+                    } else {
+                        "opcache.enable = Off".to_owned()
+                    }
+                })
+                .unwrap_or_else(|| "opcache.enable = On".to_owned()),
+        ),
     ];
 
     let php_ini = render(PHP_INI_TEMPLATE, &values)?;

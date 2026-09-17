@@ -74,9 +74,7 @@ mod imp {
             .arg("/flushdns")
             .creation_flags(CREATE_NO_WINDOW)
             .output()
-            .map_err(|err| {
-                Error::privileged(format!("could not run ipconfig /flushdns: {err}"))
-            })?;
+            .map_err(|err| Error::privileged(format!("could not run ipconfig /flushdns: {err}")))?;
 
         flush_outcome(
             output.status.code(),
@@ -106,7 +104,9 @@ mod tests {
         assert!(flush_outcome(Some(0), "Successfully flushed the DNS Resolver Cache.", "").is_ok());
         // The success text alone is not the verdict; a non-zero exit with the
         // same words is still a failure.
-        assert!(flush_outcome(Some(1), "Successfully flushed the DNS Resolver Cache.", "").is_err());
+        assert!(
+            flush_outcome(Some(1), "Successfully flushed the DNS Resolver Cache.", "").is_err()
+        );
     }
 
     #[test]

@@ -52,7 +52,10 @@ where
             .write_all(format!("{line}\r\n").as_bytes())
             .await
             .map_err(|err| smtp_error(step, err))?;
-        self.writer.flush().await.map_err(|err| smtp_error(step, err))?;
+        self.writer
+            .flush()
+            .await
+            .map_err(|err| smtp_error(step, err))?;
         self.expect(expect, step).await
     }
 
@@ -95,7 +98,10 @@ where
             .write_all(payload.as_bytes())
             .await
             .map_err(|err| smtp_error("message body", err))?;
-        self.writer.flush().await.map_err(|err| smtp_error("message body", err))?;
+        self.writer
+            .flush()
+            .await
+            .map_err(|err| smtp_error("message body", err))?;
         self.expect("250", "message accepted").await.map(|_| ())
     }
 
@@ -149,10 +155,7 @@ fn chrono_free_timestamp() -> String {
 }
 
 fn smtp_error(step: impl std::fmt::Display, detail: impl std::fmt::Display) -> Error {
-    Error::new(
-        ErrorCode::Network,
-        format!("SMTP {step} failed: {detail}"),
-    )
+    Error::new(ErrorCode::Network, format!("SMTP {step} failed: {detail}"))
 }
 
 #[cfg(test)]
@@ -174,7 +177,10 @@ mod tests {
             let mut lines = tokio::io::BufReader::new(server_read);
             let mut buf = String::new();
 
-            server_write.write_all(b"220 mailpit ready\r\n").await.unwrap();
+            server_write
+                .write_all(b"220 mailpit ready\r\n")
+                .await
+                .unwrap();
             lines.read_line(&mut buf).await.unwrap(); // HELO
             assert!(buf.starts_with("HELO "));
             buf.clear();
@@ -219,7 +225,10 @@ mod tests {
         session.helo("127.0.0.1").await.unwrap();
         session.mail_from("devx@test.local").await.unwrap();
         session.rcpt_to("recipient@test.local").await.unwrap();
-        session.data("DevX test email", "round-trip body").await.unwrap();
+        session
+            .data("DevX test email", "round-trip body")
+            .await
+            .unwrap();
         session.quit().await.unwrap();
 
         server.await.unwrap();

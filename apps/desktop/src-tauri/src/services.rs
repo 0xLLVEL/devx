@@ -361,7 +361,8 @@ mod tests {
     #[test]
     fn planning_an_unknown_service_is_not_found() {
         let paths = AppPaths::rooted_at(std::path::Path::new("C:\\devx-test"));
-        let err = plan_service(&paths, "php", "8.4.25", &[], None).expect_err("php is not a service");
+        let err =
+            plan_service(&paths, "php", "8.4.25", &[], None).expect_err("php is not a service");
         assert_eq!(err.code, devx_core::ErrorCode::NotFound);
     }
 
@@ -445,7 +446,8 @@ mod tests {
         let paths = AppPaths::rooted_at(dir.path());
         paths.ensure_dirs().expect("dirs");
 
-        let err = plan_php_pool(&paths, "8.4.25", 9100, 4, &[], None, None).expect_err("not installed");
+        let err =
+            plan_php_pool(&paths, "8.4.25", 9100, 4, &[], None, None).expect_err("not installed");
         assert_eq!(err.code, devx_core::ErrorCode::NotFound);
     }
 
@@ -501,8 +503,16 @@ mod tests {
         // A pool whose rendered conf claims a port keeps it after a restart:
         // the next port is chosen past the claim.
         fake_php_install(&paths);
-        let plan =
-            plan_php_pool(&paths, "8.4.25", devx_provision::FIRST_POOL_PORT, 4, &[], None, None).expect("plan");
+        let plan = plan_php_pool(
+            &paths,
+            "8.4.25",
+            devx_provision::FIRST_POOL_PORT,
+            4,
+            &[],
+            None,
+            None,
+        )
+        .expect("plan");
         pool_spec(&paths, &plan).expect("spec");
 
         assert_eq!(next(&[]), devx_provision::FIRST_POOL_PORT + 1);

@@ -137,22 +137,24 @@ pub async fn template_create(
         "git" => {
             // The docroot parent must exist; git creates the clone directory
             // itself, and the site points at the repo's document root.
-            let url = git_url.as_deref().map(str::trim).filter(|u| !u.is_empty())
-                .ok_or_else(|| {
-                    Error::invalid_input("the git template needs a repository URL")
-                })?;
+            let url = git_url
+                .as_deref()
+                .map(str::trim)
+                .filter(|u| !u.is_empty())
+                .ok_or_else(|| Error::invalid_input("the git template needs a repository URL"))?;
             if docroot_path.exists() {
                 return Err(Error::conflict(format!(
                     "`{docroot}` already exists; git clone needs a fresh directory"
                 )));
             }
-            std::fs::create_dir_all(docroot_path.parent().unwrap_or(&docroot_path))
-                .map_err(|err| {
+            std::fs::create_dir_all(docroot_path.parent().unwrap_or(&docroot_path)).map_err(
+                |err| {
                     Error::new(
                         devx_core::ErrorCode::Io,
                         format!("failed to create {}: {err}", docroot_path.display()),
                     )
-                })?;
+                },
+            )?;
 
             let output = tokio::process::Command::new("git")
                 .args(["clone", "--depth", "1", url])
@@ -202,8 +204,7 @@ pub async fn template_create(
     }
 
     // Reuse the site_add machinery: validate, persist, sync the block.
-    let statuses =
-        site_add(state, hostname.clone(), docroot, php_version, https, None).await?;
+    let statuses = site_add(state, hostname.clone(), docroot, php_version, https, None).await?;
 
     let Some(created) = statuses
         .iter()

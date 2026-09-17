@@ -233,10 +233,7 @@ server {{
 /// The `auth_basic` plus `auth_basic_user_file` pair sits at `server` level
 /// so every location inherits it; the htpasswd file lives next to the site
 /// blocks under `service-config/nginx/auth`.
-fn render_nginx_auth(
-    auth: &Option<devx_core::config::SiteAuth>,
-    hostname: &str,
-) -> String {
+fn render_nginx_auth(auth: &Option<devx_core::config::SiteAuth>, hostname: &str) -> String {
     if auth.is_none() {
         return String::new();
     };
@@ -278,11 +275,7 @@ fn spec_hostname(spec: &SiteSpec) -> String {
 }
 
 /// Renders one site as an Apache VirtualHost block.
-pub fn render_apache_site(
-    spec: &SiteSpec,
-    php_endpoint: Option<&str>,
-    http_port: u16,
-) -> String {
+pub fn render_apache_site(spec: &SiteSpec, php_endpoint: Option<&str>, http_port: u16) -> String {
     let docroot = slash(&spec.docroot);
     let index = if spec.php_version.is_some() {
         "index.php index.html index.htm"
@@ -357,11 +350,7 @@ fn render_apache_env(env: &[(String, String)]) -> String {
 /// block did: static serving, PHP proxying to the pool, and index files.
 /// TLS is left to Caddy's own internal CA on `https_port` — the DevX local
 /// CA handles sites it proxies, but Caddy re-terminates its own listener.
-pub fn render_caddy_site(
-    spec: &SiteSpec,
-    php_endpoint: Option<&str>,
-    tls: Option<&str>,
-) -> String {
+pub fn render_caddy_site(spec: &SiteSpec, php_endpoint: Option<&str>, tls: Option<&str>) -> String {
     let docroot = slash(&spec.docroot);
     let names = spec_hostname(spec);
 
@@ -631,9 +620,10 @@ pub fn sync_site_blocks(
         };
 
         let endpoint = match (&spec.php_version, site.web_server) {
-            (Some(version), WebServerKind::Nginx | WebServerKind::Apache | WebServerKind::Caddy) => {
-                Some(pool_endpoint_for(ctx.service_config_dir, version)?)
-            }
+            (
+                Some(version),
+                WebServerKind::Nginx | WebServerKind::Apache | WebServerKind::Caddy,
+            ) => Some(pool_endpoint_for(ctx.service_config_dir, version)?),
             // FrankenPHP serves PHP directly; there is no pool to find.
             (_, WebServerKind::FrankenPhp) => None,
             (None, _) => None,
@@ -696,7 +686,13 @@ pub fn sync_site_blocks(
 
         match site.web_server {
             WebServerKind::Nginx => {
-                write_site_block_with_port(&target_dir, &spec, endpoint.as_deref(), tls.as_deref(), ctx.http_port)?;
+                write_site_block_with_port(
+                    &target_dir,
+                    &spec,
+                    endpoint.as_deref(),
+                    tls.as_deref(),
+                    ctx.http_port,
+                )?;
             }
             WebServerKind::Apache => {
                 let body = render_apache_site(&spec, endpoint.as_deref(), ctx.http_port);
@@ -724,11 +720,13 @@ pub fn sync_site_blocks(
         if dir.is_dir() && dir != sites_dir {
             let live_extra: Vec<String> = sites
                 .iter()
-                .filter(|s| match (extra, s.web_server) {
-                    ("apache", WebServerKind::Apache) => true,
-                    ("caddy", WebServerKind::Caddy) => true,
-                    ("frankenphp", WebServerKind::FrankenPhp) => true,
-                    _ => false,
+                .filter(|s| {
+                    matches!(
+                        (extra, s.web_server),
+                        ("apache", WebServerKind::Apache)
+                            | ("caddy", WebServerKind::Caddy)
+                            | ("frankenphp", WebServerKind::FrankenPhp)
+                    )
                 })
                 .map(|s| s.hostname.clone())
                 .collect();
@@ -860,7 +858,10 @@ mod tests {
         let block = render_caddy_site(&site, Some("127.0.0.1:9100"), None);
 
         assert!(block.contains("app.test {"), "{block}");
-        assert!(block.contains(&format!("root * {}", slash(&site.docroot))), "{block}");
+        assert!(
+            block.contains(&format!("root * {}", slash(&site.docroot))),
+            "{block}"
+        );
         assert!(block.contains("file_server"), "{block}");
         assert!(block.contains("php_fastcgi 127.0.0.1:9100"), "{block}");
     }
@@ -1073,8 +1074,14 @@ mod tests {
         assert!(block.contains("<VirtualHost *:8085>"), "{block}");
         assert!(block.contains("ServerName app.test"), "{block}");
         assert!(block.contains("ServerAlias www.app.test"), "{block}");
-        assert!(block.contains("SetHandler \"proxy:fcgi://127.0.0.1:9100/\""), "{block}");
+        assert!(
+            block.contains("SetHandler \"proxy:fcgi://127.0.0.1:9100/\""),
+            "{block}"
+        );
         assert!(block.contains("SetEnv APP_ENV \"production\""), "{block}");
-        assert!(block.contains("DirectoryIndex index.php index.html index.htm"), "{block}");
+        assert!(
+            block.contains("DirectoryIndex index.php index.html index.htm"),
+            "{block}"
+        );
     }
 }

@@ -63,10 +63,7 @@ pub fn profile_list(state: State<'_, AppState>) -> Result<Vec<ProfileEntry>, Err
 /// existing profile of the same name on purpose.
 #[tauri::command]
 #[specta::specta]
-pub fn profile_save(
-    state: State<'_, AppState>,
-    name: String,
-) -> Result<Vec<ProfileEntry>, Error> {
+pub fn profile_save(state: State<'_, AppState>, name: String) -> Result<Vec<ProfileEntry>, Error> {
     if !valid_profile_name(&name) {
         return Err(Error::invalid_input(
             "profile names may only contain letters, digits, dashes and underscores",
@@ -93,17 +90,13 @@ pub fn profile_save(
 /// re-plan paths, exactly as after an import.
 #[tauri::command]
 #[specta::specta]
-pub fn profile_apply(
-    state: State<'_, AppState>,
-    name: String,
-) -> Result<Config, Error> {
+pub fn profile_apply(state: State<'_, AppState>, name: String) -> Result<Config, Error> {
     if !valid_profile_name(&name) {
         return Err(Error::invalid_input("unknown profile name"));
     }
     let path = profiles_dir(&state.paths).join(format!("{name}.toml"));
-    let body = std::fs::read_to_string(&path).map_err(|_| {
-        Error::not_found(format!("profile `{name}` does not exist"))
-    })?;
+    let body = std::fs::read_to_string(&path)
+        .map_err(|_| Error::not_found(format!("profile `{name}` does not exist")))?;
 
     let imported = devx_core::parse_config(&body)?;
 

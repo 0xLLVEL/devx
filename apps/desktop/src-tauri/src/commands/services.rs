@@ -65,13 +65,8 @@ pub async fn service_start(
         })
     });
 
-    let plan = crate::services::plan_service(
-        &state.paths,
-        &component_id,
-        &version,
-        &[],
-        custom_port,
-    )?;
+    let plan =
+        crate::services::plan_service(&state.paths, &component_id, &version, &[], custom_port)?;
     let id = plan.spec.id.clone();
 
     // One-time init (initdb, mysql_install_db) must complete before launch.
@@ -85,16 +80,24 @@ pub async fn service_start(
     supervisor.start().await?;
 
     // Web servers route PHP requests to FastCGI pools; start any needed pools
-    if matches!(component_id.as_str(), "nginx" | "apache" | "caddy" | "frankenphp") {
+    if matches!(
+        component_id.as_str(),
+        "nginx" | "apache" | "caddy" | "frankenphp"
+    ) {
         let sites = state.with_config(|store| store.config().sites.clone());
         for site in sites {
             if let Some(php_ver) = site.php() {
                 if state.installer.is_installed("php", php_ver) {
                     let pool_id = devx_provision::pool_id(php_ver);
-                    let is_active = state.services.get(&pool_id).is_some_and(|s| s.state().is_active());
+                    let is_active = state
+                        .services
+                        .get(&pool_id)
+                        .is_some_and(|s| s.state().is_active());
                     if !is_active {
                         let workers = crate::commands::php::pool_workers(&state, php_ver);
-                        let _ = crate::commands::php::start_php_pool_internal(&state, php_ver, workers).await;
+                        let _ =
+                            crate::commands::php::start_php_pool_internal(&state, php_ver, workers)
+                                .await;
                     }
                 }
             }
@@ -290,7 +293,8 @@ pub async fn services_start_all(
     state: State<'_, AppState>,
 ) -> Result<Vec<BatchStartOutcome>, Error> {
     // Also start installed PHP pools so sites don't hit 502 Bad Gateway
-    let php_versions = crate::commands::php::installed_php_versions(state.paths.runtimes_dir().join("php"));
+    let php_versions =
+        crate::commands::php::installed_php_versions(state.paths.runtimes_dir().join("php"));
     for version in &php_versions {
         let workers = crate::commands::php::pool_workers(&state, version);
         let _ = crate::commands::php::start_php_pool_internal(&state, version, workers).await;
@@ -328,12 +332,13 @@ pub async fn services_start_all(
     Ok(outcomes)
 }
 
-
 /// Stops every active supervised service, concurrently and non-fatal per
 /// service, exactly as [`services_start_all`] starts them.
 #[tauri::command]
 #[specta::specta]
-pub async fn services_stop_all(state: State<'_, AppState>) -> Result<Vec<BatchStartOutcome>, Error> {
+pub async fn services_stop_all(
+    state: State<'_, AppState>,
+) -> Result<Vec<BatchStartOutcome>, Error> {
     let ids = state.services.ids();
     state.services.stop_all().await;
     let outcomes = ids

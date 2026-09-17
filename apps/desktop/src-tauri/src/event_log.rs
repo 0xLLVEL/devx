@@ -61,10 +61,7 @@ pub fn record(paths: &devx_core::AppPaths, event: &devx_proc::ServiceEvent) {
         exit: event.exit.as_ref().map(|reason| {
             serde_json::to_value(reason)
                 .ok()
-                .and_then(|v| {
-                    v.get("kind")
-                        .and_then(|k| k.as_str().map(str::to_owned))
-                })
+                .and_then(|v| v.get("kind").and_then(|k| k.as_str().map(str::to_owned)))
                 .unwrap_or_default()
         }),
     };
@@ -225,11 +222,7 @@ mod tests {
         let paths = paths(&dir);
         record(
             &paths,
-            &event(
-                "php",
-                ServiceState::Failed,
-                Some(ExitReason::HealthTimeout),
-            ),
+            &event("php", ServiceState::Failed, Some(ExitReason::HealthTimeout)),
         );
         let content = std::fs::read_to_string(log_path(&paths)).unwrap();
         let entry: RecordedEvent = serde_json::from_str(content.trim()).unwrap();

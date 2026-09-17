@@ -453,9 +453,7 @@ pub const MAX_CRON_MINUTES: u32 = 7 * 24 * 60;
 
 /// Custom port assignments for supervised services, keyed by service id.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
-pub struct ServicePorts(
-    pub std::collections::BTreeMap<String, u16>,
-);
+pub struct ServicePorts(pub std::collections::BTreeMap<String, u16>);
 
 impl ServicePorts {
     /// Returns the port for `service`, when configured.

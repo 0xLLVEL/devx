@@ -47,7 +47,9 @@ pub fn is_service(component_id: &str) -> bool {
 
 /// Returns the default port for `component_id`, if declared.
 pub fn default_port_for(component_id: &str) -> Option<u16> {
-    definition_for(component_id).ok().and_then(|def| def.default_port)
+    definition_for(component_id)
+        .ok()
+        .and_then(|def| def.default_port)
 }
 
 /// Ids of every component with a service definition.
@@ -553,19 +555,18 @@ mod tests {
         let rendered = render_template(&file.template, &ctx(8085));
         assert!(rendered.contains("Listen 127.0.0.1:8085"), "{rendered}");
         assert!(
-        rendered.contains("SetHandler \"proxy:fcgi://127.0.0.1:9100/\""),
-        "{rendered}"
-    );
-    assert!(
-        rendered.contains("ProxyFCGIBackendType GENERIC"),
-        "{rendered}"
-    );
-    assert!(
-        rendered
-            .contains("SCRIPT_FILENAME \"%{reqenv:DOCUMENT_ROOT}%{REQUEST_URI}\""),
-        "{rendered}"
-    );
-    assert!(rendered.contains("REDIRECT_STATUS 200"), "{rendered}");
+            rendered.contains("SetHandler \"proxy:fcgi://127.0.0.1:9100/\""),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("ProxyFCGIBackendType GENERIC"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("SCRIPT_FILENAME \"%{reqenv:DOCUMENT_ROOT}%{REQUEST_URI}\""),
+            "{rendered}"
+        );
+        assert!(rendered.contains("REDIRECT_STATUS 200"), "{rendered}");
         assert!(rendered.contains("AllowOverride All"), "{rendered}");
     }
 

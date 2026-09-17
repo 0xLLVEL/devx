@@ -115,11 +115,7 @@ pub async fn db_import_sql(
         )));
     }
     let version = newest_installed_component(&state.paths, &service_id)?;
-    let install_dir = state
-        .paths
-        .runtimes_dir()
-        .join(&service_id)
-        .join(version);
+    let install_dir = state.paths.runtimes_dir().join(&service_id).join(version);
     let plan = devx_db::plan_restore(engine, &install_dir, params.port, &dump_path)?;
     devx_db::run_tool(&plan).await
 }

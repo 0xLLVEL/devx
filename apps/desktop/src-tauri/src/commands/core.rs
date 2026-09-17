@@ -193,7 +193,9 @@ pub fn events_recent(
 ) -> Result<Vec<EventEntry>, Error> {
     let events = crate::event_log::recent(
         &state.paths,
-        limit.unwrap_or(50).clamp(1, crate::event_log::MAX_RECENT as u32) as usize,
+        limit
+            .unwrap_or(50)
+            .clamp(1, crate::event_log::MAX_RECENT as u32) as usize,
     );
     Ok(events
         .into_iter()
