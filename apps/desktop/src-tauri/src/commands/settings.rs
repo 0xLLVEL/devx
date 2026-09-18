@@ -90,14 +90,26 @@ pub(crate) fn sync_autostart_setting(app: &tauri::AppHandle) -> Result<bool, Err
     let wanted = state.with_config(|store| store.config().general.start_with_windows);
 
     let manager = app.autolaunch();
-    if wanted {
-        manager
-            .enable()
-            .map_err(|err| Error::internal(format!("enabling autostart: {err}")))?;
-    } else {
-        manager
-            .disable()
-            .map_err(|err| Error::internal(format!("disabling autostart: {err}")))?;
+    // Idempotent: check first so disabling an already-disabled entry does not
+    // try to delete a missing registry value (os error 2) and warn at startup.
+    let current = manager
+        .is_enabled()
+        .map_err(|err| Error::internal(format!("reading autostart state: {err}")))?;
+    if wanted != current {
+        let res = if wanted { manager.enable() } else { manager.disable() };
+        if let Err(err) = res {
+            let msg = err.to_string().to_ascii_lowercase();
+            let not_found = msg.contains("cannot find the file")
+                || msg.contains("not found")
+                || msg.contains("os error 2");
+            if !(not_found && !wanted) {
+                return Err(Error::internal(format!(
+                    "{} autostart: {err}",
+                    if wanted { "enabling" } else { "disabling" }
+                )));
+            }
+            tracing::debug!(error = %err, "autostart disable: already absent, treating as disabled");
+        }
     }
 
     manager
