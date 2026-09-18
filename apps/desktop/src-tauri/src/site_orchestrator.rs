@@ -1,4 +1,4 @@
-﻿//! Deep module: SiteOrchestrator â€” one seam for all site mutations.
+//! Deep module: SiteOrchestrator â€” one seam for all site mutations.
 //! Small interface (5 methods), deep implementation (validate+update+sync+certs+hosts+restart).
 //! Internal seam for tests is TempDir injection, not trait objects (YAGNI: one adapter = hypothetical).
 
@@ -75,7 +75,8 @@ impl<'a> SiteOrchestrator<'a> {
         }
 
         self.ensure_certs(&site).await;
-        self.reconcile_hosts(std::slice::from_ref(&site.hostname)).await;
+        self.reconcile_hosts(std::slice::from_ref(&site.hostname))
+            .await;
         self.restart_nginx().await;
 
         crate::commands::sites::site_list(self.state.clone())
