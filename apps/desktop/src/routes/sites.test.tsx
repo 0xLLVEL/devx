@@ -22,6 +22,10 @@ const mocks = vi.hoisted(() => ({
   pickDirectory: vi.fn(),
   openInBrowser: vi.fn(),
   openFolder: vi.fn(),
+  hostsList: vi.fn(),
+  hostsAdd: vi.fn(),
+  hostsRemove: vi.fn(),
+  hostsFlushDns: vi.fn(),
 }));
 
 vi.mock("@/lib/ipc", async () => {
@@ -72,6 +76,7 @@ describe("SitesPage", () => {
       suffix: "test",
     });
     mocks.installedVersions.mockResolvedValue([]);
+    mocks.hostsList.mockResolvedValue([]);
   });
 
   it("shows an empty state when no sites are configured", async () => {
