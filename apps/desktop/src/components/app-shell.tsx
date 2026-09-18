@@ -107,8 +107,14 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <TerminalSessionProvider>
+      <a
+        href="#main"
+        className="sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[999] focus:not-sr-only focus:rounded-md focus:bg-primary focus:px-3 focus:py-2 focus:text-primary-foreground focus:shadow-md"
+      >
+        Skip to content
+      </a>
       {/* `isolate` gives the window its own stacking context, so the ambient
-          layer can sit above the app background and below everything in flow. */}
+           layer can sit above the app background and below everything in flow. */}
       <div className="relative isolate flex h-full flex-col bg-app">
         <AmbientBackground />
 
@@ -123,7 +129,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <div className="flex min-h-0 flex-1">
           <Sidebar collapsed={collapsed} />
           {/* Transparent on purpose: the ambient layer shows through it. */}
-          <main className="min-w-0 flex-1 overflow-y-auto">
+          <main id="main" tabIndex={-1} className="min-w-0 flex-1 overflow-y-auto outline-none">
             <div className="relative">{children}</div>
           </main>
         </div>

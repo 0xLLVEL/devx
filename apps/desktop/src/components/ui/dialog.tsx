@@ -38,6 +38,7 @@ export function Dialog({
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   const descriptionId = useId();
+  const previousFocus = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     if (!open) {
@@ -47,6 +48,7 @@ export function Dialog({
     if (!dialog) {
       return;
     }
+    previousFocus.current = document.activeElement as HTMLElement | null;
     try {
       dialog.showModal();
     } catch {
@@ -56,6 +58,10 @@ export function Dialog({
     // `autoFocus` on a child runs before the dialog is modal, so placement has
     // to happen here. Callers mark the safe target.
     dialog.querySelector<HTMLElement>("[data-autofocus]")?.focus();
+    return () => {
+      // Focus return — keyboard user lands back on trigger
+      previousFocus.current?.focus();
+    };
   }, [open]);
 
   // Nothing is in the DOM while closed: a hidden dialog that screen readers,
