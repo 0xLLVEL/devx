@@ -96,7 +96,11 @@ pub(crate) fn sync_autostart_setting(app: &tauri::AppHandle) -> Result<bool, Err
         .is_enabled()
         .map_err(|err| Error::internal(format!("reading autostart state: {err}")))?;
     if wanted != current {
-        let res = if wanted { manager.enable() } else { manager.disable() };
+        let res = if wanted {
+            manager.enable()
+        } else {
+            manager.disable()
+        };
         if let Err(err) = res {
             let msg = err.to_string().to_ascii_lowercase();
             let not_found = msg.contains("cannot find the file")
