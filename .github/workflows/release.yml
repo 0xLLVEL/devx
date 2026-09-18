@@ -71,6 +71,9 @@ jobs:
 
       - name: Build release installer
         shell: pwsh
+        env:
+          CARGO_PROFILE_RELEASE_LTO: "true"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "1"
         run: ./scripts/make-installer.ps1 -AppVersion '${{ steps.version.outputs.version }}'
 
       - name: Locate installer

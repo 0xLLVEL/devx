@@ -65,23 +65,3 @@ jobs:
 
       - name: Test Rust
         run: cargo test --workspace
-
-      - name: Build debug binary
-        run: cargo build --workspace
-
-      # Pushes to main additionally produce a release-mode NSIS installer,
-      # uploaded as a workflow artifact (no GitHub Release is created here;
-      # that only happens when a v* tag is pushed, see release.yml).
-      - name: Build release installer
-        if: github.event_name == 'push'
-        shell: pwsh
-        run: ./scripts/make-installer.ps1
-
-      - name: Upload installer artifact
-        if: github.event_name == 'push'
-        uses: actions/upload-artifact@v4
-        with:
-          name: DevX-${{ github.sha }}-x64-setup
-          path: target/release/bundle/nsis/*-setup.exe
-          if-no-files-found: error
-          retention-days: 14
