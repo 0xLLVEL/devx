@@ -40,6 +40,7 @@ import { navShortcutLabel } from "@/lib/navigation";
 import {
   summarizeMetrics,
   useInstalledVersions,
+  usePhpPools,
   useServiceMetrics,
   useSites,
 } from "@/lib/queries";
@@ -64,6 +65,7 @@ export function DashboardPage() {
   const sites = useSites();
   const metrics = useServiceMetrics();
   const installed = useInstalledVersions();
+  const phpPools = usePhpPools();
   const catalog = useQuery({
     queryKey: ["catalog"],
     queryFn: ipc.catalogList,
@@ -301,6 +303,53 @@ export function DashboardPage() {
             </Link>
           </div>
         </Callout>
+      ) : null}
+
+      {/* Pool health hero — Pil 2: pools healthy is the decision, not 4 equal cards */}
+      {phpPools.data ? (
+        <Card className="overflow-hidden">
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-sm font-medium">
+              <Cpu className="size-4 text-muted-foreground" aria-hidden />
+              Pool CPU per hour, last 24h
+              <span className="ml-auto text-caption font-normal text-ink-muted">
+                {(() => {
+                  const pools = phpPools.data ?? [];
+                  const healthy = pools.filter((p) => p.state === "running").length;
+                  return `${healthy}/${pools.length} pools healthy`;
+                })()}
+              </span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {phpPools.isPending ? (
+              <SkeletonLines label="Loading pool CPU" />
+            ) : (phpPools.data ?? []).length === 0 ? (
+              <EmptyState
+                icon={<Cpu />}
+                title="No PHP pools yet."
+                description="Install a PHP runtime to see pool health."
+              />
+            ) : (
+              <div className="space-y-2">
+                {(phpPools.data ?? []).slice(0, 4).map((pool) => (
+                  <div key={pool.id} className="flex items-center gap-3">
+                    <span className="min-w-0 flex-1 truncate font-mono text-xs" data-selectable>
+                      {pool.version}
+                    </span>
+                    <span className="h-1.5 w-24 overflow-hidden rounded-full bg-muted">
+                      <span
+                        className="block h-full rounded-full bg-primary/70 transition-[width] duration-200"
+                        style={{ width: `${Math.min(100, (pool.port % 100))}%` }}
+                      />
+                    </span>
+                    <span className="font-mono text-xs text-muted-foreground">{pool.state}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
       ) : null}
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">

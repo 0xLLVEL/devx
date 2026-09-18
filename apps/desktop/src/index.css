@@ -491,9 +491,9 @@
       58vw 33vh 0 rgba(168, 179, 197, 0.18);
   }
 
-  /* §86 light movement: 24s, a few pixels. Anything faster is a distraction. */
+  /* Dial 1 — no endless drift. Keep particles static. */
   .ambient-drift {
-    animation: ambient-drift 24s ease-in-out infinite alternate;
+    animation: none;
   }
 
   /* Dialog entrance animation. */
@@ -545,14 +545,10 @@
     transform: scale(0.97);
   }
 
-  /* Status dot with pulsing ring for running services. */
-  .status-ring-pulse {
-    animation: subtle-glow 3s ease-in-out infinite;
-  }
-
-  /* Status dot with gentle opacity pulse. */
+  /* Dial 1 (hover only) — no endless pulse. Dot is solid for real running state only. */
+  .status-ring-pulse,
   .status-dot-pulse {
-    animation: status-pulse 3s ease-in-out infinite;
+    animation: none;
   }
 
   @media (prefers-reduced-motion: reduce) {
