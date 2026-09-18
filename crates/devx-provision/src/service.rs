@@ -1,4 +1,4 @@
-//! Declarative service definitions: how each component is configured and run.
+﻿//! Declarative service definitions: how each component is configured and run.
 //!
 //! A [`ServiceDefinition`] is the recipe that turns an *installed* component
 //! into a *runnable* one: which config files to render from templates, which
@@ -58,8 +58,6 @@ pub struct ServiceDefinition {
     pub component_id: String,
     /// Default TCP port, when the service listens on one.
     pub default_port: Option<u16>,
-    /// Other component ids that must be running first.
-    pub depends_on: Vec<String>,
     /// Config files to render before launch.
     pub config_files: Vec<ConfigFile>,
     /// One-time initialisation steps.
@@ -281,7 +279,6 @@ mod tests {
         let def = ServiceDefinition {
             component_id: "demo".into(),
             default_port: Some(8025),
-            depends_on: vec![],
             config_files: vec![ConfigFile {
                 relative_path: "demo.conf".into(),
                 template: "listen 127.0.0.1:{{ port }};\nroot {{ data_dir }};".into(),
@@ -316,7 +313,6 @@ mod tests {
         let def = ServiceDefinition {
             component_id: "db".into(),
             default_port: Some(3306),
-            depends_on: vec![],
             config_files: vec![],
             init_steps: vec![InitStep {
                 description: "initialise data directory".into(),
@@ -353,7 +349,6 @@ mod tests {
         let def = ServiceDefinition {
             component_id: "broken".into(),
             default_port: None,
-            depends_on: vec![],
             config_files: vec![ConfigFile {
                 relative_path: "x.conf".into(),
                 template: "{{ unclosed".into(),

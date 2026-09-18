@@ -1,3 +1,6 @@
+// ponytail: shallow facade — 25× unwrap forward, depth near zero.
+// New code use `service-queries.ts` deep module (1 seam, 5 hooks) instead.
+// This file stays for incremental migration (32 tests mock here) — delete per-route, not big-bang.
 import { commands, events } from "@/bindings";
 import type {
   Config,
@@ -49,10 +52,8 @@ export type {
   Network,
   NotificationEntry,
   NotificationList,
-  PhpExtensions,
   PhpExtensionInfo,
   PhpPoolStatus,
-  PhpPools,
   PhpXdebugInfo,
   ProfileEntry,
   ProjectSummary,

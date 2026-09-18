@@ -195,7 +195,7 @@ async fn start_service(state: &AppState, component_id: &str) -> Result<()> {
 
     let custom_port = state.with_config(|store| {
         let config = store.config();
-        config.service_ports.get(component_id).or_else(|| {
+        config.service_ports.get(component_id).copied().or_else(|| {
             if component_id == "nginx" {
                 Some(config.network.http_port)
             } else {
@@ -219,7 +219,7 @@ async fn start_service(state: &AppState, component_id: &str) -> Result<()> {
 /// Starts the FastCGI pool of one PHP version, mirroring `php_pool_start`.
 async fn start_pool(state: &AppState, version: &str) -> Result<()> {
     let workers = state
-        .with_config(|store| store.config().php_pools.get(version))
+        .with_config(|store| store.config().php_pools.get(version).copied())
         .unwrap_or(devx_provision::DEFAULT_WORKERS);
 
     let port =
@@ -230,7 +230,14 @@ async fn start_pool(state: &AppState, version: &str) -> Result<()> {
         version,
         port,
         workers,
-        &state.with_config(|store| store.config().php_extensions.get(version).to_vec()),
+        &state.with_config(|store| {
+            store
+                .config()
+                .php_extensions
+                .get(version)
+                .cloned()
+                .unwrap_or_default()
+        }),
         state.with_config(|store| store.config().php_xdebug.get(version).cloned()),
         state.with_config(|store| store.config().php_limits.get(version).cloned()),
     )?;

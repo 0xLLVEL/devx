@@ -1,4 +1,4 @@
-//! Built-in service definitions for the catalog components.
+﻿//! Built-in service definitions for the catalog components.
 //!
 //! These are the recipes that make an installed component runnable. Each is
 //! hand-written from the component's documented Windows invocation and verified
@@ -111,7 +111,6 @@ http {
     ServiceDefinition {
         component_id: "nginx".into(),
         default_port: Some(80),
-        depends_on: vec![],
         config_files: vec![ConfigFile {
             relative_path: "nginx.conf".into(),
             template: conf.into(),
@@ -137,7 +136,6 @@ fn mariadb() -> ServiceDefinition {
     ServiceDefinition {
         component_id: "mariadb".into(),
         default_port: Some(3306),
-        depends_on: vec![],
         config_files: vec![ConfigFile {
             relative_path: "my.ini".into(),
             template: r#"[mysqld]
@@ -173,7 +171,6 @@ fn postgresql() -> ServiceDefinition {
     ServiceDefinition {
         component_id: "postgresql".into(),
         default_port: Some(5432),
-        depends_on: vec![],
         config_files: vec![],
         // `initdb` writes PG_VERSION into the data dir when it completes.
         init_steps: vec![InitStep {
@@ -209,7 +206,6 @@ fn redis() -> ServiceDefinition {
     ServiceDefinition {
         component_id: "redis".into(),
         default_port: Some(6379),
-        depends_on: vec![],
         config_files: vec![ConfigFile {
             relative_path: "redis.conf".into(),
             // `dir .` keeps the RDB next to the config: redis-server runs with
@@ -238,7 +234,6 @@ fn mailpit() -> ServiceDefinition {
     ServiceDefinition {
         component_id: "mailpit".into(),
         default_port: Some(8025),
-        depends_on: vec![],
         config_files: vec![],
         init_steps: vec![],
         program: "mailpit.exe".into(),
@@ -260,7 +255,6 @@ fn meilisearch() -> ServiceDefinition {
     ServiceDefinition {
         component_id: "meilisearch".into(),
         default_port: Some(7700),
-        depends_on: vec![],
         config_files: vec![],
         init_steps: vec![],
         program: "meilisearch.exe".into(),
@@ -296,7 +290,6 @@ fn caddy() -> ServiceDefinition {
     ServiceDefinition {
         component_id: "caddy".into(),
         default_port: Some(8080),
-        depends_on: vec![],
         config_files: vec![ConfigFile {
             relative_path: "Caddyfile".into(),
             template: caddyfile.into(),
@@ -318,7 +311,6 @@ fn nats_server() -> ServiceDefinition {
     ServiceDefinition {
         component_id: "nats-server".into(),
         default_port: Some(4222),
-        depends_on: vec![],
         config_files: vec![],
         init_steps: vec![],
         program: "nats-server.exe".into(),
@@ -338,7 +330,6 @@ fn etcd() -> ServiceDefinition {
     ServiceDefinition {
         component_id: "etcd".into(),
         default_port: Some(2379),
-        depends_on: vec![],
         config_files: vec![],
         init_steps: vec![],
         program: "etcd.exe".into(),
@@ -360,7 +351,6 @@ fn mongodb() -> ServiceDefinition {
     ServiceDefinition {
         component_id: "mongodb".into(),
         default_port: Some(27017),
-        depends_on: vec![],
         config_files: vec![],
         // mongod creates the dbpath on first start; no init step needed.
         init_steps: vec![],
@@ -383,7 +373,6 @@ fn traefik() -> ServiceDefinition {
     ServiceDefinition {
         component_id: "traefik".into(),
         default_port: Some(8090),
-        depends_on: vec![],
         config_files: vec![],
         init_steps: vec![],
         program: "traefik.exe".into(),
@@ -404,7 +393,6 @@ fn frankenphp() -> ServiceDefinition {
     ServiceDefinition {
         component_id: "frankenphp".into(),
         default_port: Some(8082),
-        depends_on: vec![],
         config_files: vec![],
         init_steps: vec![],
         program: "frankenphp.exe".into(),
@@ -424,18 +412,18 @@ fn frankenphp() -> ServiceDefinition {
 fn apache() -> ServiceDefinition {
     // Apache Lounge build: the zip extracts an `Apache24/` tree whose
     // modules live under ServerRoot. PHP is served by proxying .php to
-    // the first DevX PHP pool (FastCGI, port 9100) — DevX installs NTS
+    // the first DevX PHP pool (FastCGI, port 9100) â€” DevX installs NTS
     // PHP builds, which have no mod_php library.
     //
     // Three directives make the FastCGI handoff work with plain php-cgi:
-    // 1. The trailing slash on `proxy:fcgi://host:port/` — without it
+    // 1. The trailing slash on `proxy:fcgi://host:port/` â€” without it
     //    mod_proxy_fcgi appends the translated filename to the authority,
     //    and Apache reports a bogus DNS lookup for `127.0.0.1:9100c:`.
-    // 2. `ProxyFCGIBackendType GENERIC` — with the default FPM type Apache
+    // 2. `ProxyFCGIBackendType GENERIC` â€” with the default FPM type Apache
     //    leaves a `proxy:fcgi://` prefix inside SCRIPT_FILENAME, which
     //    php-cgi (unlike PHP-FPM) does not strip.
     // 3. `ProxyFCGISetEnvIf` rewriting SCRIPT_FILENAME to
-    //    DOCUMENT_ROOT + REQUEST_URI and setting REDIRECT_STATUS — Apache
+    //    DOCUMENT_ROOT + REQUEST_URI and setting REDIRECT_STATUS â€” Apache
     //    would otherwise send a `/C:/...` path (leading slash), and php-cgi
     //    refuses scripts without REDIRECT_STATUS (cgi.force_redirect).
     let httpd_conf = r##"ServerRoot "{{ install_dir }}/Apache24"
@@ -487,7 +475,6 @@ IncludeOptional "{{ config_dir }}/sites/*.conf"
     ServiceDefinition {
         component_id: "apache".into(),
         default_port: Some(8085),
-        depends_on: vec![],
         config_files: vec![ConfigFile {
             relative_path: "httpd.conf".into(),
             template: httpd_conf.into(),
@@ -626,7 +613,6 @@ mod tests {
         let def = ServiceDefinition {
             component_id: "t".into(),
             default_port: ctx.port,
-            depends_on: vec![],
             config_files: vec![ConfigFile {
                 relative_path: "out.conf".into(),
                 template: template.into(),

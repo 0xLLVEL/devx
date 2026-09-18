@@ -56,13 +56,17 @@ pub async fn service_start(
 
     let custom_port = state.with_config(|store| {
         let config = store.config();
-        config.service_ports.get(&component_id).or_else(|| {
-            if component_id == "nginx" {
-                Some(config.network.http_port)
-            } else {
-                None
-            }
-        })
+        config
+            .service_ports
+            .get(&component_id)
+            .copied()
+            .or_else(|| {
+                if component_id == "nginx" {
+                    Some(config.network.http_port)
+                } else {
+                    None
+                }
+            })
     });
 
     let plan =
@@ -154,33 +158,9 @@ pub async fn service_set_port(
     })?;
 
     if let Some(ref ver) = php_version {
-        // Re-render pool.conf with the new port
-        let new_port = crate::commands::php::pool_port(&state, ver)?;
-        let workers = crate::commands::php::pool_workers(&state, ver);
-        let extensions = crate::commands::php::pool_extensions(&state, ver);
-        let xdebug = crate::commands::php::pool_xdebug(&state, ver);
-        let limits = crate::commands::php::pool_limits(&state, ver);
-        let plan = crate::services::plan_php_pool(
-            &state.paths,
-            ver,
-            new_port,
-            workers,
-            &extensions,
-            xdebug,
-            limits,
-        )?;
-
-        let id = devx_provision::pool_id(ver);
-        if let Some(supervisor) = state.services.get(&id) {
-            if supervisor.state().is_active() {
-                supervisor.stop().await;
-                let spec = crate::services::pool_spec(&state.paths, &plan)?;
-                let replacement = state.services.register(spec)?;
-                replacement.start().await?;
-            }
-        }
-
-        // Sync site blocks so fastcgi_pass updates
+        crate::php_pool::PhpPool::new(state.clone())
+            .restart_with(ver)
+            .await?;
         let _ = crate::commands::sites::sync_site_blocks(&state);
     } else {
         // If nginx port changed, re-sync site server blocks
@@ -219,7 +199,7 @@ pub async fn service_set_port(
         }
     }
 
-    Ok(state.with_config(|store| store.config().service_ports.all().clone()))
+    Ok(state.with_config(|store| store.config().service_ports.clone()))
 }
 
 /// Returns the configured custom service ports map.
@@ -228,7 +208,7 @@ pub async fn service_set_port(
 pub fn service_get_ports(
     state: State<'_, AppState>,
 ) -> Result<std::collections::BTreeMap<String, u16>, Error> {
-    Ok(state.with_config(|store| store.config().service_ports.all().clone()))
+    Ok(state.with_config(|store| store.config().service_ports.clone()))
 }
 
 /// Stops a running supervised service.

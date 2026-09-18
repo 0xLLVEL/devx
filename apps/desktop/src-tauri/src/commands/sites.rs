@@ -157,7 +157,7 @@ async fn sync_hosts_entries(
     Ok(())
 }
 
-/// Adds (or replaces) a site, renders its nginx block, and syncs the set.
+/// Adds (or replaces) a site — thin adapter over SiteOrchestrator.
 #[tauri::command]
 #[specta::specta]
 pub async fn site_add(
@@ -168,57 +168,19 @@ pub async fn site_add(
     https: bool,
     web_server: Option<devx_core::config::WebServer>,
 ) -> Result<Vec<SiteStatus>, Error> {
-    // Absent means "keep whatever the previous config had" on the edit path
-    // and "nginx" (the default) on the create path.
     let web_server = web_server.unwrap_or(devx_core::config::WebServer::Nginx);
-
-    let spec = devx_provision::SiteSpec {
-        hostname: hostname.clone(),
-        docroot: std::path::PathBuf::from(&docroot),
-        php_version: if php_version.is_empty() {
-            None
-        } else {
-            Some(php_version)
-        },
-        env: Vec::new(),
-        aliases: Vec::new(),
-        web_server: web_server.into(),
-        // Auth lives on the stored site; edits carry it over like env/aliases.
-        auth: None,
-    };
-
-    // Validate everything up front: hostname shape, docroot absoluteness,
-    // and that the chosen PHP pool has a rendered endpoint.
-    devx_provision::validate_spec(&spec, &state.paths.service_config_dir())?;
-
-    // The chosen server must be installed; a site pointing at a missing
-    // binary would only fail at start time, far from the decision.
-    let installed = state.paths.runtimes_dir().join(web_server.component_id());
-    if !installed.is_dir() {
-        return Err(Error::not_found(format!(
-            "web server `{}` is not installed",
-            web_server.component_id()
-        ))
-        .with_hint("install it from the Components page first"));
-    }
-
-    // Persist to config first: a failed save must abort the mutation before
-    // any server block is written. Re-adding an existing hostname is the edit
-    // path (the editor updates docroot/PHP/HTTPS through this command), so
-    // the previous site's env vars and aliases are carried over instead of
-    // being silently wiped.
     let previous = state.with_config(|store| {
         store
             .config()
             .sites
             .iter()
-            .find(|s| s.hostname.eq_ignore_ascii_case(&spec.hostname))
+            .find(|s| s.hostname.eq_ignore_ascii_case(&hostname))
             .cloned()
     });
     let site = ConfigSite {
-        hostname: spec.hostname.clone(),
+        hostname: hostname.clone(),
         docroot: docroot.clone(),
-        php_version: spec.php_version.clone().unwrap_or_default(),
+        php_version: php_version.clone(),
         https,
         web_server,
         env: previous.as_ref().map(|s| s.env.clone()).unwrap_or_default(),
@@ -228,24 +190,12 @@ pub async fn site_add(
             .unwrap_or_default(),
         auth: previous.as_ref().and_then(|s| s.auth.clone()),
     };
-    state.with_config_mut(|store| {
-        store.update(|config| {
-            config
-                .sites
-                .retain(|s| !s.hostname.eq_ignore_ascii_case(&site.hostname));
-            config.sites.push(site.clone());
-        })
-    })?;
-
-    sync_site_blocks(&state)?;
-    let mut names = vec![spec.hostname.clone()];
-    names.extend(spec.aliases.clone());
-    sync_hosts_entries(&state, &names, true).await?;
-
-    site_list(state)
+    crate::site_orchestrator::SiteOrchestrator::new(state)
+        .add(site)
+        .await
 }
 
-/// Removes a site, prunes its block, and syncs.
+/// Removes a site — thin adapter over SiteOrchestrator.
 #[tauri::command]
 #[specta::specta]
 pub async fn site_remove(
@@ -253,38 +203,12 @@ pub async fn site_remove(
     hostname: String,
 ) -> Result<Vec<SiteStatus>, Error> {
     devx_provision::sites::validate_hostname(&hostname)?;
-
-    let removed = state
-        .with_config(|store| {
-            store
-                .config()
-                .sites
-                .iter()
-                .find(|s| s.hostname.eq_ignore_ascii_case(&hostname))
-                .map(|s| {
-                    let mut names = vec![s.hostname.clone()];
-                    names.extend(s.aliases.clone());
-                    names
-                })
-        })
-        .unwrap_or_default();
-
-    state.with_config_mut(|store| {
-        store.update(|config| {
-            config
-                .sites
-                .retain(|s| !s.hostname.eq_ignore_ascii_case(&hostname));
-        })
-    })?;
-
-    sync_site_blocks(&state)?;
-    sync_hosts_entries(&state, &removed, false).await?;
-
-    site_list(state)
+    crate::site_orchestrator::SiteOrchestrator::new(state)
+        .remove(&hostname)
+        .await
 }
 
-/// Sets one environment variable on a site, syncs its nginx block, and
-/// restarts nginx when it is running so the change applies immediately.
+/// Sets one environment variable — thin adapter.
 #[tauri::command]
 #[specta::specta]
 pub async fn site_env_set(
@@ -294,43 +218,12 @@ pub async fn site_env_set(
     value: String,
 ) -> Result<Vec<SiteStatus>, Error> {
     devx_provision::sites::validate_hostname(&hostname)?;
-
-    // Validation (key shape, value metacharacters) happens inside
-    // `store.update` via `Config::validate`, so a rejected pair never lands.
-    let known = state.with_config(|store| {
-        store
-            .config()
-            .sites
-            .iter()
-            .any(|s| s.hostname.eq_ignore_ascii_case(&hostname))
-    });
-    if !known {
-        return Err(Error::not_found(format!(
-            "site `{hostname}` is not configured"
-        )));
-    }
-
-    state.with_config_mut(|store| {
-        store.update(|config| {
-            let Some(site) = config
-                .sites
-                .iter_mut()
-                .find(|s| s.hostname.eq_ignore_ascii_case(&hostname))
-            else {
-                return;
-            };
-            site.env.insert(key, value);
-        })
-    })?;
-
-    sync_site_blocks(&state)?;
-    restart_nginx_if_running(&state).await?;
-
-    site_list(state)
+    crate::site_orchestrator::SiteOrchestrator::new(state)
+        .set_env_var(&hostname, key, value)
+        .await
 }
 
-/// Removes one environment variable from a site, syncing as
-/// [`site_env_set`] does.
+/// Removes one environment variable — thin adapter.
 #[tauri::command]
 #[specta::specta]
 pub async fn site_env_delete(
@@ -339,29 +232,12 @@ pub async fn site_env_delete(
     key: String,
 ) -> Result<Vec<SiteStatus>, Error> {
     devx_provision::sites::validate_hostname(&hostname)?;
-
-    state.with_config_mut(|store| {
-        store.update(|config| {
-            let Some(site) = config
-                .sites
-                .iter_mut()
-                .find(|s| s.hostname.eq_ignore_ascii_case(&hostname))
-            else {
-                return;
-            };
-            site.env.remove(&key);
-        })
-    })?;
-
-    sync_site_blocks(&state)?;
-    restart_nginx_if_running(&state).await?;
-
-    site_list(state)
+    crate::site_orchestrator::SiteOrchestrator::new(state)
+        .delete_env_var(&hostname, &key)
+        .await
 }
 
-/// Sets (or clears with `None`) the basic-auth credentials of a site. The
-/// password arrives as plain text and is stored only as an htpasswd bcrypt
-/// hash; the htpasswd file is written and the block synced immediately.
+/// Sets basic-auth — thin adapter (hashing stays here, storage in orchestrator).
 #[tauri::command]
 #[specta::specta]
 pub async fn site_auth_set(
@@ -371,21 +247,6 @@ pub async fn site_auth_set(
     password: Option<String>,
 ) -> Result<Vec<SiteStatus>, Error> {
     devx_provision::sites::validate_hostname(&hostname)?;
-
-    let known = state.with_config(|store| {
-        store
-            .config()
-            .sites
-            .iter()
-            .any(|s| s.hostname.eq_ignore_ascii_case(&hostname))
-    });
-    if !known {
-        return Err(Error::not_found(format!(
-            "site `{hostname}` is not configured"
-        )));
-    }
-
-    // Either both halves of the credential or neither.
     let auth = match (username, password) {
         (Some(user), Some(pass)) if !user.trim().is_empty() && !pass.is_empty() => {
             let hash = bcrypt::hash(pass, bcrypt::DEFAULT_COST)
@@ -397,45 +258,12 @@ pub async fn site_auth_set(
         }
         _ => None,
     };
-
-    state.with_config_mut(|store| {
-        store.update(|config| {
-            let Some(site) = config
-                .sites
-                .iter_mut()
-                .find(|s| s.hostname.eq_ignore_ascii_case(&hostname))
-            else {
-                return;
-            };
-            site.auth = auth.clone();
-        })
-    })?;
-
-    // The htpasswd file follows the config so a stopped nginx picks it up on
-    // start too. sync_site_blocks also rewrites it, but an explicit write
-    // here keeps removal working even when the site block render is skipped.
-    let sites_dir = state.paths.service_config_dir();
-    match &auth {
-        Some(auth) => {
-            devx_provision::sites::write_htpasswd(
-                &sites_dir.join("nginx").join("auth"),
-                &hostname.to_ascii_lowercase(),
-                auth,
-            )?;
-        }
-        None => devx_provision::sites::remove_htpasswd(
-            &sites_dir.join("nginx").join("auth"),
-            &hostname.to_ascii_lowercase(),
-        ),
-    }
-
-    sync_site_blocks(&state)?;
-    restart_nginx_if_running(&state).await?;
-
-    site_list(state)
+    crate::site_orchestrator::SiteOrchestrator::new(state)
+        .set_auth(&hostname, auth)
+        .await
 }
 
-/// Adds an alias host name to a site, syncs, and restarts nginx when running.
+/// Adds an alias — thin adapter.
 #[tauri::command]
 #[specta::specta]
 pub async fn site_alias_add(
@@ -443,16 +271,13 @@ pub async fn site_alias_add(
     hostname: String,
     alias: String,
 ) -> Result<Vec<SiteStatus>, Error> {
-    mutate_site_aliases(state, hostname, |aliases| {
-        let alias = alias.to_ascii_lowercase();
-        if !aliases.iter().any(|a| a.eq_ignore_ascii_case(&alias)) {
-            aliases.push(alias);
-        }
-    })
-    .await
+    devx_provision::sites::validate_hostname(&hostname)?;
+    crate::site_orchestrator::SiteOrchestrator::new(state)
+        .add_alias(&hostname, alias)
+        .await
 }
 
-/// Removes an alias host name from a site, syncing as [`site_alias_add`].
+/// Removes an alias — thin adapter.
 #[tauri::command]
 #[specta::specta]
 pub async fn site_alias_delete(
@@ -460,125 +285,10 @@ pub async fn site_alias_delete(
     hostname: String,
     alias: String,
 ) -> Result<Vec<SiteStatus>, Error> {
-    mutate_site_aliases(state, hostname, |aliases| {
-        aliases.retain(|a| !a.eq_ignore_ascii_case(&alias));
-    })
-    .await
-}
-
-/// Applies an alias mutation, validating through `Config::validate` (shape
-/// plus cross-site uniqueness), then syncing blocks and restarting nginx.
-async fn mutate_site_aliases(
-    state: State<'_, AppState>,
-    hostname: String,
-    edit: impl FnOnce(&mut Vec<String>),
-) -> Result<Vec<SiteStatus>, Error> {
     devx_provision::sites::validate_hostname(&hostname)?;
-
-    let known = state.with_config(|store| {
-        store
-            .config()
-            .sites
-            .iter()
-            .any(|s| s.hostname.eq_ignore_ascii_case(&hostname))
-    });
-    if !known {
-        return Err(Error::not_found(format!(
-            "site `{hostname}` is not configured"
-        )));
-    }
-
-    let before = state.with_config(|store| {
-        store
-            .config()
-            .sites
-            .iter()
-            .find(|s| s.hostname.eq_ignore_ascii_case(&hostname))
-            .map(|s| s.aliases.clone())
-            .unwrap_or_default()
-    });
-
-    state.with_config_mut(|store| {
-        store.update(|config| {
-            let Some(site) = config
-                .sites
-                .iter_mut()
-                .find(|s| s.hostname.eq_ignore_ascii_case(&hostname))
-            else {
-                return;
-            };
-            edit(&mut site.aliases);
-        })
-    })?;
-
-    let after = state.with_config(|store| {
-        store
-            .config()
-            .sites
-            .iter()
-            .find(|s| s.hostname.eq_ignore_ascii_case(&hostname))
-            .map(|s| s.aliases.clone())
-            .unwrap_or_default()
-    });
-    let added: Vec<String> = after
-        .iter()
-        .filter(|a| !before.contains(a))
-        .cloned()
-        .collect();
-    let removed: Vec<String> = before
-        .iter()
-        .filter(|a| !after.contains(a))
-        .cloned()
-        .collect();
-
-    sync_site_blocks(&state)?;
-    sync_hosts_entries(&state, &added, true).await?;
-    sync_hosts_entries(&state, &removed, false).await?;
-    restart_nginx_if_running(&state).await?;
-
-    site_list(state)
-}
-
-/// Restarts active web servers (nginx, apache) when they are running, re-planning
-/// their specs first so the new process loads freshly rendered configuration.
-///
-/// A stopped server simply picks the new config up on its next start, so in
-/// that case there is nothing to do.
-async fn restart_web_servers_if_running(state: &State<'_, AppState>) -> Result<(), Error> {
-    for server_id in ["nginx", "apache"] {
-        if let Some(supervisor) = state.services.get(server_id) {
-            if supervisor.state().is_active() {
-                supervisor.stop().await;
-
-                let custom_port = state.with_config(|store| {
-                    let config = store.config();
-                    config.service_ports.get(server_id).or_else(|| {
-                        if server_id == "nginx" {
-                            Some(config.network.http_port)
-                        } else {
-                            None
-                        }
-                    })
-                });
-
-                let newest = newest_installed_component(&state.paths, server_id)?;
-                let plan = crate::services::plan_service(
-                    &state.paths,
-                    server_id,
-                    &newest,
-                    &[],
-                    custom_port,
-                )?;
-                let replacement = state.services.register(plan.spec)?;
-                replacement.start().await?;
-            }
-        }
-    }
-    Ok(())
-}
-
-async fn restart_nginx_if_running(state: &State<'_, AppState>) -> Result<(), Error> {
-    restart_web_servers_if_running(state).await
+    crate::site_orchestrator::SiteOrchestrator::new(state)
+        .delete_alias(&hostname, &alias)
+        .await
 }
 
 /// The newest installed version of a component, from the runtimes directory.
@@ -614,6 +324,7 @@ pub(crate) fn sync_site_blocks(state: &State<'_, AppState>) -> Result<(), Error>
         let http = config
             .service_ports
             .get("nginx")
+            .copied()
             .unwrap_or(config.network.http_port);
         (http, config.network.https_port)
     });

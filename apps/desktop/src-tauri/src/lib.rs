@@ -14,8 +14,10 @@ pub mod ipc;
 pub mod logging;
 pub mod mail;
 pub mod notifications;
+pub mod php_pool;
 pub mod services;
 pub mod session;
+pub mod site_orchestrator;
 pub mod state;
 pub mod tray;
 

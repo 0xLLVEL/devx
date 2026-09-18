@@ -333,7 +333,7 @@ export const commands = {
 	 *  partially written last line never breaks the read. Newest entries first.
 	 */
 	siteRequests: (hostname: string, limit: number) => typedError<SiteRequestEntry[], DevxError>(__TAURI_INVOKE("site_requests", { hostname, limit })),
-	/**  Adds (or replaces) a site, renders its nginx block, and syncs the set. */
+	/**  Adds (or replaces) a site — thin adapter over SiteOrchestrator. */
 	siteAdd: (hostname: string, docroot: string, phpVersion: string, https: boolean, webServer: 
 /**
  *  nginx — the default, and the only server with a rendered sites include
@@ -346,17 +346,11 @@ export const commands = {
 "Caddy" | 
 /**  FrankenPHP — serves PHP directly, no FastCGI pool needed. */
 "FrankenPhp" | null) => typedError<SiteStatus[], DevxError>(__TAURI_INVOKE("site_add", { hostname, docroot, phpVersion, https, webServer })),
-	/**  Removes a site, prunes its block, and syncs. */
+	/**  Removes a site — thin adapter over SiteOrchestrator. */
 	siteRemove: (hostname: string) => typedError<SiteStatus[], DevxError>(__TAURI_INVOKE("site_remove", { hostname })),
-	/**
-	 *  Sets one environment variable on a site, syncs its nginx block, and
-	 *  restarts nginx when it is running so the change applies immediately.
-	 */
+	/**  Sets one environment variable — thin adapter. */
 	siteEnvSet: (hostname: string, key: string, value: string) => typedError<SiteStatus[], DevxError>(__TAURI_INVOKE("site_env_set", { hostname, key, value })),
-	/**
-	 *  Removes one environment variable from a site, syncing as
-	 *  [`site_env_set`] does.
-	 */
+	/**  Removes one environment variable — thin adapter. */
 	siteEnvDelete: (hostname: string, key: string) => typedError<SiteStatus[], DevxError>(__TAURI_INVOKE("site_env_delete", { hostname, key })),
 	/**  Reports the local CA's status: present on disk and machine-trusted. */
 	caStatus: () => typedError<CaStatus, DevxError>(__TAURI_INVOKE("ca_status")),
@@ -568,15 +562,11 @@ export const commands = {
 	 *  is registered, so the docroot already holds real content.
 	 */
 	templateCreate: (templateId: string, hostname: string, docroot: string, phpVersion: string, https: boolean, gitUrl: string | null) => typedError<TemplateCreateResult, DevxError>(__TAURI_INVOKE("template_create", { templateId, hostname, docroot, phpVersion, https, gitUrl })),
-	/**  Adds an alias host name to a site, syncs, and restarts nginx when running. */
+	/**  Adds an alias — thin adapter. */
 	siteAliasAdd: (hostname: string, alias: string) => typedError<SiteStatus[], DevxError>(__TAURI_INVOKE("site_alias_add", { hostname, alias })),
-	/**
-	 *  Sets (or clears with `None`) the basic-auth credentials of a site. The
-	 *  password arrives as plain text and is stored only as an htpasswd bcrypt
-	 *  hash; the htpasswd file is written and the block synced immediately.
-	 */
+	/**  Sets basic-auth — thin adapter (hashing stays here, storage in orchestrator). */
 	siteAuthSet: (hostname: string, username: string | null, password: string | null) => typedError<SiteStatus[], DevxError>(__TAURI_INVOKE("site_auth_set", { hostname, username, password })),
-	/**  Removes an alias host name from a site, syncing as [`site_alias_add`]. */
+	/**  Removes an alias — thin adapter. */
 	siteAliasDelete: (hostname: string, alias: string) => typedError<SiteStatus[], DevxError>(__TAURI_INVOKE("site_alias_delete", { hostname, alias })),
 	/**  Lists the configured scheduled tasks with their Windows registration. */
 	cronList: () => typedError<CronStatus[], DevxError>(__TAURI_INVOKE("cron_list")),
@@ -908,15 +898,15 @@ export type Config_Deserialize = {
 	/**  Component download and installation behaviour. */
 	provisioning: Provisioning,
 	/**  FastCGI worker counts per installed PHP version. */
-	php_pools: PhpPools,
+	php_pools: { [key in string]: number },
 	/**  Enabled PHP extensions per installed PHP version. */
-	php_extensions: PhpExtensions,
+	php_extensions: { [key in string]: string[] },
 	/**  Xdebug settings per installed PHP version. */
-	php_xdebug: PhpXdebug,
+	php_xdebug: { [key in string]: XdebugConfig },
 	/**  Resource limits per installed PHP version. */
-	php_limits: PhpLimits,
+	php_limits: { [key in string]: LimitConfig },
 	/**  Custom port assignments per service. */
-	service_ports: ServicePorts,
+	service_ports: { [key in string]: number },
 	/**  User-configured local sites. */
 	sites: Site_Deserialize[],
 	/**  User-configured supervised worker processes. */
@@ -945,15 +935,15 @@ export type Config_Serialize = {
 	/**  Component download and installation behaviour. */
 	provisioning: Provisioning,
 	/**  FastCGI worker counts per installed PHP version. */
-	php_pools: PhpPools,
+	php_pools: { [key in string]: number },
 	/**  Enabled PHP extensions per installed PHP version. */
-	php_extensions: PhpExtensions,
+	php_extensions: { [key in string]: string[] },
 	/**  Xdebug settings per installed PHP version. */
-	php_xdebug: PhpXdebug,
+	php_xdebug: { [key in string]: XdebugConfig },
 	/**  Resource limits per installed PHP version. */
-	php_limits: PhpLimits,
+	php_limits: { [key in string]: LimitConfig },
 	/**  Custom port assignments per service. */
-	service_ports: ServicePorts,
+	service_ports: { [key in string]: number },
 	/**  User-configured local sites. */
 	sites: Site_Serialize[],
 	/**  User-configured supervised worker processes. */
@@ -1481,30 +1471,6 @@ export type PhpExtensionInfo = {
 	enabled: string[],
 };
 
-/**
- *  Enabled PHP extensions, keyed by PHP version.
- * 
- *  Entries are the exact DLL file names found in the version's `ext/`
- *  directory (e.g. `php_gd.dll`), because that is what the rendered
- *  `extension =` directive must spell. A version missing from the map has no
- *  extensions enabled, so uninstalling PHP or resetting settings needs no
- *  cleanup here.
- */
-export type PhpExtensions = 
-/**  Enabled extension DLL names keyed by PHP version. */
-{ [key in string]: string[] };
-
-/**
- *  Resource limits, keyed by PHP version.
- * 
- *  These land in each pool's rendered `php.ini`. A version missing from the
- *  map runs with the defaults below — the same values the template used
- *  before this became a setting.
- */
-export type PhpLimits = 
-/**  Per-version limit sets. */
-{ [key in string]: LimitConfig };
-
 /**  A summary of one PHP FastCGI pool, including its live state. */
 export type PhpPoolStatus = {
 	/**  Pool identifier (`php-pool-8.4.25`). */
@@ -1518,30 +1484,6 @@ export type PhpPoolStatus = {
 	/**  Current lifecycle state. */
 	state: ServiceState,
 };
-
-/**
- *  Worker counts for PHP FastCGI pools, keyed by PHP version.
- * 
- *  A pool is created per installed PHP version; this map remembers the
- *  worker count each pool was started with so the Services page and the next
- *  start agree. A version missing from the map uses the default worker
- *  count, so uninstalling PHP or resetting settings needs no cleanup here.
- */
-export type PhpPools = 
-/**  Pool worker counts keyed by PHP version. */
-{ [key in string]: number };
-
-/**
- *  Xdebug settings, keyed by PHP version.
- * 
- *  `enabled` toggles the `zend_extension` load and the `xdebug.mode` lines in
- *  the pool's ini; the plain stem `xdebug` is what `PhpExtensions` stores, so
- *  this map only carries the mode knobs. A version missing from the map runs
- *  with Xdebug off.
- */
-export type PhpXdebug = 
-/**  Per-version Xdebug mode sets. */
-{ [key in string]: XdebugConfig };
 
 /**  The Xdebug state of one PHP version, for the UI. */
 export type PhpXdebugInfo = {
@@ -1712,9 +1654,6 @@ export type ServiceMetrics = {
 	/**  How many live processes the job contains. */
 	processes: number,
 };
-
-/**  Custom port assignments for supervised services, keyed by service id. */
-export type ServicePorts = { [key in string]: number };
 
 /**  Where a supervised service is in its lifecycle. */
 export type ServiceState = 

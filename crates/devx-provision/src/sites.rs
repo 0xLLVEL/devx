@@ -18,8 +18,6 @@ use std::path::{Path, PathBuf};
 use devx_core::{Error, ErrorCode, Result};
 use serde::Serialize;
 
-use crate::pki::{ensure_site_cert, tls_listen_snippet};
-
 /// Maximum sites DevX manages; guards against runaway config generation.
 pub const MAX_SITES: usize = 256;
 
@@ -55,7 +53,7 @@ pub struct SiteSpec {
     pub auth: Option<devx_core::config::SiteAuth>,
 }
 
-/// Which web server serves a site — the render-side mirror of
+/// Which web server serves a site â€” the render-side mirror of
 /// `devx_core::config::WebServer`, kept separate so the sync pipeline never
 /// depends on the caller's storage type (same split as `SyncSite`). It is
 /// an internal render detail, not an IPC type, so it carries no serde or
@@ -120,8 +118,8 @@ pub fn validate_docroot(docroot: &Path) -> Result<()> {
 
 /// The `fastcgi_pass` endpoint a site should use for `php_version`.
 ///
-/// Reads the pool's rendered `pool.conf` — the single source of truth for
-/// pool ports — so site blocks never hardcode ports.
+/// Reads the pool's rendered `pool.conf` â€” the single source of truth for
+/// pool ports â€” so site blocks never hardcode ports.
 ///
 /// # Errors
 ///
@@ -348,7 +346,7 @@ fn render_apache_env(env: &[(String, String)]) -> String {
 ///
 /// Caddy's file-server + `php_fastcgi` pair covers everything the nginx
 /// block did: static serving, PHP proxying to the pool, and index files.
-/// TLS is left to Caddy's own internal CA on `https_port` — the DevX local
+/// TLS is left to Caddy's own internal CA on `https_port` â€” the DevX local
 /// CA handles sites it proxies, but Caddy re-terminates its own listener.
 pub fn render_caddy_site(spec: &SiteSpec, php_endpoint: Option<&str>, tls: Option<&str>) -> String {
     let docroot = slash(&spec.docroot);
@@ -398,7 +396,7 @@ pub fn render_caddy_site(spec: &SiteSpec, php_endpoint: Option<&str>, tls: Optio
 /// FrankenPHP serves PHP directly (no pool), so the entry is a plain
 /// document root plus the listen address. Environment variables reach PHP
 /// through FrankenPHP's own `php.ini` env passthrough, which reads the
-/// process environment — DevX renders them as directives in the site file
+/// process environment â€” DevX renders them as directives in the site file
 /// via Caddy's `env` adapter is not needed, so they ride on the worker
 /// definition instead. Static and PHP sites are identical here.
 pub fn render_frankenphp_site(spec: &SiteSpec, tls: Option<&str>) -> String {
@@ -453,8 +451,8 @@ fn render_env_params(env: &[(String, String)]) -> String {
 /// Writes a canonical `fastcgi_params` file into `config_dir`.
 ///
 /// Site blocks include it by bare file name (`include fastcgi_params;`),
-/// which nginx resolves against the *config directory* — not the install
-/// prefix — so DevX ships its own copy there instead of relying on the
+/// which nginx resolves against the *config directory* â€” not the install
+/// prefix â€” so DevX ships its own copy there instead of relying on the
 /// per-version file inside the nginx install.
 ///
 /// # Errors
@@ -591,8 +589,8 @@ pub struct SyncContext<'a> {
 ///
 /// One sync per mutation keeps the include directory exactly equal to the
 /// configured set, which is what makes web server restarts deterministic. The
-/// whole pipeline lives here — endpoint resolution, certificate minting,
-/// block rendering, pruning — so the desktop app and the CLI cannot drift:
+/// whole pipeline lives here â€” endpoint resolution, certificate minting,
+/// block rendering, pruning â€” so the desktop app and the CLI cannot drift:
 /// both call this and neither owns ordering rules.
 pub fn sync_site_blocks(
     sites_dir: &Path,
@@ -609,107 +607,26 @@ pub fn sync_site_blocks(
     let mut written = Vec::with_capacity(sites.len());
 
     for site in sites {
-        let spec = SiteSpec {
-            hostname: site.hostname.clone(),
-            docroot: site.docroot.clone(),
-            php_version: site.php_version.clone(),
-            env: site.env.clone(),
-            aliases: site.aliases.clone(),
-            web_server: site.web_server,
-            auth: site.auth.clone(),
-        };
-
-        let endpoint = match (&spec.php_version, site.web_server) {
-            (
-                Some(version),
-                WebServerKind::Nginx | WebServerKind::Apache | WebServerKind::Caddy,
-            ) => Some(pool_endpoint_for(ctx.service_config_dir, version)?),
-            // FrankenPHP serves PHP directly; there is no pool to find.
-            (_, WebServerKind::FrankenPhp) => None,
-            (None, _) => None,
-        };
-
-        // HTTPS sites get their certificate minted (or reused) during the
-        // sync, so the server never references a cert file that does not
-        // exist.
-        let tls = if site.https {
-            ensure_site_cert(ctx.certs_dir, &site.hostname)?;
-            Some(tls_listen_snippet(
-                &site.hostname,
-                ctx.https_port,
-                ctx.certs_dir,
-            ))
-        } else {
-            None
-        };
-
-        let target_dir = match site.web_server {
-            WebServerKind::Nginx => sites_dir.to_path_buf(),
-            WebServerKind::Apache => {
-                let dir = ctx.service_config_dir.join("apache").join("sites");
-                if dir.exists() || dir.parent().map(|p| p.exists()).unwrap_or(false) {
-                    dir
-                } else {
-                    sites_dir.to_path_buf()
-                }
-            }
-            WebServerKind::Caddy => {
-                let dir = ctx.service_config_dir.join("caddy").join("sites");
-                if dir.exists() || dir.parent().map(|p| p.exists()).unwrap_or(false) {
-                    dir
-                } else {
-                    sites_dir.to_path_buf()
-                }
-            }
-            WebServerKind::FrankenPhp => {
-                let dir = ctx.service_config_dir.join("frankenphp").join("sites");
-                if dir.exists() || dir.parent().map(|p| p.exists()).unwrap_or(false) {
-                    dir
-                } else {
-                    sites_dir.to_path_buf()
-                }
-            }
-        };
-        std::fs::create_dir_all(&target_dir).map_err(|err| {
-            Error::new(
-                ErrorCode::Io,
-                format!("failed to create {}: {err}", target_dir.display()),
-            )
-        })?;
-
-        // Auth files live beside the blocks
-        let auth_dir = target_dir.join("auth");
-        match &site.auth {
-            Some(auth) => write_htpasswd(&auth_dir, &site.hostname, auth)?,
-            None => remove_htpasswd(&auth_dir, &site.hostname),
-        }
-
-        match site.web_server {
-            WebServerKind::Nginx => {
-                write_site_block_with_port(
-                    &target_dir,
-                    &spec,
-                    endpoint.as_deref(),
-                    tls.as_deref(),
-                    ctx.http_port,
-                )?;
-            }
-            WebServerKind::Apache => {
-                let body = render_apache_site(&spec, endpoint.as_deref(), ctx.http_port);
-                let path = target_dir.join(block_file_name(&spec.hostname));
-                devx_core::fsx::write_atomic(&path, body)?;
-            }
-            WebServerKind::Caddy => {
-                let body = render_caddy_site(&spec, endpoint.as_deref(), tls.as_deref());
-                let path = target_dir.join(block_file_name(&spec.hostname));
-                devx_core::fsx::write_atomic(&path, body)?;
-            }
-            WebServerKind::FrankenPhp => {
-                let body = render_frankenphp_site(&spec, tls.as_deref());
-                let path = target_dir.join(block_file_name(&spec.hostname));
-                devx_core::fsx::write_atomic(&path, body)?;
+        let rendered = crate::site_renderer::render(
+            site,
+            &ctx,
+            &crate::site_renderer::ProdCerts(ctx.certs_dir),
+        )?;
+        let full_path = ctx.service_config_dir.join(&rendered.path);
+        if let Some(parent) = full_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|err| {
+                Error::new(
+                    ErrorCode::Io,
+                    format!("failed to create {}: {err}", parent.display()),
+                )
+            })?;
+            let auth_dir = parent.join("auth");
+            match &site.auth {
+                Some(auth) => write_htpasswd(&auth_dir, &site.hostname, auth)?,
+                None => remove_htpasswd(&auth_dir, &site.hostname),
             }
         }
+        devx_core::fsx::write_atomic(&full_path, rendered.content)?;
         written.push(site.hostname.clone());
     }
 

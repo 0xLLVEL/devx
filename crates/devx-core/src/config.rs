@@ -210,89 +210,14 @@ pub const MAX_SITE_ENV_VARS: usize = 64;
 /// Longest single environment value accepted.
 pub const MAX_SITE_ENV_VALUE: usize = 4096;
 
-/// Worker counts for PHP FastCGI pools, keyed by PHP version.
-///
-/// A pool is created per installed PHP version; this map remembers the
-/// worker count each pool was started with so the Services page and the next
-/// start agree. A version missing from the map uses the default worker
-/// count, so uninstalling PHP or resetting settings needs no cleanup here.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
-pub struct PhpPools(
-    /// Pool worker counts keyed by PHP version.
-    pub std::collections::BTreeMap<String, u32>,
-);
+/// Worker counts for PHP pools, keyed by version.
+pub type PhpPools = std::collections::BTreeMap<String, u32>;
 
-impl PhpPools {
-    /// The worker count for `version`, when one was stored.
-    pub fn get(&self, version: &str) -> Option<u32> {
-        self.0.get(version).copied()
-    }
+/// Enabled PHP extensions, keyed by version.
+pub type PhpExtensions = std::collections::BTreeMap<String, Vec<String>>;
 
-    /// Records the worker count for `version`.
-    pub fn insert(&mut self, version: impl Into<String>, workers: u32) {
-        self.0.insert(version.into(), workers);
-    }
-}
-
-/// Enabled PHP extensions, keyed by PHP version.
-///
-/// Entries are the exact DLL file names found in the version's `ext/`
-/// directory (e.g. `php_gd.dll`), because that is what the rendered
-/// `extension =` directive must spell. A version missing from the map has no
-/// extensions enabled, so uninstalling PHP or resetting settings needs no
-/// cleanup here.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
-pub struct PhpExtensions(
-    /// Enabled extension DLL names keyed by PHP version.
-    pub std::collections::BTreeMap<String, Vec<String>>,
-);
-
-impl PhpExtensions {
-    /// The enabled extensions for `version`, empty when none.
-    pub fn get(&self, version: &str) -> &[String] {
-        self.0.get(version).map(Vec::as_slice).unwrap_or(&[])
-    }
-
-    /// Enables `extension` for `version`; idempotent.
-    pub fn enable(&mut self, version: &str, extension: impl Into<String>) {
-        let entry = self.0.entry(version.to_owned()).or_default();
-        let extension = extension.into();
-        if !entry.contains(&extension) {
-            entry.push(extension);
-        }
-    }
-
-    /// Disables `extension` for `version`; removing the last one leaves an
-    /// empty entry, which is harmless.
-    pub fn disable(&mut self, version: &str, extension: &str) {
-        if let Some(extensions) = self.0.get_mut(version) {
-            extensions.retain(|name| name != extension);
-        }
-    }
-}
-
-/// Resource limits, keyed by PHP version.
-///
-/// These land in each pool's rendered `php.ini`. A version missing from the
-/// map runs with the defaults below — the same values the template used
-/// before this became a setting.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
-pub struct PhpLimits(
-    /// Per-version limit sets.
-    pub std::collections::BTreeMap<String, LimitConfig>,
-);
-
-impl PhpLimits {
-    /// The limits for `version`, when configured.
-    pub fn get(&self, version: &str) -> Option<&LimitConfig> {
-        self.0.get(version)
-    }
-
-    /// Records the limits for `version`.
-    pub fn insert(&mut self, version: impl Into<String>, config: LimitConfig) {
-        self.0.insert(version.into(), config);
-    }
-}
+/// Resource limits, keyed by version.
+pub type PhpLimits = std::collections::BTreeMap<String, LimitConfig>;
 
 /// One version's resource limits as ini values.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
@@ -338,34 +263,8 @@ fn default_opcache() -> bool {
     true
 }
 
-/// Xdebug settings, keyed by PHP version.
-///
-/// `enabled` toggles the `zend_extension` load and the `xdebug.mode` lines in
-/// the pool's ini; the plain stem `xdebug` is what `PhpExtensions` stores, so
-/// this map only carries the mode knobs. A version missing from the map runs
-/// with Xdebug off.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
-pub struct PhpXdebug(
-    /// Per-version Xdebug mode sets.
-    pub std::collections::BTreeMap<String, XdebugConfig>,
-);
-
-impl PhpXdebug {
-    /// The Xdebug settings for `version`, when configured.
-    pub fn get(&self, version: &str) -> Option<&XdebugConfig> {
-        self.0.get(version)
-    }
-
-    /// Records the Xdebug settings for `version`.
-    pub fn insert(&mut self, version: impl Into<String>, config: XdebugConfig) {
-        self.0.insert(version.into(), config);
-    }
-
-    /// Removes the entry for `version`.
-    pub fn remove(&mut self, version: &str) {
-        self.0.remove(version);
-    }
-}
+/// Xdebug settings, keyed by version.
+pub type PhpXdebug = std::collections::BTreeMap<String, XdebugConfig>;
 
 /// Xdebug 3 knobs for one PHP version's pool.
 ///
@@ -486,31 +385,8 @@ impl ProjectSettings {
     }
 }
 
-/// Custom port assignments for supervised services, keyed by service id.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
-pub struct ServicePorts(pub std::collections::BTreeMap<String, u16>);
-
-impl ServicePorts {
-    /// Returns the port for `service`, when configured.
-    pub fn get(&self, service: &str) -> Option<u16> {
-        self.0.get(service).copied()
-    }
-
-    /// Records the port for `service`.
-    pub fn insert(&mut self, service: impl Into<String>, port: u16) {
-        self.0.insert(service.into(), port);
-    }
-
-    /// Removes any custom port for `service`.
-    pub fn remove(&mut self, service: &str) -> Option<u16> {
-        self.0.remove(service)
-    }
-
-    /// Returns a reference to the underlying map.
-    pub fn all(&self) -> &std::collections::BTreeMap<String, u16> {
-        &self.0
-    }
-}
+/// Custom port assignments, keyed by service id.
+pub type ServicePorts = std::collections::BTreeMap<String, u16>;
 
 /// Complete DevX configuration.
 ///
@@ -586,7 +462,7 @@ impl Config {
             }
         }
 
-        for (service, &port) in &self.service_ports.0 {
+        for (service, &port) in &self.service_ports {
             if port == 0 {
                 return Err(Error::invalid_input(format!(
                     "service_ports.\"{service}\" must not be 0"
@@ -613,7 +489,7 @@ impl Config {
             );
         }
 
-        for (version, workers) in &self.php_pools.0 {
+        for (version, workers) in &self.php_pools {
             if *workers == 0 || *workers > 32 {
                 return Err(Error::invalid_input(format!(
                     "php_pools.\"{version}\" must be between 1 and 32 workers"
@@ -621,7 +497,7 @@ impl Config {
             }
         }
 
-        for (version, config) in &self.php_xdebug.0 {
+        for (version, config) in &self.php_xdebug {
             let _ = (version, config);
         }
 
@@ -1518,14 +1394,26 @@ mod tests {
     #[test]
     fn php_extensions_enable_and_disable() {
         let mut extensions = PhpExtensions::default();
-        assert!(extensions.get("8.4").is_empty());
+        assert!(!extensions.contains_key("8.4"));
 
-        extensions.enable("8.4", "php_gd.dll");
-        extensions.enable("8.4", "php_gd.dll");
-        assert_eq!(extensions.get("8.4"), ["php_gd.dll".to_owned()]);
+        // ponytail: enable is now entry.or_default().push
+        let e = extensions.entry("8.4".to_string()).or_default();
+        if !e.contains(&"php_gd.dll".to_string()) {
+            e.push("php_gd.dll".to_string());
+        }
+        let e2 = extensions.entry("8.4".to_string()).or_default();
+        if !e2.contains(&"php_gd.dll".to_string()) {
+            e2.push("php_gd.dll".to_string());
+        }
+        assert_eq!(
+            extensions.get("8.4").cloned().unwrap_or_default(),
+            ["php_gd.dll".to_owned()]
+        );
 
-        extensions.disable("8.4", "php_gd.dll");
-        assert!(extensions.get("8.4").is_empty());
+        if let Some(list) = extensions.get_mut("8.4") {
+            list.retain(|e| e != "php_gd.dll");
+        }
+        assert!(extensions.get("8.4").map(|v| v.is_empty()).unwrap_or(true));
     }
 
     #[test]
@@ -1723,19 +1611,19 @@ mod tests {
     #[test]
     fn service_ports_insert_and_get() {
         let mut ports = ServicePorts::default();
-        assert_eq!(ports.get("apache"), None);
-        ports.insert("apache", 8085);
-        assert_eq!(ports.get("apache"), Some(8085));
-        ports.insert("nginx", 80);
-        assert_eq!(ports.get("nginx"), Some(80));
+        assert_eq!(ports.get("apache").copied(), None);
+        ports.insert("apache".to_string(), 8085);
+        assert_eq!(ports.get("apache").copied(), Some(8085));
+        ports.insert("nginx".to_string(), 80);
+        assert_eq!(ports.get("nginx").copied(), Some(80));
         assert_eq!(ports.remove("apache"), Some(8085));
-        assert_eq!(ports.get("apache"), None);
+        assert_eq!(ports.get("apache").copied(), None);
     }
 
     #[test]
     fn config_rejects_zero_service_port() {
         let mut cfg = Config::default();
-        cfg.service_ports.insert("mariadb", 0);
+        cfg.service_ports.insert("mariadb".to_string(), 0);
         assert!(cfg.validate().is_err());
     }
 }

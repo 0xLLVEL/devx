@@ -205,4 +205,4 @@ fn parse_latest_release(body: &str) -> Option<String> {
 }
 
 /// GitHub repository DevX publishes releases to.
-const RELEASES_REPO: &str = "devx/devx";
+const RELEASES_REPO: &str = "0xLLVEL/devx";

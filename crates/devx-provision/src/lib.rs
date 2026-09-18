@@ -31,6 +31,7 @@ pub mod ports;
 pub mod resolver;
 pub mod service;
 pub mod service_defs;
+pub mod site_renderer;
 pub mod sites;
 pub mod tunnel;
 pub mod use_shim;

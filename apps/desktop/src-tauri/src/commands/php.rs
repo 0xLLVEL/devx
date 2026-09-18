@@ -42,10 +42,10 @@ pub fn php_pool_list(state: State<'_, AppState>) -> Result<Vec<PhpPoolStatus>, E
 
     let mut pools = Vec::new();
     for version in installed {
-        let workers = match stored.get(&version) {
-            Some(workers) => workers,
-            None => devx_provision::DEFAULT_WORKERS,
-        };
+        let workers = stored
+            .get(&version)
+            .copied()
+            .unwrap_or(devx_provision::DEFAULT_WORKERS);
         let port = pool_port(&state, &version)?;
 
         // Render the pool's config directory up front. A failure here (disk
@@ -96,7 +96,9 @@ pub(crate) async fn start_php_pool_internal(
     // Remember the choice so the list view and the next start agree.
     if pool_workers(state, version) != workers {
         state.with_config_mut(|store| {
-            store.update(|config| config.php_pools.insert(version.to_string(), workers))
+            store.update(|config| {
+                config.php_pools.insert(version.to_string(), workers);
+            })
         })?;
     }
 
@@ -226,7 +228,14 @@ pub fn php_ext_list(
     }
 
     let installed = devx_provision::list_php_extensions(&install_dir)?;
-    let enabled = state.with_config(|store| store.config().php_extensions.get(&version).to_vec());
+    let enabled = state.with_config(|store| {
+        store
+            .config()
+            .php_extensions
+            .get(&version)
+            .cloned()
+            .unwrap_or_default()
+    });
 
     Ok(PhpExtensionInfo {
         version,
@@ -261,41 +270,19 @@ pub async fn php_ext_set(
     state.with_config_mut(|store| {
         store.update(|config| {
             if enabled {
-                config.php_extensions.enable(&version, extension.clone());
-            } else {
-                config.php_extensions.disable(&version, &extension);
+                let entry = config.php_extensions.entry(version.clone()).or_default();
+                if !entry.contains(&extension) {
+                    entry.push(extension.clone());
+                }
+            } else if let Some(list) = config.php_extensions.get_mut(&version) {
+                list.retain(|e| e != &extension);
             }
         })
     })?;
 
-    // A running pool must restart to load (or unload) the extension: re-render
-    // its ini with the new set, keeping its claimed port, then bounce it.
-    let id = devx_provision::pool_id(&version);
-    if let Some(supervisor) = state.services.get(&id) {
-        if supervisor.state().is_active() {
-            let workers = pool_workers(&state, &version);
-            let port = pool_port(&state, &version)?;
-            let extensions = pool_extensions(&state, &version);
-            let xdebug = pool_xdebug(&state, &version);
-            let limits = pool_limits(&state, &version);
-            let plan = crate::services::plan_php_pool(
-                &state.paths,
-                &version,
-                port,
-                workers,
-                &extensions,
-                xdebug,
-                limits,
-            )?;
-
-            // Stop before re-registering: the registry refuses to replace an
-            // active supervisor, and the stop is harmless for a stale one.
-            supervisor.stop().await;
-            let spec = crate::services::pool_spec(&state.paths, &plan)?;
-            let replacement = state.services.register(spec)?;
-            replacement.start().await?;
-        }
-    }
+    crate::php_pool::PhpPool::new(state.clone())
+        .restart_with(&version)
+        .await?;
 
     php_ext_list(state, version)
 }
@@ -399,38 +386,23 @@ pub async fn php_xdebug_set(
         })
     })?;
 
-    // A running pool must restart to load (or unload) the debugger.
-    let id = devx_provision::pool_id(&version);
-    if let Some(supervisor) = state.services.get(&id) {
-        if supervisor.state().is_active() {
-            let workers = pool_workers(&state, &version);
-            let port = pool_port(&state, &version)?;
-            let extensions = pool_extensions(&state, &version);
-            let xdebug = pool_xdebug(&state, &version);
-            let limits = pool_limits(&state, &version);
-            let plan = crate::services::plan_php_pool(
-                &state.paths,
-                &version,
-                port,
-                workers,
-                &extensions,
-                xdebug,
-                limits,
-            )?;
-
-            supervisor.stop().await;
-            let spec = crate::services::pool_spec(&state.paths, &plan)?;
-            let replacement = state.services.register(spec)?;
-            replacement.start().await?;
-        }
-    }
+    crate::php_pool::PhpPool::new(state.clone())
+        .restart_with(&version)
+        .await?;
 
     php_xdebug_get(state, version)
 }
 
 /// The enabled extensions for `version`, from the stored configuration.
 pub(crate) fn pool_extensions(state: &AppState, version: &str) -> Vec<String> {
-    state.with_config(|store| store.config().php_extensions.get(version).to_vec())
+    state.with_config(|store| {
+        store
+            .config()
+            .php_extensions
+            .get(version)
+            .cloned()
+            .unwrap_or_default()
+    })
 }
 
 /// The Xdebug settings for `version`, from the stored configuration.
@@ -452,7 +424,7 @@ pub(crate) fn pool_limits(
 /// The configured worker count for `version`, or the default.
 pub(crate) fn pool_workers(state: &AppState, version: &str) -> u32 {
     state
-        .with_config(|store| store.config().php_pools.get(version))
+        .with_config(|store| store.config().php_pools.get(version).copied())
         .unwrap_or(devx_provision::DEFAULT_WORKERS)
 }
 
@@ -465,7 +437,8 @@ pub(crate) fn pool_port(state: &AppState, version: &str) -> Result<u16, Error> {
             .config()
             .service_ports
             .get(&pool_id)
-            .or_else(|| store.config().service_ports.get(version))
+            .copied()
+            .or_else(|| store.config().service_ports.get(version).copied())
     }) {
         return Ok(port);
     }
@@ -514,7 +487,7 @@ pub(crate) fn installed_php_versions(runtimes: std::path::PathBuf) -> Vec<String
 }
 
 /// Widens a [`PhpPoolSummary`] into a [`PhpPoolStatus`], state unset.
-fn from_summary(summary: PhpPoolSummary) -> PhpPoolStatus {
+pub(crate) fn from_summary(summary: PhpPoolSummary) -> PhpPoolStatus {
     PhpPoolStatus {
         state: devx_proc::ServiceState::Stopped,
         port: 0,
@@ -555,33 +528,14 @@ pub async fn php_limits_set(
     }
 
     state.with_config_mut(|store| {
-        store.update(|config| config.php_limits.insert(version.clone(), limits.clone()))
+        store.update(|config| {
+            config.php_limits.insert(version.clone(), limits.clone());
+        })
     })?;
 
-    // A running pool must restart to load the new ini values.
-    let id = devx_provision::pool_id(&version);
-    if let Some(supervisor) = state.services.get(&id) {
-        if supervisor.state().is_active() {
-            let workers = pool_workers(&state, &version);
-            let port = pool_port(&state, &version)?;
-            let extensions = pool_extensions(&state, &version);
-            let xdebug = pool_xdebug(&state, &version);
-            let plan = crate::services::plan_php_pool(
-                &state.paths,
-                &version,
-                port,
-                workers,
-                &extensions,
-                xdebug,
-                Some(limits.clone()),
-            )?;
-
-            supervisor.stop().await;
-            let spec = crate::services::pool_spec(&state.paths, &plan)?;
-            let replacement = state.services.register(spec)?;
-            replacement.start().await?;
-        }
-    }
+    crate::php_pool::PhpPool::new(state.clone())
+        .restart_with(&version)
+        .await?;
 
     Ok(limits)
 }

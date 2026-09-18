@@ -1,13 +1,6 @@
 //! Request and response types of the helper protocol.
-//!
-//! Both sides deserialize the same enums, so adding a variant is a compile
-//! error everywhere it matters until both ends agree. `specta` types are
-//! derived even though these never cross the Tauri boundary directly: the
-//! privileged *status* command exposes one response shape to the UI, and
-//! keeping the type shared forces that exposure to stay accurate.
 
 use serde::{Deserialize, Serialize};
-
 /// Protocol version a peer must speak to be trusted.
 ///
 /// Bumped on any incompatible change to the request or response shape; the
@@ -47,7 +40,7 @@ impl HostsEntry {
 ///
 /// Every variant is an operation that genuinely needs elevation; anything the
 /// user process can do itself stays out of this enum on purpose.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "payload", rename_all = "snake_case")]
 pub enum PrivilegedRequest {
     /// Handshake: the client proves it speaks this protocol version.
@@ -109,7 +102,7 @@ pub enum PrivilegedRequest {
 }
 
 /// The helper's reply to one [`PrivilegedRequest`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "payload", rename_all = "snake_case")]
 pub enum PrivilegedResponse {
     /// Handshake accepted.
