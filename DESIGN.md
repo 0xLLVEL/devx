@@ -9,8 +9,8 @@
 - Accent: `--accent` burnt-orange `#c2410c` (light) / coral `#ff6b5a` (dark), `--accent-soft` for hover. Used at key moment only: primary CTA, 2px top line `from-accent to transparent` (hierarchy: level 1 vs 2), `Card` hover `-1px + border`. Zero accents is sterile, accent everywhere is slop — we keep 1-2.
 - No `blue-purple` default gradient (R-01). Gradient only as hierarchy function with reason written here.
 
-**Typography (R-06):**
-- Sans `Inter`, mono `JetBrains Mono` (offline, fallback stack) — chosen for developer readability, not trend. Scale: display 32/38/700, h1 24/30/700, h2 18/24/650, h3 15/20/650, sm 14/20, xs 12/17, caption 11/15/500, code 12/18/-0.01em. One h1 per page.
+**Typography (R-06) — Vercel minimal:**
+- Sans `Geist Sans` (primary, tight -0.02em), fallback `Inter` + system — chosen for minimal, clean dev tool (Vercel-like), not loud. Scale: display 28/34/600 -0.02em, h1 22/28/600 -0.02em, h2 16/22/600 -0.015em, h3 14/18/600 -0.01em, sm 13/18, xs 12/16, caption 11/14/500, code 12/17. One h1 per page, tracking tight for headings.
 
 **Radius & Elevation (R-11, R-12):**
 - Radius: `--radius 8` + `xs 4 / sm 6 / md 8 / lg 12 / xl 16 / 2xl 20 / command 14`, pills `999`. Applied deliberately, not pill everywhere.

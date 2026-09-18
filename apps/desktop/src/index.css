@@ -247,42 +247,40 @@
   --shadow-md: var(--elevation-md);
   --shadow-lg: var(--elevation-lg);
 
-  /* ---- §10 Typography ---------------------------------------------------
-     Fonts are declared, never downloaded: the app is offline-first, so Inter
-     and JetBrains Mono are used when the machine already has them and the
-     fallback stack takes over when it does not. */
-  --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
-    "Segoe UI", sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+  /* ---- §10 Typography — Vercel minimal (Geist, tight tracking) -----------
+     Offline-first: Geist when installed, Inter fallback, system stack.
+     Minimal: smaller h1/h2, tight -0.02em, weight 600 — clean, not loud. */
+  --font-sans: "Geist Sans", "Geist", Inter, ui-sans-serif, system-ui, -apple-system,
+    BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
 
-  /* Type scale, exactly the §10 steps. `xs`/`sm` are re-pointed so the
-     existing `text-xs`/`text-sm` call sites land on Small and Body. */
   --text-xs: 12px;
-  --text-xs--line-height: 17px;
-  --text-sm: 14px;
-  --text-sm--line-height: 20px;
+  --text-xs--line-height: 16px;
+  --text-sm: 13px;
+  --text-sm--line-height: 18px;
   --text-caption: 11px;
-  --text-caption--line-height: 15px;
+  --text-caption--line-height: 14px;
   --text-caption--font-weight: 500;
-  --text-h3: 15px;
-  --text-h3--line-height: 20px;
-  --text-h3--font-weight: 650;
-  /* §10 nav step: the H3 size at label weight. Same 15px/20px geometry, no
-     `--font-weight`, so a row keeps whatever weight the item sets (regular
-     when idle, `font-medium` when active). */
-  --text-nav: 15px;
-  --text-nav--line-height: 20px;
-  --text-h2: 18px;
-  --text-h2--line-height: 24px;
-  --text-h2--font-weight: 650;
-  --text-h1: 24px;
-  --text-h1--line-height: 30px;
-  --text-h1--font-weight: 700;
-  --text-display: 32px;
-  --text-display--line-height: 38px;
-  --text-display--font-weight: 700;
+  --text-h3: 14px;
+  --text-h3--line-height: 18px;
+  --text-h3--font-weight: 600;
+  --text-h3--letter-spacing: -0.01em;
+  --text-nav: 14px;
+  --text-nav--line-height: 18px;
+  --text-h2: 16px;
+  --text-h2--line-height: 22px;
+  --text-h2--font-weight: 600;
+  --text-h2--letter-spacing: -0.015em;
+  --text-h1: 22px;
+  --text-h1--line-height: 28px;
+  --text-h1--font-weight: 600;
+  --text-h1--letter-spacing: -0.02em;
+  --text-display: 28px;
+  --text-display--line-height: 34px;
+  --text-display--font-weight: 600;
+  --text-display--letter-spacing: -0.02em;
   --text-code: 12px;
-  --text-code--line-height: 18px;
+  --text-code--line-height: 17px;
 
   /* ---- §11 Spacing: 4px base grid (§73 names the steps used in practice) */
   --spacing: 4px;
