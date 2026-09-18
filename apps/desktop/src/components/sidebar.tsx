@@ -8,9 +8,9 @@ import { useServiceMetrics } from "@/lib/queries";
 import { useNavCounts, useSystemStatus, type SystemStatus } from "@/lib/shell-data";
 import { cn } from "@/lib/utils";
 
-/** §5 dimensions. Fixed, so the content beside the sidebar cannot jump. */
-const EXPANDED_WIDTH = "232px";
-const COLLAPSED_WIDTH = "68px";
+/** Vercel flat — final 200/56, flat active */
+const EXPANDED_WIDTH = "200px";
+const COLLAPSED_WIDTH = "56px";
 
 /**
  * Sidebar (§5).
@@ -76,28 +76,21 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
                     {...(collapsed ? { "aria-label": item.label } : {})}
                     className={({ isActive }) =>
                       cn(
-                        "group relative flex min-h-8 cursor-pointer items-center gap-2.5 rounded-md text-nav transition-[background-color,color,box-shadow] duration-150 [&_svg]:size-5 [&_svg]:shrink-0",
+                        "group relative flex min-h-8 cursor-pointer items-center gap-2.5 rounded-md text-nav transition-[background-color,color] duration-150 [&_svg]:size-4 [&_svg]:shrink-0",
                         collapsed ? "justify-center px-2" : "px-2.5",
                         isActive
-                          ? "bg-hover font-medium text-foreground shadow-[inset_0_0_12px_rgba(255,107,74,0.06)]"
+                          ? "bg-hover font-medium text-foreground"
                           : "text-ink-muted hover:bg-hover/60 hover:text-ink-secondary",
                       )
                     }
                   >
                     {({ isActive }) => (
                       <>
-                        {/* §5 active marker: a real state signal, not a stripe. */}
-                        {isActive && !collapsed ? (
-                          <span
-                            aria-hidden
-                            className="absolute top-1/2 left-0 h-4 w-0.5 -translate-y-1/2 rounded-full bg-primary shadow-[0_0_6px_var(--accent-soft)]"
-                          />
-                        ) : null}
                         <Icon
                           aria-hidden
                           className={cn(
-                            "transition-transform duration-150 group-hover:scale-105",
-                            isActive ? "text-primary" : undefined,
+                            "transition-colors duration-150",
+                            isActive ? "text-foreground" : "text-ink-muted group-hover:text-ink-secondary",
                           )}
                         />
                         {collapsed ? null : (
