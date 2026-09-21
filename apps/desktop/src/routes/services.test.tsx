@@ -497,6 +497,8 @@ describe("ServicesPage", () => {
         env: {},
         aliases: [],
         auth: null,
+        port: 80,
+        https_port: 443,
       },
       {
         hostname: "nextjs.local",
@@ -508,6 +510,8 @@ describe("ServicesPage", () => {
         env: {},
         aliases: [],
         auth: null,
+        port: 8080,
+        https_port: 443,
       },
     ]);
 

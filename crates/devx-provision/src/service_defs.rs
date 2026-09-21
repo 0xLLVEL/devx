@@ -8,9 +8,26 @@
 //! sequencing, template bodies) rather than the versioned data the catalog
 //! holds, and because they must stay in lock-step with this crate's renderer.
 
+use std::collections::BTreeMap;
+
 use devx_core::{Error, Result};
 
 use crate::service::{ConfigFile, InitStep, Readiness, ServiceDefinition};
+
+/// Default HTTPS port for Apache. 443 belongs to nginx, so Apache terminates
+/// TLS on its own port; override with [`APACHE_HTTPS_PORT_KEY`].
+pub const DEFAULT_APACHE_HTTPS_PORT: u16 = 8443;
+
+/// `service_ports` key overriding the Apache HTTPS port.
+pub const APACHE_HTTPS_PORT_KEY: &str = "apache-https";
+
+/// Resolves the Apache HTTPS port from explicit overrides or the default.
+pub fn apache_https_port(service_ports: &BTreeMap<String, u16>) -> u16 {
+    service_ports
+        .get(APACHE_HTTPS_PORT_KEY)
+        .copied()
+        .unwrap_or(DEFAULT_APACHE_HTTPS_PORT)
+}
 
 /// Returns the service definition for `component_id`, if one exists.
 ///
@@ -105,6 +122,14 @@ http {
     }
 
     include {{ config_dir }}/sites/*.conf;
+
+    # Catch-all: unknown Host must not fall into the first
+    # alphabetical site (app.test vs app2.test). Return 404.
+    server {
+        listen       {{ port }} default_server;
+        server_name  _;
+        return 404;
+    }
 }
 "#;
 
@@ -428,8 +453,12 @@ fn apache() -> ServiceDefinition {
     //    refuses scripts without REDIRECT_STATUS (cgi.force_redirect).
     let httpd_conf = r##"ServerRoot "{{ install_dir }}/Apache24"
 Listen 127.0.0.1:{{ port }}
+Listen 127.0.0.1:{{ https_port }}
 ServerName localhost
 
+LoadModule ssl_module modules/mod_ssl.so
+LoadModule socache_shmcb_module modules/mod_socache_shmcb.so
+SSLSessionCache "shmcb:{{ data_dir }}/ssl_scache(512000)"
 LoadModule auth_basic_module modules/mod_auth_basic.so
 LoadModule authn_core_module modules/mod_authn_core.so
 LoadModule authn_file_module modules/mod_authn_file.so
@@ -539,7 +568,10 @@ mod tests {
     fn apache_config_renders_with_port_and_fastcgi_proxy() {
         let def = apache();
         let file = &def.config_files[0];
-        let rendered = render_template(&file.template, &ctx(8085));
+        let mut ctx = ctx(8085);
+        ctx.extra
+            .insert("https_port".into(), DEFAULT_APACHE_HTTPS_PORT.to_string());
+        let rendered = render_template(&file.template, &ctx);
         assert!(rendered.contains("Listen 127.0.0.1:8085"), "{rendered}");
         assert!(
             rendered.contains("SetHandler \"proxy:fcgi://127.0.0.1:9100/\""),
@@ -555,6 +587,29 @@ mod tests {
         );
         assert!(rendered.contains("REDIRECT_STATUS 200"), "{rendered}");
         assert!(rendered.contains("AllowOverride All"), "{rendered}");
+    }
+
+    #[test]
+    fn apache_config_listens_for_tls_with_ssl_loaded() {
+        let def = apache();
+        let file = &def.config_files[0];
+        let mut ctx = ctx(8085);
+        ctx.extra.insert("https_port".into(), "8443".into());
+        let rendered = render_template(&file.template, &ctx);
+        assert!(rendered.contains("Listen 127.0.0.1:8443"), "{rendered}");
+        assert!(
+            rendered.contains("LoadModule ssl_module modules/mod_ssl.so"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("SSLSessionCache"), "{rendered}");
+    }
+
+    #[test]
+    fn apache_https_port_defaults_and_overrides() {
+        assert_eq!(apache_https_port(&BTreeMap::new()), 8443);
+        let mut ports = BTreeMap::new();
+        ports.insert(APACHE_HTTPS_PORT_KEY.to_owned(), 9443);
+        assert_eq!(apache_https_port(&ports), 9443);
     }
 
     #[test]

@@ -162,13 +162,6 @@ fn rejected(err: devx_core::Error) -> PrivilegedResponse {
     }
 }
 
-/// Whether `namespace` (with or without the leading dot) is DevX's suffix.
-fn is_devx_suffix(namespace: &str) -> bool {
-    let with_dot = format!(".{namespace}");
-    nrpt::RULE_NAMESPACE.eq_ignore_ascii_case(namespace)
-        || nrpt::RULE_NAMESPACE.eq_ignore_ascii_case(&with_dot)
-}
-
 /// Answers one request against `backends`.
 ///
 /// Pure dispatch: no I/O of its own beyond what the backends do, so the
@@ -245,19 +238,13 @@ pub fn handle(backends: &Backends, request: &PrivilegedRequest) -> PrivilegedRes
             if let Err(err) = devx_ipc::validate_namespace(namespace) {
                 return rejected(err);
             }
-            // The helper only ever manages its own documented suffix; a
-            // client asking for anything else is refused outright.
-            if !is_devx_suffix(namespace) {
-                return PrivilegedResponse::Rejected {
-                    reason: format!("DevX only manages the `{}` suffix", nrpt::RULE_NAMESPACE),
-                };
-            }
+            // ponytail: any valid single-label suffix allowed; one fixed GUID rule rewritten wholesale.
             if *port == 0 {
                 return rejected(devx_core::Error::invalid_input(
                     "resolver port must not be 0",
                 ));
             }
-            match nrpt.set_rule(*port) {
+            match nrpt.set_rule(namespace, *port) {
                 Ok(()) => PrivilegedResponse::Applied,
                 Err(err) => rejected(err),
             }
@@ -270,11 +257,6 @@ pub fn handle(backends: &Backends, request: &PrivilegedRequest) -> PrivilegedRes
         PrivilegedRequest::RemoveNrptRule { namespace } => {
             if let Err(err) = devx_ipc::validate_namespace(namespace) {
                 return rejected(err);
-            }
-            if !is_devx_suffix(namespace) {
-                return PrivilegedResponse::Rejected {
-                    reason: format!("DevX only manages the `{}` suffix", nrpt::RULE_NAMESPACE),
-                };
             }
             match nrpt.remove_rule() {
                 Ok(_) => PrivilegedResponse::Applied,
@@ -397,7 +379,7 @@ mod tests {
             Ok(self.port.lock().expect("lock").is_some())
         }
 
-        fn set_rule(&self, port: u16) -> Result<()> {
+        fn set_rule(&self, _namespace: &str, port: u16) -> Result<()> {
             *self.port.lock().expect("lock") = Some(port);
             Ok(())
         }
@@ -732,18 +714,18 @@ mod tests {
     }
 
     #[test]
-    fn nrpt_requests_are_confined_to_the_devx_suffix() {
+    fn nrpt_requests_accept_any_valid_suffix_but_reject_bad_ports() {
         let b = backends(TempHosts::new(), FakeCa::new());
 
-        // A different suffix would redirect arbitrary traffic.
+        // ponytail: custom domain_suffix supported; one fixed GUID rule rewritten wholesale.
         let response = handle(
             &b,
             &PrivilegedRequest::SetNrptRule {
-                namespace: "com".into(),
+                namespace: "dev".into(),
                 port: 9353,
             },
         );
-        assert!(matches!(response, PrivilegedResponse::Rejected { .. }));
+        assert_eq!(response, PrivilegedResponse::Applied);
 
         // Port zero would point the suffix at nothing.
         let response = handle(

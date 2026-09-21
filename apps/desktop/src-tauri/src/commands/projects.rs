@@ -400,6 +400,8 @@ mod tests {
             env: Default::default(),
             aliases: Vec::new(),
             auth: None,
+            port: 80,
+            https_port: 443,
         }
     }
 

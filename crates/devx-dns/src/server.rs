@@ -48,14 +48,24 @@ impl ResolverConfig {
 
     /// Whether `name` is one DevX answers itself.
     pub fn is_local(&self, name: &str) -> bool {
-        name.strip_prefix("www.")
-            .map(|stripped| self.is_local(stripped))
-            .unwrap_or_else(|| {
-                name.rsplit('.')
-                    .next()
-                    .map(|label| label.eq_ignore_ascii_case(&self.local_suffix))
-                    .unwrap_or(false)
-            })
+        let name = name.trim().trim_end_matches('.');
+        if name.is_empty() {
+            return false;
+        }
+        if name.eq_ignore_ascii_case(&self.local_suffix) {
+            return false; // bare suffix is not a site
+        }
+        if let Some(stripped) = name.strip_prefix("www.") {
+            // ponytail: strip one www. label then re-check; recursion handles www.www.
+            if stripped.is_empty() {
+                return false;
+            }
+            return self.is_local(stripped);
+        }
+        name.rsplit('.')
+            .next()
+            .map(|label| label.eq_ignore_ascii_case(&self.local_suffix))
+            .unwrap_or(false)
     }
 
     /// The answer for a local name, when it should have one.

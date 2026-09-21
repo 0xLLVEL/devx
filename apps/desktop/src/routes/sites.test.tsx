@@ -49,6 +49,8 @@ function site(overrides: Partial<Record<string, unknown>> = {}) {
     env: {},
     aliases: [],
     auth: null,
+    port: 80,
+    https_port: 443,
     ...overrides,
   };
 }
@@ -412,6 +414,32 @@ describe("SitesPage", () => {
     await user.click(screen.getByRole("button", { name: /more actions for myapp\.test/i }));
     await user.click(await screen.findByRole("menuitem", { name: /open folder/i }));
     expect(mocks.openFolder).toHaveBeenCalledWith("C:\\dev\\myapp\\public");
+  });
+
+  it("opens an Apache site on its own port, not :80", async () => {
+    const user = userEvent.setup();
+    mocks.siteList.mockResolvedValue([
+      site({ hostname: "mtdb.test", web_server: "Apache", port: 8085 }),
+    ]);
+
+    renderWithProviders(<SitesPage />);
+
+    await screen.findByText("mtdb.test");
+    await user.click(screen.getByRole("button", { name: /open mtdb\.test in browser/i }));
+    expect(mocks.openInBrowser).toHaveBeenCalledWith("http://mtdb.test:8085");
+  });
+
+  it("opens an Apache HTTPS site on the Apache TLS port, not :443", async () => {
+    const user = userEvent.setup();
+    mocks.siteList.mockResolvedValue([
+      site({ hostname: "mtdb.test", web_server: "Apache", https: true, https_port: 8443 }),
+    ]);
+
+    renderWithProviders(<SitesPage />);
+
+    await screen.findByText("mtdb.test");
+    await user.click(screen.getByRole("button", { name: /open mtdb\.test in browser/i }));
+    expect(mocks.openInBrowser).toHaveBeenCalledWith("https://mtdb.test:8443");
   });
 
   it("opens the row's own actions by right-clicking it (§47)", async () => {

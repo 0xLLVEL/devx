@@ -199,30 +199,39 @@ pub fn render_server_block_with_port(
     } else {
         "index.html index.htm"
     };
+    let server_names = spec_hostname(spec);
+    let log_name = spec.hostname.to_ascii_lowercase();
+    let fallback = if spec.php_version.is_some() {
+        "try_files $uri $uri/ /index.php?$query_string;"
+    } else {
+        "try_files $uri $uri/ =404;"
+    };
 
     format!(
-        r#"# devx-managed site: {hostname}
+        r#"# devx-managed site: {log_name}
 server {{
     listen       {http_port};
-    server_name  {hostname};
+    server_name  {server_names};
 {tls}    root   {docroot};
     index  {index};
 
-    access_log  logs/{hostname}.access.log;
-    error_log   logs/{hostname}.error.log;
+    access_log  logs/{log_name}.access.log;
+    error_log   logs/{log_name}.error.log;
 
 {php_location}{auth_lines}    location / {{
-        try_files $uri $uri/ /index.php?$query_string;
+        {fallback}
     }}
 }}
 "#,
-        hostname = spec_hostname(spec),
+        log_name = log_name,
+        server_names = server_names,
         http_port = http_port,
         docroot = docroot,
         index = index,
         php_location = php_location,
         tls = tls.unwrap_or_default(),
         auth_lines = auth_lines,
+        fallback = fallback,
     )
 }
 
@@ -272,8 +281,32 @@ fn spec_hostname(spec: &SiteSpec) -> String {
     names.join(" ")
 }
 
+/// TLS material for one Apache site's HTTPS virtual host.
+///
+/// Apache terminates TLS itself (unlike nginx it cannot share 443 with the
+/// other servers, so it listens on its own HTTPS port), using the same local
+/// CA certificate the nginx blocks reference.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApacheTls {
+    /// Port of the HTTPS virtual host, e.g. 8443.
+    pub https_port: u16,
+    /// Absolute certificate file, forward slashes.
+    pub cert_file: String,
+    /// Absolute key file, forward slashes.
+    pub key_file: String,
+}
+
 /// Renders one site as an Apache VirtualHost block.
-pub fn render_apache_site(spec: &SiteSpec, php_endpoint: Option<&str>, http_port: u16) -> String {
+///
+/// `tls` adds a second `*:https_port` virtual host with `SSLEngine on` so an
+/// HTTPS site answers on both ports, mirroring the nginx dual-listen block.
+/// `None` keeps the site HTTP-only.
+pub fn render_apache_site(
+    spec: &SiteSpec,
+    php_endpoint: Option<&str>,
+    http_port: u16,
+    tls: Option<&ApacheTls>,
+) -> String {
     let docroot = slash(&spec.docroot);
     let index = if spec.php_version.is_some() {
         "index.php index.html index.htm"
@@ -306,6 +339,42 @@ pub fn render_apache_site(spec: &SiteSpec, php_endpoint: Option<&str>, http_port
         None => String::new(),
     };
 
+    let https_host = match tls {
+        Some(t) => format!(
+            r#"
+<VirtualHost *:{https_port}>
+    ServerName {hostname}{server_alias}
+    DocumentRoot "{docroot}"
+    DirectoryIndex {index}
+
+    SSLEngine on
+    SSLCertificateFile "{cert_file}"
+    SSLCertificateKeyFile "{key_file}"
+
+    <Directory "{docroot}">
+        Options Indexes FollowSymLinks
+        AllowOverride All
+        Require all granted{auth_lines}
+    </Directory>{env_lines}{php_handler}
+
+    ErrorLog  logs/{hostname}-tls.error.log
+    CustomLog logs/{hostname}-tls.access.log common
+</VirtualHost>
+"#,
+            https_port = t.https_port,
+            hostname = spec.hostname,
+            server_alias = server_alias,
+            docroot = docroot,
+            index = index,
+            cert_file = t.cert_file,
+            key_file = t.key_file,
+            auth_lines = auth_lines,
+            env_lines = env_lines,
+            php_handler = php_handler,
+        ),
+        None => String::new(),
+    };
+
     format!(
         r#"# devx-managed site: {hostname}
 <VirtualHost *:{http_port}>
@@ -322,7 +391,7 @@ pub fn render_apache_site(spec: &SiteSpec, php_endpoint: Option<&str>, http_port
     ErrorLog  logs/{hostname}.error.log
     CustomLog logs/{hostname}.access.log common
 </VirtualHost>
-"#,
+{https_host}"#,
         hostname = spec.hostname,
         server_alias = server_alias,
         http_port = http_port,
@@ -331,6 +400,7 @@ pub fn render_apache_site(spec: &SiteSpec, php_endpoint: Option<&str>, http_port
         auth_lines = auth_lines,
         env_lines = env_lines,
         php_handler = php_handler,
+        https_host = https_host,
     )
 }
 
@@ -350,7 +420,7 @@ fn render_apache_env(env: &[(String, String)]) -> String {
 /// CA handles sites it proxies, but Caddy re-terminates its own listener.
 pub fn render_caddy_site(spec: &SiteSpec, php_endpoint: Option<&str>, tls: Option<&str>) -> String {
     let docroot = slash(&spec.docroot);
-    let names = spec_hostname(spec);
+    let names = caddy_names(spec);
 
     let php_block = match php_endpoint {
         Some(endpoint) => format!("\n\tphp_fastcgi {endpoint}"),
@@ -401,7 +471,7 @@ pub fn render_caddy_site(spec: &SiteSpec, php_endpoint: Option<&str>, tls: Optio
 /// definition instead. Static and PHP sites are identical here.
 pub fn render_frankenphp_site(spec: &SiteSpec, tls: Option<&str>) -> String {
     let docroot = slash(&spec.docroot);
-    let names = spec_hostname(spec);
+    let names = caddy_names(spec);
 
     let tls_line = match tls {
         Some(snippet) => format!("\n\t{snippet}"),
@@ -428,6 +498,13 @@ pub fn render_frankenphp_site(spec: &SiteSpec, tls: Option<&str>) -> String {
         tls_line = tls_line,
         auth_block = auth_block,
     )
+}
+
+/// Caddy site addresses: comma-separated so each name routes to the same root.
+fn caddy_names(spec: &SiteSpec) -> String {
+    let mut names = vec![spec.hostname.clone()];
+    names.extend(spec.aliases.iter().cloned());
+    names.join(", ")
 }
 
 /// Renders the site's environment variables as `fastcgi_param` lines.
@@ -583,6 +660,28 @@ pub struct SyncContext<'a> {
     pub http_port: u16,
     /// The configured HTTPS port for `listen 443` blocks.
     pub https_port: u16,
+    /// Per-server HTTP ports. Each server listens on its own port, so an
+    /// Apache vhost must say `<VirtualHost *:8085>`, not `*:80`.
+    pub apache_port: u16,
+    /// Caddy's HTTP port.
+    pub caddy_port: u16,
+    /// FrankenPHP's HTTP port.
+    pub frankenphp_port: u16,
+    /// Apache's HTTPS port. Apache terminates TLS itself on its own port
+    /// (8443 by default) because 443 belongs to nginx.
+    pub apache_https_port: u16,
+}
+
+impl SyncContext<'_> {
+    /// The HTTP port owning `server`'s sites.
+    pub fn port_for(&self, server: WebServerKind) -> u16 {
+        match server {
+            WebServerKind::Nginx => self.http_port,
+            WebServerKind::Apache => self.apache_port,
+            WebServerKind::Caddy => self.caddy_port,
+            WebServerKind::FrankenPhp => self.frankenphp_port,
+        }
+    }
 }
 
 /// (Re)writes every configured site's server block and prunes stale ones.
@@ -630,8 +729,13 @@ pub fn sync_site_blocks(
         written.push(site.hostname.clone());
     }
 
-    let live: Vec<String> = sites.iter().map(|s| s.hostname.clone()).collect();
-    let mut pruned = prune_stale_blocks(sites_dir, &live)?;
+    // ponytail: prune per web_server so an Apache site never keeps a stale nginx block alive.
+    let live_nginx: Vec<String> = sites
+        .iter()
+        .filter(|s| matches!(s.web_server, WebServerKind::Nginx))
+        .map(|s| s.hostname.clone())
+        .collect();
+    let mut pruned = prune_stale_blocks(sites_dir, &live_nginx)?;
     for extra in ["apache", "caddy", "frankenphp"] {
         let dir = ctx.service_config_dir.join(extra).join("sites");
         if dir.is_dir() && dir != sites_dir {
@@ -836,6 +940,95 @@ mod tests {
     }
 
     #[test]
+    fn log_paths_use_primary_hostname_only() {
+        let mut site = spec("app.test", None);
+        site.aliases = vec!["www.app.test".to_owned()];
+
+        let block = render_server_block(&site, None, None);
+        assert!(
+            block.contains("access_log  logs/app.test.access.log;"),
+            "{block}"
+        );
+        assert!(!block.contains("logs/app.test www"), "{block}");
+    }
+
+    #[test]
+    fn static_sites_fall_back_to_404_not_index_php() {
+        let block = render_server_block(&spec("static.test", None), None, None);
+        assert!(block.contains("try_files $uri $uri/ =404;"), "{block}");
+    }
+
+    #[test]
+    fn two_sites_keep_distinct_roots_and_names() {
+        let mut a = spec("app.test", None);
+        a.docroot = PathBuf::from("C:/projects/app/public");
+        let mut b = spec("app2.test", None);
+        b.docroot = PathBuf::from("C:/projects/app2/public");
+
+        let ba = render_server_block(&a, None, None);
+        let bb = render_server_block(&b, None, None);
+        assert!(ba.contains("server_name  app.test;"), "{ba}");
+        assert!(ba.contains("root   C:/projects/app/public;"), "{ba}");
+        assert!(!ba.contains("app2"), "{ba}");
+        assert!(bb.contains("server_name  app2.test;"), "{bb}");
+        assert!(bb.contains("root   C:/projects/app2/public;"), "{bb}");
+    }
+
+    #[test]
+    fn apache_vhost_uses_the_apache_port_not_nginx() {
+        let ctx = SyncContext {
+            service_config_dir: Path::new("C:/x"),
+            certs_dir: Path::new("C:/x/certs"),
+            http_port: 80,
+            https_port: 443,
+            apache_port: 8085,
+            caddy_port: 8080,
+            frankenphp_port: 8082,
+            apache_https_port: 8443,
+        };
+        assert_eq!(ctx.port_for(WebServerKind::Apache), 8085);
+        assert_eq!(ctx.port_for(WebServerKind::Nginx), 80);
+        let mut site = spec("mtdb.test", Some("8.4.25"));
+        site.web_server = WebServerKind::Apache;
+        let block = render_apache_site(
+            &site,
+            Some("127.0.0.1:9100"),
+            ctx.port_for(WebServerKind::Apache),
+            None,
+        );
+        assert!(block.contains("<VirtualHost *:8085>"), "{block}");
+        assert!(!block.contains("<VirtualHost *:80>"), "{block}");
+        assert!(!block.contains("SSLEngine"), "{block}");
+    }
+
+    #[test]
+    fn apache_https_site_gets_a_second_tls_vhost() {
+        let site = spec("mtdb.test", Some("8.4.25"));
+        let tls = ApacheTls {
+            https_port: 8443,
+            cert_file: "C:/devx/certs/sites/mtdb.test/cert.pem".into(),
+            key_file: "C:/devx/certs/sites/mtdb.test/key.pem".into(),
+        };
+        let block = render_apache_site(&site, Some("127.0.0.1:9100"), 8085, Some(&tls));
+        assert!(block.contains("<VirtualHost *:8085>"), "{block}");
+        assert!(block.contains("<VirtualHost *:8443>"), "{block}");
+        assert!(block.contains("SSLEngine on"), "{block}");
+        assert!(
+            block.contains("SSLCertificateFile \"C:/devx/certs/sites/mtdb.test/cert.pem\""),
+            "{block}"
+        );
+        assert!(block.contains("ServerName mtdb.test"), "{block}");
+    }
+
+    #[test]
+    fn caddy_names_are_comma_separated() {
+        let mut site = spec("app.test", None);
+        site.aliases = vec!["www.app.test".to_owned()];
+        let block = render_caddy_site(&site, None, None);
+        assert!(block.contains("app.test, www.app.test {"), "{block}");
+    }
+
+    #[test]
     fn hostnames_validate_like_the_ipc_rule() {
         assert!(validate_hostname("app.test").is_ok());
         assert!(validate_hostname("*.evil").is_err());
@@ -965,6 +1158,10 @@ mod tests {
                 certs_dir: &certs,
                 http_port: 80,
                 https_port: 443,
+                apache_port: 8085,
+                caddy_port: 8080,
+                frankenphp_port: 8082,
+                apache_https_port: 8443,
             },
         )
         .expect("sync");
@@ -987,7 +1184,7 @@ mod tests {
         site.aliases = vec!["www.app.test".into()];
         site.env = vec![("APP_ENV".into(), "production".into())];
 
-        let block = render_apache_site(&site, Some("127.0.0.1:9100"), 8085);
+        let block = render_apache_site(&site, Some("127.0.0.1:9100"), 8085, None);
         assert!(block.contains("<VirtualHost *:8085>"), "{block}");
         assert!(block.contains("ServerName app.test"), "{block}");
         assert!(block.contains("ServerAlias www.app.test"), "{block}");

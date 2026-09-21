@@ -106,13 +106,28 @@ pub fn plan_service(
         let _ = std::fs::create_dir_all(&sites_dir);
     }
 
+    // Apache terminates TLS on its own HTTPS port (443 belongs to nginx);
+    // the httpd.conf template renders `Listen` for it from this extra value.
+    // Resolved from the on-disk config so httpd.conf and the site vhosts
+    // (written at sync time) always agree.
+    let mut extra = std::collections::BTreeMap::new();
+    if component_id == "apache" {
+        let ports = devx_core::ConfigStore::load(paths)
+            .map(|store| store.config().service_ports.clone())
+            .unwrap_or_default();
+        extra.insert(
+            "https_port".to_owned(),
+            devx_provision::apache_https_port(&ports).to_string(),
+        );
+    }
+
     let ctx = RenderContext {
         install_dir: install_dir.clone(),
         config_dir,
         data_dir,
         log_dir: log_dir.clone(),
         port: chosen_port,
-        extra: Default::default(),
+        extra,
     };
 
     let plan = definition.prepare(&ctx)?;

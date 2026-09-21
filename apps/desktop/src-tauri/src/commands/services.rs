@@ -73,6 +73,21 @@ pub async fn service_start(
         crate::services::plan_service(&state.paths, &component_id, &version, &[], custom_port)?;
     let id = plan.spec.id.clone();
 
+    // Self-heal: rewrite this server's site blocks from config before launch,
+    // so vhosts rendered by an older DevX (wrong port, missing TLS) cannot
+    // linger on disk and serve the wrong root — or nothing at all.
+    if matches!(
+        component_id.as_str(),
+        "nginx" | "apache" | "caddy" | "frankenphp"
+    ) {
+        let config = state.with_config(|store| store.config().clone());
+        let _ = crate::commands::sites::sync_site_blocks_inner(
+            &state.paths,
+            &state.services,
+            &config,
+        );
+    }
+
     // One-time init (initdb, mysql_install_db) must complete before launch.
     crate::services::run_init_steps(&plan.init_steps).await?;
 

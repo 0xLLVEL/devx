@@ -41,6 +41,8 @@ function project(overrides: Record<string, unknown> = {}) {
         env: {},
         aliases: [],
         auth: null,
+        port: 80,
+        https_port: 443,
       },
     ],
     workers: [

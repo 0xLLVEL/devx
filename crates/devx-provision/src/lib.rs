@@ -49,13 +49,16 @@ pub use php_pool::{
     DEFAULT_WORKERS, FIRST_POOL_PORT, MAX_WORKERS,
 };
 pub use pki::{
-    ensure_ca, ensure_site_cert, load_ca, tls_listen_snippet, CertificateFiles, LocalCa,
-    CA_FRIENDLY_NAME,
+    ensure_ca, ensure_site_cert, load_ca, remove_site_cert, tls_listen_snippet, CertificateFiles,
+    LocalCa, CA_FRIENDLY_NAME,
 };
 pub use ports::{PortAllocator, PortDecision};
 pub use resolver::{Endpoints, Resolver, VersionListing};
 pub use service::{LaunchPlan, Readiness, RenderContext, ServiceDefinition};
-pub use service_defs::{default_port_for, definition_for, is_service, service_ids};
+pub use service_defs::{
+    apache_https_port, default_port_for, definition_for, is_service, service_ids,
+    APACHE_HTTPS_PORT_KEY, DEFAULT_APACHE_HTTPS_PORT,
+};
 pub use sites::{
     pool_endpoint_for, prune_stale_blocks, remove_site_block, render_apache_site,
     render_server_block, render_server_block_with_port, sync_site_blocks, validate_spec,

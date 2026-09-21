@@ -1750,6 +1750,16 @@ export type SiteStatus = {
 	aliases: string[],
 	/**  Basic-auth user when the site is protected, `None` for public. */
 	auth: SiteAuth | null,
+	/**
+	 *  HTTP port of the owning web server (80 for nginx by default,
+	 *  8085 for Apache, ...). The UI builds the open-URL from this.
+	 */
+	port: number,
+	/**
+	 *  HTTPS port of the owning web server (443 for nginx, 8443 for
+	 *  Apache by default). The UI builds the https open-URL from this.
+	 */
+	https_port: number,
 };
 
 /**

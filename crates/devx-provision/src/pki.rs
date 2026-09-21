@@ -138,23 +138,44 @@ pub struct CertificateFiles {
     pub key_path: PathBuf,
 }
 
-/// Issues (or reuses) the server certificate for `hostname`.
+/// Issues (or reuses) the server certificate for `hostname` + `aliases`.
 ///
-/// The certificate is minted only when absent: a re-rendered nginx config
-/// must never rewrite a cert browsers already saw, and reissuing on every
-/// sync would churn serials for no benefit.
-pub fn ensure_site_cert(certs_dir: &Path, hostname: &str) -> Result<CertificateFiles> {
+/// SAN covers primary plus aliases. Reuses only when `sans.txt` matches the
+/// requested set; otherwise reissues so a new alias never serves a stale cert.
+pub fn ensure_site_cert(
+    certs_dir: &Path,
+    hostname: &str,
+    aliases: &[String],
+) -> Result<CertificateFiles> {
     devx_ipc::validate_hostname(hostname)?;
+    for alias in aliases {
+        devx_ipc::validate_hostname(alias)?;
+    }
+
+    let mut sans = vec![hostname.to_ascii_lowercase()];
+    for alias in aliases {
+        let lc = alias.to_ascii_lowercase();
+        if !sans.contains(&lc) {
+            sans.push(lc);
+        }
+    }
+    sans.sort();
 
     let site_dir = certs_dir.join("sites").join(hostname.to_ascii_lowercase());
     let cert_path = site_dir.join("cert.pem");
     let key_path = site_dir.join("key.pem");
+    let sans_path = site_dir.join("sans.txt");
 
     if cert_path.is_file() && key_path.is_file() {
-        return Ok(CertificateFiles {
-            cert_path,
-            key_path,
-        });
+        let stored = std::fs::read_to_string(&sans_path).unwrap_or_default();
+        let mut prev: Vec<String> = stored.lines().map(|l| l.to_owned()).collect();
+        prev.sort();
+        if prev == sans {
+            return Ok(CertificateFiles {
+                cert_path,
+                key_path,
+            });
+        }
     }
 
     let ca = load_ca(certs_dir)?.ok_or_else(|| {
@@ -162,7 +183,7 @@ pub fn ensure_site_cert(certs_dir: &Path, hostname: &str) -> Result<CertificateF
             .with_hint("install the local CA first; it signs every site certificate")
     })?;
 
-    let (cert_pem, key_pem) = issue_certificate(&ca, hostname)?;
+    let (cert_pem, key_pem) = issue_certificate(&ca, hostname, &sans)?;
     std::fs::create_dir_all(&site_dir).map_err(|err| {
         Error::new(
             ErrorCode::Io,
@@ -171,6 +192,7 @@ pub fn ensure_site_cert(certs_dir: &Path, hostname: &str) -> Result<CertificateF
     })?;
     devx_core::fsx::write_atomic(&cert_path, &cert_pem)?;
     devx_core::fsx::write_atomic(&key_path, &key_pem)?;
+    devx_core::fsx::write_atomic(&sans_path, sans.join("\n"))?;
 
     Ok(CertificateFiles {
         cert_path,
@@ -178,13 +200,21 @@ pub fn ensure_site_cert(certs_dir: &Path, hostname: &str) -> Result<CertificateF
     })
 }
 
+/// Removes a site's certificate directory. Idempotent.
+pub fn remove_site_cert(certs_dir: &Path, hostname: &str) {
+    let dir = certs_dir
+        .join("sites")
+        .join(hostname.to_ascii_lowercase());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 /// Signs a short-lived server certificate for `hostname` with the local CA.
-fn issue_certificate(ca: &LocalCa, hostname: &str) -> Result<(String, String)> {
+fn issue_certificate(ca: &LocalCa, hostname: &str, sans: &[String]) -> Result<(String, String)> {
     use rcgen::{CertificateParams, DnType, ExtendedKeyUsagePurpose, KeyPair, KeyUsagePurpose};
 
     let site_key = KeyPair::generate().map_err(pk_error("site key generation failed"))?;
 
-    let mut params = CertificateParams::new(vec![hostname.to_owned()])
+    let mut params = CertificateParams::new(sans.to_vec())
         .map_err(pk_error("certificate parameters are invalid"))?;
     params.distinguished_name.push(DnType::CommonName, hostname);
     params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
@@ -212,6 +242,21 @@ fn issue_certificate(ca: &LocalCa, hostname: &str) -> Result<(String, String)> {
 /// Maps rcgen's error type into a DevX error with a stable message shape.
 fn pk_error(context: &'static str) -> impl Fn(rcgen::Error) -> Error {
     move |err| Error::new(ErrorCode::Process, format!("{context}: {err}"))
+}
+
+/// Absolute certificate and key paths for `hostname`, forward slashes.
+///
+/// Points at where [`ensure_site_cert`] writes; does not create anything, so
+/// renderers can reference the pair for servers whose config format differs
+/// from nginx (Apache `SSLCertificateFile`, Caddy `tls`).
+pub fn site_cert_files(certs_dir: &Path, hostname: &str) -> (String, String) {
+    let dir = certs_dir
+        .join("sites")
+        .join(hostname.to_ascii_lowercase())
+        .display()
+        .to_string()
+        .replace('\\', "/");
+    (format!("{dir}/cert.pem"), format!("{dir}/key.pem"))
 }
 
 /// Renders the TLS additions to a site's nginx `server` block.
@@ -281,21 +326,44 @@ mod tests {
         let (_dir, certs) = temp_certs();
         ensure_ca(&certs).expect("ca");
 
-        let first = ensure_site_cert(&certs, "app.test").expect("issue");
+        let first = ensure_site_cert(&certs, "app.test", &[]).expect("issue");
         assert!(first.cert_path.is_file());
         assert!(first.key_path.is_file());
 
         let pem = std::fs::read_to_string(&first.cert_path).expect("read");
         assert!(pem.contains("BEGIN CERTIFICATE"), "{pem}");
 
-        let again = ensure_site_cert(&certs, "app.test").expect("reuse");
+        let again = ensure_site_cert(&certs, "app.test", &[]).expect("reuse");
         assert_eq!(first, again, "a second call must not reissue");
+    }
+
+    #[test]
+    fn adding_an_alias_reissues_with_new_sans() {
+        let (_dir, certs) = temp_certs();
+        ensure_ca(&certs).expect("ca");
+
+        ensure_site_cert(&certs, "app.test", &[]).expect("issue");
+        let before = std::fs::read_to_string(
+            certs.join("sites").join("app.test").join("cert.pem"),
+        )
+        .expect("read");
+        ensure_site_cert(&certs, "app.test", &["www.app.test".to_owned()]).expect("reissue");
+        let after = std::fs::read_to_string(
+            certs.join("sites").join("app.test").join("cert.pem"),
+        )
+        .expect("read");
+        assert_ne!(before, after, "new SAN set must reissue");
+        let sans = std::fs::read_to_string(
+            certs.join("sites").join("app.test").join("sans.txt"),
+        )
+        .expect("sans");
+        assert!(sans.contains("www.app.test"), "{sans}");
     }
 
     #[test]
     fn issuing_without_a_ca_is_a_clear_not_found() {
         let (_dir, certs) = temp_certs();
-        let err = ensure_site_cert(&certs, "app.test").expect_err("no CA");
+        let err = ensure_site_cert(&certs, "app.test", &[]).expect_err("no CA");
         assert_eq!(err.code, ErrorCode::NotFound);
     }
 
@@ -304,8 +372,8 @@ mod tests {
         let (_dir, certs) = temp_certs();
         ensure_ca(&certs).expect("ca");
 
-        assert!(ensure_site_cert(&certs, "*.evil").is_err());
-        assert!(ensure_site_cert(&certs, "").is_err());
+        assert!(ensure_site_cert(&certs, "*.evil", &[]).is_err());
+        assert!(ensure_site_cert(&certs, "", &[]).is_err());
     }
 
     #[test]

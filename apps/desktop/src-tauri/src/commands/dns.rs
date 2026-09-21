@@ -35,10 +35,13 @@ pub async fn dns_status(state: State<'_, AppState>) -> Result<DnsStatus, Error> 
     };
 
     let nrpt_active = if PipeClient::is_available() {
-        PipeClient::connect()
-            .ok()
-            .map(|_| true) // Presence of the helper is enough to manage rules.
-            .or(Some(false))
+        match PipeClient::connect() {
+            Ok(mut client) => match client.hello().await {
+                Ok(()) => Some(true),
+                Err(_) => Some(false),
+            },
+            Err(_) => Some(false),
+        }
     } else {
         None
     };

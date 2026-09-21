@@ -36,9 +36,10 @@ pub trait NrptBackend {
     /// Whether DevX's rule currently exists.
     fn has_rule(&self) -> Result<bool>;
 
-    /// Creates or replaces DevX's rule, pointing `.test` at `port` on
-    /// loopback.
-    fn set_rule(&self, port: u16) -> Result<()>;
+    /// Creates or replaces DevX's rule, pointing `namespace` at `port` on
+    /// loopback. `namespace` is the bare suffix (`test`); the leading dot
+    /// is added when writing the registry value.
+    fn set_rule(&self, namespace: &str, port: u16) -> Result<()>;
 
     /// Removes DevX's rule; `Ok(false)` when it was not there.
     fn remove_rule(&self) -> Result<bool>;
@@ -58,12 +59,12 @@ impl NrptBackend for WindowsNrptBackend {
         }
     }
 
-    fn set_rule(&self, port: u16) -> Result<()> {
+    fn set_rule(&self, namespace: &str, port: u16) -> Result<()> {
         #[cfg(windows)]
-        return imp::write_rule(port);
+        return imp::write_rule(namespace, port);
         #[cfg(not(windows))]
         {
-            let _ = port;
+            let _ = (namespace, port);
             Err(Error::privileged("NRPT rules require Windows"))
         }
     }
@@ -80,7 +81,7 @@ impl NrptBackend for WindowsNrptBackend {
 
 #[cfg(windows)]
 mod imp {
-    use super::{POLICY_KEY, RULE_GUID, RULE_NAMESPACE};
+    use super::{POLICY_KEY, RULE_GUID};
 
     use devx_core::{Error, Result};
     use winreg::enums::{HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE};
@@ -102,7 +103,7 @@ mod imp {
         Ok(policy.open_subkey_with_flags(RULE_GUID, KEY_READ).is_ok())
     }
 
-    pub fn write_rule(port: u16) -> Result<()> {
+    pub fn write_rule(namespace: &str, port: u16) -> Result<()> {
         let policy = open_policy_key(true)?;
         let rule = policy
             .create_subkey(RULE_GUID)
@@ -119,8 +120,10 @@ mod imp {
         rule.set_raw_value("Version", &version)
             .map_err(reg_error("Version"))?;
 
+        let bare = namespace.strip_prefix('.').unwrap_or(namespace);
+        let dotted = format!(".{bare}");
         let namespace = RegValue {
-            bytes: wide(RULE_NAMESPACE).into(),
+            bytes: wide(&dotted).into(),
             vtype: winreg::enums::RegType::REG_MULTI_SZ,
         };
         rule.set_raw_value("Namespace", &namespace)

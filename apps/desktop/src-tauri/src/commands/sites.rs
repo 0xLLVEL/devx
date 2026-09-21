@@ -28,6 +28,12 @@ pub struct SiteStatus {
     pub aliases: Vec<String>,
     /// Basic-auth user when the site is protected, `None` for public.
     pub auth: Option<devx_core::config::SiteAuth>,
+    /// HTTP port of the owning web server (80 for nginx by default,
+    /// 8085 for Apache, ...). The UI builds the open-URL from this.
+    pub port: u16,
+    /// HTTPS port of the owning web server (443 for nginx, 8443 for
+    /// Apache by default). The UI builds the https open-URL from this.
+    pub https_port: u16,
 }
 
 /// Lists the configured sites with their resolved PHP endpoints.
@@ -53,6 +59,8 @@ pub fn site_list(state: State<'_, AppState>) -> Result<Vec<SiteStatus>, Error> {
             web_server: site.web_server,
             env: site.env.clone(),
             aliases: site.aliases.clone(),
+            port: server_port_for(&state, site.web_server),
+            https_port: server_https_port_for(&state, site.web_server),
             // Never expose the password hash to the UI — the user name is
             // enough to show the protected state.
             auth: site.auth.as_ref().map(|a| devx_core::config::SiteAuth {
@@ -317,17 +325,87 @@ pub(crate) fn newest_installed_component(
 ///
 /// One sync per mutation keeps the include directory exactly equal to the
 /// configured set, which is what makes web server restarts deterministic.
+fn server_port(
+    state: &State<'_, AppState>,
+    component_id: &str,
+    fallback: u16,
+) -> u16 {
+    state.with_config(|store| server_port_inner(&state.services, store.config(), component_id, fallback))
+}
+
+/// Registry + config variant, for call sites holding `&AppState` instead of
+/// Tauri `State` (session restore).
+pub(crate) fn server_port_inner(
+    services: &devx_proc::ServiceRegistry,
+    config: &devx_core::config::Config,
+    component_id: &str,
+    fallback: u16,
+) -> u16 {
+    // ponytail: live registry first, then explicit override, then definition default.
+    if let Some(port) = services.port_of(component_id) {
+        return port;
+    }
+    if let Some(port) = config.service_ports.get(component_id).copied() {
+        return port;
+    }
+    devx_provision::default_port_for(component_id).unwrap_or(fallback)
+}
+
+pub(crate) fn server_port_for(state: &State<'_, AppState>, server: devx_core::config::WebServer) -> u16 {
+    match server {
+        devx_core::config::WebServer::Nginx => server_port(
+            state,
+            "nginx",
+            state.with_config(|store| store.config().network.http_port),
+        ),
+        devx_core::config::WebServer::Apache => server_port(state, "apache", 8085),
+        devx_core::config::WebServer::Caddy => server_port(state, "caddy", 8080),
+        devx_core::config::WebServer::FrankenPhp => server_port(state, "frankenphp", 8082),
+    }
+}
+
+/// The HTTPS port owning `server`'s sites. nginx owns 443; Apache terminates
+/// TLS on its own port (8443 by default) so the two can run side by side.
+pub(crate) fn server_https_port_for(
+    state: &State<'_, AppState>,
+    server: devx_core::config::WebServer,
+) -> u16 {
+    match server {
+        devx_core::config::WebServer::Nginx => {
+            state.with_config(|store| store.config().network.https_port)
+        }
+        devx_core::config::WebServer::Apache => state.with_config(|store| {
+            devx_provision::apache_https_port(&store.config().service_ports)
+        }),
+        devx_core::config::WebServer::Caddy | devx_core::config::WebServer::FrankenPhp => {
+            state.with_config(|store| store.config().network.https_port)
+        }
+    }
+}
+
 pub(crate) fn sync_site_blocks(state: &State<'_, AppState>) -> Result<(), Error> {
-    let sites = state.with_config(|store| store.config().sites.clone());
-    let (http_port, https_port) = state.with_config(|store| {
-        let config = store.config();
-        let http = config
-            .service_ports
-            .get("nginx")
-            .copied()
-            .unwrap_or(config.network.http_port);
-        (http, config.network.https_port)
-    });
+    let config = state.with_config(|store| store.config().clone());
+    sync_site_blocks_inner(&state.paths, &state.services, &config)
+}
+
+/// Paths + registry + config variant, for call sites holding `&AppState`
+/// (session restore, service start self-heal).
+pub(crate) fn sync_site_blocks_inner(
+    paths: &AppPaths,
+    services: &devx_proc::ServiceRegistry,
+    config: &devx_core::config::Config,
+) -> Result<(), Error> {
+    let sites = config.sites.clone();
+    let http = config
+        .service_ports
+        .get("nginx")
+        .copied()
+        .unwrap_or(config.network.http_port);
+    let (http_port, https_port) = (http, config.network.https_port);
+    let apache_port = server_port_inner(services, config, "apache", 8085);
+    let caddy_port = server_port_inner(services, config, "caddy", 8080);
+    let frankenphp_port = server_port_inner(services, config, "frankenphp", 8082);
+    let apache_https_port = devx_provision::apache_https_port(&config.service_ports);
 
     let sync_sites: Vec<devx_provision::SyncSite> = sites
         .into_iter()
@@ -347,13 +425,17 @@ pub(crate) fn sync_site_blocks(state: &State<'_, AppState>) -> Result<(), Error>
         .collect();
 
     let ctx = devx_provision::SyncContext {
-        service_config_dir: &state.paths.service_config_dir(),
-        certs_dir: &state.paths.certs_dir(),
+        service_config_dir: &paths.service_config_dir(),
+        certs_dir: &paths.certs_dir(),
         http_port,
         https_port,
+        apache_port,
+        caddy_port,
+        frankenphp_port,
+        apache_https_port,
     };
 
-    let sites_dir = state.paths.service_config_dir().join("nginx").join("sites");
+    let sites_dir = paths.service_config_dir().join("nginx").join("sites");
     devx_provision::sync_site_blocks(&sites_dir, &sync_sites, ctx)?;
 
     Ok(())
@@ -392,17 +474,9 @@ pub async fn site_ping(state: State<'_, AppState>, hostname: String) -> Result<S
         .ok_or_else(|| Error::not_found(format!("site `{hostname}` is not configured")))?;
 
     let port = if site.https {
-        state.with_config(|store| store.config().network.https_port)
+        server_https_port_for(&state, site.web_server)
     } else {
-        state
-            .services
-            .port_of("nginx")
-            .or_else(|| {
-                devx_provision::definition_for("nginx")
-                    .ok()
-                    .and_then(|def| def.default_port)
-            })
-            .unwrap_or(80)
+        server_port_for(&state, site.web_server)
     };
 
     let started = std::time::Instant::now();
