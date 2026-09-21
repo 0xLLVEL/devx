@@ -62,7 +62,7 @@ describe("HostsManager", () => {
     mocks.hostsAdd.mockResolvedValue([]);
     mocks.hostsRemove.mockResolvedValue([]);
     mocks.hostsFlushDns.mockResolvedValue(null);
-    mocks.hostsResync.mockResolvedValue([]);
+    mocks.hostsResync.mockResolvedValue({ entries: [], skipped: [] });
   });
 
   it("reads the entries only once the dialog is open", async () => {
@@ -286,7 +286,7 @@ describe("HostsManager", () => {
     const stale = { hostname: "mtdb.test", ip: "127.0.0.1" };
     const fixed = { hostname: "mtdb.test", ip: "127.0.0.2" };
     mocks.hostsList.mockResolvedValue([stale]);
-    mocks.hostsResync.mockResolvedValue([fixed]);
+    mocks.hostsResync.mockResolvedValue({ entries: [fixed], skipped: [] });
     const user = await openManager();
 
     await row("mtdb.test");
@@ -295,6 +295,25 @@ describe("HostsManager", () => {
     await waitFor(() => expect(mocks.hostsResync).toHaveBeenCalledTimes(1));
     expect(await screen.findByText("Hosts entries re-synced with your sites")).toBeInTheDocument();
     expect(await row("mtdb.test")).toBeInTheDocument();
+  });
+
+  it("names the entries a foreign hosts line blocks, with what to do", async () => {
+    mocks.hostsList.mockResolvedValue([]);
+    mocks.hostsResync.mockResolvedValue({
+      entries: [],
+      skipped: [
+        {
+          hostname: "mtdb.test",
+          reason: "`mtdb.test` is already mapped by a line outside DevX's control",
+        },
+      ],
+    });
+    const user = await openManager();
+
+    await user.click(screen.getByRole("button", { name: "Re-sync with sites" }));
+
+    expect(await screen.findByText("Some site names need your hands.")).toBeInTheDocument();
+    expect(await screen.findByText("mtdb.test")).toBeInTheDocument();
   });
 
   it("reports a refused flush instead of a silent success", async () => {

@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tooltip } from "@/components/ui/tooltip";
 import { useToast } from "@/components/ui/toast";
-import { IpcError, ipc, type HostsEntry } from "@/lib/ipc";
+import { IpcError, ipc, type HostsEntry, type HostsSkipped } from "@/lib/ipc";
 
 /** The marked entries, read when the dialog opens and rewritten by every
  * mutation — all four commands return the list they produced, so the table
@@ -59,6 +59,9 @@ function HostsManager({ open, onClose }: { open: boolean; onClose: () => void })
   const [draft, setDraft] = useState<Draft | null>(null);
   /** The row awaiting confirmation. Nothing is removed while this is null. */
   const [removing, setRemoving] = useState<HostsEntry | null>(null);
+  /** Site names the last re-sync could not write, with reasons. Cleared by
+   * the next re-sync; entries are never removed from under this list. */
+  const [skipped, setSkipped] = useState<HostsSkipped[]>([]);
 
   // Read on open, never polled: `hosts_list` does not elevate, but it is still
   // a helper round trip, and the file only changes when this dialog changes it.
@@ -132,11 +135,18 @@ function HostsManager({ open, onClose }: { open: boolean; onClose: () => void })
   const resync = useMutation({
     mutationFn: ipc.hostsResync,
     onSuccess: (result) => {
-      queryClient.setQueryData(HOSTS_KEY, result);
-      toast.success("Hosts entries re-synced with your sites", {
-        description:
-          "Every site hostname and alias now points at its owning server. Hand-added lines were left alone.",
-      });
+      queryClient.setQueryData<HostsEntry[]>(HOSTS_KEY, result.entries);
+      setSkipped(result.skipped);
+      if (result.skipped.length === 0) {
+        toast.success("Hosts entries re-synced with your sites", {
+          description:
+            "Every site hostname and alias now points at its owning server. Hand-added lines were left alone.",
+        });
+      } else {
+        toast.warning("Some names could not be written", {
+          description: `${result.skipped.length} site name${result.skipped.length === 1 ? "" : "s"} still need${result.skipped.length === 1 ? "s" : ""} attention — see the list.`,
+        });
+      }
     },
     onError: (error) => {
       toast.error("Hosts entries were not re-synced", {
@@ -235,6 +245,30 @@ function HostsManager({ open, onClose }: { open: boolean; onClose: () => void })
                 changes nothing.
               </p>
             </Callout>
+
+            {skipped.length > 0 ? (
+              <Callout
+                variant="destructive"
+                title="Some site names need your hands."
+              >
+                <p>
+                  DevX will not overwrite lines it did not write. Remove the
+                  hand-written line for each name below (open the hosts file
+                  as administrator), then Re-sync with sites.
+                </p>
+                <ul className="mt-1 list-disc space-y-0.5 pl-5">
+                  {skipped.map((s) => (
+                    <li key={s.hostname}>
+                      <span className="data-value" data-selectable>
+                        {s.hostname}
+                      </span>
+                      {" — "}
+                      {s.reason}
+                    </li>
+                  ))}
+                </ul>
+              </Callout>
+            ) : null}
 
             {/* §38: the empty state says what it means — DevX manages nothing
                 — rather than describing the hosts file as empty, which would

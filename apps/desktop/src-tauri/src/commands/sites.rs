@@ -476,56 +476,86 @@ pub(crate) fn sync_site_blocks_inner(
 /// Blocks alone are not enough: after an update changes binds or certs, the
 /// hosts file may still point at the previous address (bare URL refused
 /// while `:port` works). Best-effort throughout; failures only warn.
-pub(crate) async fn resync_resolution(state: &AppState) {
+/// One site name the hosts re-sync could not write, with the reason.
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
+pub struct HostsSkipped {
+    /// Host name that was not written.
+    pub hostname: String,
+    /// Why, e.g. a conflicting hand-written line owns the name.
+    pub reason: String,
+}
+
+pub(crate) async fn resync_resolution(state: &AppState) -> Vec<HostsSkipped> {
     let config = state.with_config(|store| store.config().clone());
 
     if let Err(err) = sync_site_blocks_inner(&state.paths, &state.services, &config) {
         tracing::warn!(error = %err, "site block re-sync failed");
     }
 
-    if config.network.dns_mode != devx_core::DnsMode::Resolver {
-        if let Err(err) = crate::helper::ensure_helper_running().await {
-            tracing::warn!(error = %err, "helper not running: hosts entries not re-synced");
-        } else if !devx_privileged::PipeClient::is_available() {
-            tracing::warn!("helper pipe unavailable: hosts entries not re-synced");
-        } else if let Ok(mut client) = devx_privileged::PipeClient::connect() {
-            if client.hello().await.is_ok() {
-                for site in &config.sites {
-                    let ip =
-                        devx_provision::server_ip_for_component(site.web_server.component_id())
-                            .to_string();
-                    if let Err(err) = client
-                        .add_hosts_entry(devx_ipc::HostsEntry {
-                            hostname: site.hostname.clone(),
-                            ip: ip.clone(),
-                        })
-                        .await
-                    {
-                        tracing::warn!(error = %err, host = %site.hostname, "hosts entry not written");
-                    }
-                    for alias in &site.aliases {
-                        if let Err(err) = client
-                            .add_hosts_entry(devx_ipc::HostsEntry {
-                                hostname: alias.clone(),
-                                ip: ip.clone(),
-                            })
-                            .await
-                        {
-                            tracing::warn!(error = %err, host = %alias, "hosts entry not written");
-                        }
-                    }
-                }
-                let _ = client.flush_dns().await;
-            } else {
-                tracing::warn!("helper handshake failed: hosts entries not re-synced");
-            }
-        }
+    let skipped = resync_hosts_entries(state).await;
+    for skip in &skipped {
+        tracing::warn!(host = %skip.hostname, reason = %skip.reason, "hosts entry not written");
     }
 
     let fresh = crate::commands::dns::site_ip_map(&config);
     if let Ok(mut map) = state.dns_map.write() {
         *map = fresh;
     }
+    skipped
+}
+
+/// Rewrites every site hostname and alias with its owner's loopback and
+/// flushes the resolver cache.
+///
+/// Returns one entry per name that could not be written — most importantly
+/// names owned by a hand-written (foreign) hosts line, which the helper
+/// refuses to shadow. Callers surface these instead of failing silently.
+pub(crate) async fn resync_hosts_entries(state: &AppState) -> Vec<HostsSkipped> {
+    let mut skipped = Vec::new();
+    let config = state.with_config(|store| store.config().clone());
+
+    if config.network.dns_mode == devx_core::DnsMode::Resolver {
+        return skipped;
+    }
+    if let Err(err) = crate::helper::ensure_helper_running().await {
+        tracing::warn!(error = %err, "helper not running: hosts entries not re-synced");
+        return skipped;
+    }
+    if !devx_privileged::PipeClient::is_available() {
+        tracing::warn!("helper pipe unavailable: hosts entries not re-synced");
+        return skipped;
+    }
+    let Ok(mut client) = devx_privileged::PipeClient::connect() else {
+        tracing::warn!("helper connect failed: hosts entries not re-synced");
+        return skipped;
+    };
+    if client.hello().await.is_err() {
+        tracing::warn!("helper handshake failed: hosts entries not re-synced");
+        return skipped;
+    }
+
+    for site in &config.sites {
+        let ip =
+            devx_provision::server_ip_for_component(site.web_server.component_id()).to_string();
+        let mut names = vec![site.hostname.clone()];
+        names.extend(site.aliases.iter().cloned());
+        for name in names {
+            if let Err(err) = client
+                .add_hosts_entry(devx_ipc::HostsEntry {
+                    hostname: name.clone(),
+                    ip: ip.clone(),
+                })
+                .await
+            {
+                skipped.push(HostsSkipped {
+                    hostname: name,
+                    reason: err.message.clone(),
+                });
+            }
+        }
+    }
+    let _ = client.flush_dns().await;
+    skipped
 }
 
 /// Result of one site health check, as the UI shows it.

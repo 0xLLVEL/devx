@@ -635,9 +635,8 @@ export const commands = {
 	 *  The one-click repair for entries left stale by older DevX (a name pointing
 	 *  at a previous address while its server moved on): entries for names no
 	 *  site owns are left alone, so hand-added custom lines are never touched.
-	 *  Returns the list as it stands after the change.
 	 */
-	hostsResync: () => typedError<HostsEntry[], DevxError>(__TAURI_INVOKE("hosts_resync")),
+	hostsResync: () => typedError<HostsResyncResult, DevxError>(__TAURI_INVOKE("hosts_resync")),
 };
 
 /** Events */
@@ -1229,6 +1228,38 @@ export type HostsEntry = {
 	hostname: string,
 	/**  IP address the host name resolves to, e.g. `127.0.0.1`. */
 	ip: string,
+};
+
+/**
+ *  What a hosts re-sync produced: the fresh list plus the names it could
+ *  not write.
+ */
+export type HostsResyncResult = {
+	/**  Managed entries as they stand after the change. */
+	entries: HostsEntry[],
+	/**
+	 *  Site names that were skipped, with reasons. A name owned by a
+	 *  hand-written (foreign) hosts line is refused rather than shadowed —
+	 *  remove that line by hand, then re-sync.
+	 */
+	skipped: HostsSkipped[],
+};
+
+/**
+ *  Re-syncs everything name resolution needs after a (re)start: server
+ *  blocks, hosts-file entries, resolver cache flush, and the bundled
+ *  resolver's hostname map.
+ * 
+ *  Blocks alone are not enough: after an update changes binds or certs, the
+ *  hosts file may still point at the previous address (bare URL refused
+ *  while `:port` works). Best-effort throughout; failures only warn.
+ *  One site name the hosts re-sync could not write, with the reason.
+ */
+export type HostsSkipped = {
+	/**  Host name that was not written. */
+	hostname: string,
+	/**  Why, e.g. a conflicting hand-written line owns the name. */
+	reason: string,
 };
 
 /**

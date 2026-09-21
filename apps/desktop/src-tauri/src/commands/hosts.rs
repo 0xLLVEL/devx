@@ -106,22 +106,36 @@ pub async fn hosts_flush_dns() -> Result<(), Error> {
     Ok(())
 }
 
+/// What a hosts re-sync produced: the fresh list plus the names it could
+/// not write.
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
+pub struct HostsResyncResult {
+    /// Managed entries as they stand after the change.
+    pub entries: Vec<HostsEntry>,
+    /// Site names that were skipped, with reasons. A name owned by a
+    /// hand-written (foreign) hosts line is refused rather than shadowed —
+    /// remove that line by hand, then re-sync.
+    pub skipped: Vec<super::sites::HostsSkipped>,
+}
+
 /// Rewrites every site hostname and alias with its owning server's loopback.
 ///
 /// The one-click repair for entries left stale by older DevX (a name pointing
 /// at a previous address while its server moved on): entries for names no
 /// site owns are left alone, so hand-added custom lines are never touched.
-/// Returns the list as it stands after the change.
 #[tauri::command]
 #[specta::specta]
-pub async fn hosts_resync(state: tauri::State<'_, crate::state::AppState>) -> Result<Vec<HostsEntry>, Error> {
-    crate::commands::sites::resync_resolution(&state).await;
+pub async fn hosts_resync(
+    state: tauri::State<'_, crate::state::AppState>,
+) -> Result<HostsResyncResult, Error> {
+    let skipped = crate::commands::sites::resync_resolution(&state).await;
 
     if !PipeClient::is_available() {
         return Err(helper_unavailable());
     }
     let mut client = PipeClient::connect()?;
-    client.list_hosts_entries().await
+    let entries = client.list_hosts_entries().await?;
+    Ok(HostsResyncResult { entries, skipped })
 }
 
 /// Connects to the helper, prompting for elevation when it is not running.

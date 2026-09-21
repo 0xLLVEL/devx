@@ -39,6 +39,8 @@ export type {
   EventEntry,
   General,
   HostsEntry,
+  HostsResyncResult,
+  HostsSkipped,
   InstalledVersion,
   InstallPhase,
   InstallProgress,
