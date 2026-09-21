@@ -51,6 +51,7 @@ function site(overrides: Partial<Record<string, unknown>> = {}) {
     auth: null,
     port: 80,
     https_port: 443,
+    url: "http://myapp.test",
     ...overrides,
   };
 }
@@ -114,7 +115,7 @@ describe("SitesPage", () => {
   it("shows each site's URL with the scheme it is served on (§23)", async () => {
     mocks.siteList.mockResolvedValue([
       site(),
-      site({ hostname: "secure.test", https: true, php_version: "", php_endpoint: null }),
+      site({ hostname: "secure.test", https: true, php_version: "", php_endpoint: null, url: "https://secure.test" }),
     ]);
 
     renderWithProviders(<SitesPage />);
@@ -403,7 +404,7 @@ describe("SitesPage", () => {
 
   it("opens a site in the browser and its folder from the row actions (§91)", async () => {
     const user = userEvent.setup();
-    mocks.siteList.mockResolvedValue([site({ https: true })]);
+    mocks.siteList.mockResolvedValue([site({ https: true, url: "https://myapp.test" })]);
 
     renderWithProviders(<SitesPage />);
 
@@ -416,10 +417,10 @@ describe("SitesPage", () => {
     expect(mocks.openFolder).toHaveBeenCalledWith("C:\\dev\\myapp\\public");
   });
 
-  it("opens an Apache site on the bare URL through the front door", async () => {
+  it("opens whatever URL the backend resolved (bare on owner loopback)", async () => {
     const user = userEvent.setup();
     mocks.siteList.mockResolvedValue([
-      site({ hostname: "mtdb.test", web_server: "Apache", port: 8085 }),
+      site({ hostname: "mtdb.test", web_server: "Apache", port: 8085, url: "http://mtdb.test" }),
     ]);
 
     renderWithProviders(<SitesPage />);
@@ -429,17 +430,17 @@ describe("SitesPage", () => {
     expect(mocks.openInBrowser).toHaveBeenCalledWith("http://mtdb.test");
   });
 
-  it("opens an Apache HTTPS site on the bare URL through the front door", async () => {
+  it("opens the direct :port URL when the backend says so (custom port)", async () => {
     const user = userEvent.setup();
     mocks.siteList.mockResolvedValue([
-      site({ hostname: "mtdb.test", web_server: "Apache", https: true, https_port: 8443 }),
+      site({ hostname: "mtdb.test", web_server: "Apache", port: 8085, url: "http://mtdb.test:8085" }),
     ]);
 
     renderWithProviders(<SitesPage />);
 
     await screen.findByText("mtdb.test");
     await user.click(screen.getByRole("button", { name: /open mtdb\.test in browser/i }));
-    expect(mocks.openInBrowser).toHaveBeenCalledWith("https://mtdb.test");
+    expect(mocks.openInBrowser).toHaveBeenCalledWith("http://mtdb.test:8085");
   });
 
   it("opens the row's own actions by right-clicking it (§47)", async () => {

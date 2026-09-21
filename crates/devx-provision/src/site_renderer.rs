@@ -1,7 +1,6 @@
 //! Deep module: SiteRenderer — one seam for all site rendering.
-//! Small interface: `render(site, ctx) -> Vec<RenderedFile>`. Deep impl hides
-//! per-server branching + certs. Non-nginx sites render two files: the direct
-//! block on their own port plus an nginx front-door proxy for clean URLs.
+//! Small interface: `render(site, ctx) -> RenderedFile`. Deep impl hides
+//! per-server branching + certs.
 
 use std::path::PathBuf;
 
@@ -41,15 +40,14 @@ impl CertProvider for ProdCerts<'_> {
 /// Deep module — small interface, deep impl.
 /// `match web_server` hidden here (Q4 B: one fn, not 4 adapters yet).
 ///
-/// Returns every file the site needs. nginx sites need one (the server
-/// block); every other server needs two: its direct block on its own port
-/// plus an `nginx/sites/<host>.conf` front-door proxy so the bare
-/// `http(s)://host` URL works without a port suffix.
+/// One site renders exactly one file on its own loopback IP
+/// (`WebServerKind::loopback_ip`), so every server owns 80/443 and site
+/// URLs stay bare with no proxy in between.
 pub fn render(
     site: &SyncSite,
     ctx: &SyncContext,
     certs: &dyn CertProvider,
-) -> Result<Vec<RenderedFile>, devx_core::Error> {
+) -> Result<RenderedFile, devx_core::Error> {
     if site.https {
         certs.ensure(&site.hostname, &site.aliases)?;
     }
@@ -72,6 +70,7 @@ pub fn render(
         Some(crate::pki::tls_listen_snippet(
             &site.hostname,
             ctx.https_port,
+            site.web_server.loopback_ip(),
             ctx.certs_dir,
         ))
     } else {
@@ -94,7 +93,8 @@ pub fn render(
     } else {
         None
     };
-    let (direct_path, direct_content) = match site.web_server {
+    let bind_ip = site.web_server.loopback_ip();
+    let (path, content) = match site.web_server {
         WebServerKind::Nginx => (
             PathBuf::from(format!("nginx/sites/{}.conf", site.hostname)),
             crate::sites::render_server_block_with_port(
@@ -102,6 +102,7 @@ pub fn render(
                 endpoint.as_deref(),
                 tls.as_deref(),
                 ctx.http_port,
+                bind_ip,
             ),
         ),
         WebServerKind::Apache => (
@@ -110,36 +111,25 @@ pub fn render(
                 &spec,
                 endpoint.as_deref(),
                 ctx.port_for(site.web_server),
+                bind_ip,
                 apache_tls.as_ref(),
             ),
         ),
         WebServerKind::Caddy => (
             PathBuf::from(format!("caddy/sites/{}.conf", site.hostname)),
-            crate::sites::render_caddy_site(&spec, endpoint.as_deref(), caddy_tls.as_deref()),
+            crate::sites::render_caddy_site(
+                &spec,
+                endpoint.as_deref(),
+                caddy_tls.as_deref(),
+                bind_ip,
+            ),
         ),
         WebServerKind::FrankenPhp => (
             PathBuf::from(format!("frankenphp/sites/{}.conf", site.hostname)),
-            crate::sites::render_frankenphp_site(&spec, caddy_tls.as_deref()),
+            crate::sites::render_frankenphp_site(&spec, caddy_tls.as_deref(), bind_ip),
         ),
     };
-    let mut files = vec![RenderedFile {
-        path: direct_path,
-        content: direct_content,
-    }];
-    // Front door: every non-nginx site also gets an nginx proxy so the bare
-    // URL works. The backend port is the server's own HTTP port.
-    if !matches!(site.web_server, WebServerKind::Nginx) {
-        files.push(RenderedFile {
-            path: PathBuf::from(format!("nginx/sites/{}.conf", site.hostname)),
-            content: crate::sites::render_proxy_block(
-                &spec,
-                ctx.port_for(site.web_server),
-                tls.as_deref(),
-                ctx.http_port,
-            ),
-        });
-    }
-    Ok(files)
+    Ok(RenderedFile { path, content })
 }
 
 #[cfg(test)]
@@ -192,47 +182,40 @@ mod tests {
     fn apache_https_renders_tls_vhost_with_cert_paths() {
         let (_dir, svc, certs) = ctx();
         let ctx = sync_ctx(&svc, &certs);
-        let files = render(&site("mtdb.test", WebServerKind::Apache), &ctx, &NoopCerts)
+        let rendered = render(&site("mtdb.test", WebServerKind::Apache), &ctx, &NoopCerts)
             .expect("render");
-        assert_eq!(files.len(), 2);
-        let direct = &files[0];
-        assert_eq!(direct.path, PathBuf::from("apache/sites/mtdb.test.conf"));
-        assert!(direct.content.contains("<VirtualHost *:8085>"), "{}", direct.content);
-        assert!(direct.content.contains("<VirtualHost *:8443>"), "{}", direct.content);
-        assert!(direct.content.contains("SSLEngine on"), "{}", direct.content);
+        assert_eq!(rendered.path, PathBuf::from("apache/sites/mtdb.test.conf"));
+        assert!(rendered.content.contains("<VirtualHost 127.0.0.2:8085>"), "{}", rendered.content);
+        assert!(rendered.content.contains("<VirtualHost 127.0.0.2:8443>"), "{}", rendered.content);
+        assert!(rendered.content.contains("SSLEngine on"), "{}", rendered.content);
         assert!(
-            direct.content.contains("sites/mtdb.test/cert.pem"),
+            rendered.content.contains("sites/mtdb.test/cert.pem"),
             "{}",
-            direct.content
+            rendered.content
         );
-        let proxy = &files[1];
-        assert_eq!(proxy.path, PathBuf::from("nginx/sites/mtdb.test.conf"));
-        assert!(proxy.content.contains("proxy_pass         http://127.0.0.1:8085;"), "{}", proxy.content);
-        assert!(proxy.content.contains("listen       443 ssl;"), "{}", proxy.content);
     }
 
     #[test]
-    fn nginx_sites_render_no_proxy() {
+    fn nginx_sites_bind_their_own_loopback() {
         let (_dir, svc, certs) = ctx();
         let ctx = sync_ctx(&svc, &certs);
-        let files = render(&site("app.test", WebServerKind::Nginx), &ctx, &NoopCerts)
+        let rendered = render(&site("app.test", WebServerKind::Nginx), &ctx, &NoopCerts)
             .expect("render");
-        assert_eq!(files.len(), 1);
-        assert_eq!(files[0].path, PathBuf::from("nginx/sites/app.test.conf"));
+        assert_eq!(rendered.path, PathBuf::from("nginx/sites/app.test.conf"));
+        assert!(rendered.content.contains("listen       127.0.0.1:80;"), "{}", rendered.content);
     }
 
     #[test]
     fn caddy_https_uses_tls_directive_not_nginx_syntax() {
         let (_dir, svc, certs) = ctx();
         let ctx = sync_ctx(&svc, &certs);
-        let files = render(&site("app.test", WebServerKind::Caddy), &ctx, &NoopCerts)
+        let rendered = render(&site("app.test", WebServerKind::Caddy), &ctx, &NoopCerts)
             .expect("render");
-        assert_eq!(files.len(), 2);
-        let direct = &files[0];
-        assert!(direct.content.contains("tls "), "{}", direct.content);
-        assert!(direct.content.contains("cert.pem"), "{}", direct.content);
-        assert!(!direct.content.contains("ssl_certificate"), "{}", direct.content);
-        assert!(!direct.content.contains("listen"), "{}", direct.content);
-        assert_eq!(files[1].path, PathBuf::from("nginx/sites/app.test.conf"));
+        assert_eq!(rendered.path, PathBuf::from("caddy/sites/app.test.conf"));
+        assert!(rendered.content.contains("tls "), "{}", rendered.content);
+        assert!(rendered.content.contains("cert.pem"), "{}", rendered.content);
+        assert!(rendered.content.contains("bind 127.0.0.3"), "{}", rendered.content);
+        assert!(!rendered.content.contains("ssl_certificate"), "{}", rendered.content);
+        assert!(!rendered.content.contains("listen"), "{}", rendered.content);
     }
 }

@@ -61,9 +61,9 @@ pub use service_defs::{
 };
 pub use sites::{
     pool_endpoint_for, prune_stale_blocks, remove_site_block, render_apache_site,
-    render_proxy_block, render_server_block, render_server_block_with_port, sync_site_blocks,
+    render_server_block, render_server_block_with_port, server_ip_for_component, sync_site_blocks,
     validate_spec, write_fastcgi_params, write_site_block, write_site_block_with_port, ApacheTls,
-    SiteSpec, SiteSyncReport, SyncContext, SyncSite,
+    SiteSpec, SiteSyncReport, SyncContext, SyncSite, WebServerKind,
 };
 pub use version::{Artifact, Checksum, ComponentVersion, ReleaseChannel};
 pub use worker::{is_worker_id, plan_worker, plan_worker_instances, worker_id, WorkerPlan};

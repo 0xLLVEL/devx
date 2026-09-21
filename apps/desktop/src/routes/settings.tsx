@@ -491,8 +491,8 @@ export function SettingsPage() {
           <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {[
               { id: "nginx", label: "Nginx HTTP port", fallback: draft.network.http_port },
-              { id: "apache", label: "Apache port", fallback: 8085 },
-              { id: "apache-https", label: "Apache HTTPS port", fallback: 8443 },
+              { id: "apache", label: "Apache port", fallback: 80 },
+              { id: "apache-https", label: "Apache HTTPS port", fallback: 443 },
               { id: "mariadb", label: "MariaDB / MySQL port", fallback: 3306 },
               { id: "postgresql", label: "PostgreSQL port", fallback: 5432 },
               { id: "redis", label: "Redis port", fallback: 6379 },
@@ -501,7 +501,7 @@ export function SettingsPage() {
               { id: "mongodb", label: "MongoDB port", fallback: 27017 },
               { id: "nats-server", label: "NATS port", fallback: 4222 },
               { id: "etcd", label: "etcd client port", fallback: 2379 },
-              { id: "caddy", label: "Caddy port", fallback: 2019 },
+              { id: "caddy", label: "Caddy port", fallback: 80 },
               { id: "traefik", label: "Traefik port", fallback: 80 },
             ].map((svc) => {
               const currentVal = draft.service_ports?.[svc.id] ?? "";

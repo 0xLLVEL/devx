@@ -95,7 +95,7 @@ describe("SettingsPage", () => {
     );
   });
 
-  it("saves the Apache HTTPS port override for clean-URL takeover", async () => {
+  it("saves the Apache HTTPS port override", async () => {
     const user = userEvent.setup();
     mocks.configSet.mockResolvedValue(configFixture());
 

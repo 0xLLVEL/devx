@@ -465,9 +465,9 @@ const WEB_SERVER_ID: Record<string, SiteStatus["web_server"]> = {
 /** Default ports for supervisable components when no override is configured. */
 export const DEFAULT_SERVICE_PORTS: Record<string, number> = {
   nginx: 80,
-  apache: 8085,
-  caddy: 8080,
-  frankenphp: 8080,
+  apache: 80,
+  caddy: 80,
+  frankenphp: 80,
   mariadb: 3306,
   postgresql: 5432,
   redis: 6379,

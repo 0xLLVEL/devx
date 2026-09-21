@@ -28,12 +28,35 @@ pub struct SiteStatus {
     pub aliases: Vec<String>,
     /// Basic-auth user when the site is protected, `None` for public.
     pub auth: Option<devx_core::config::SiteAuth>,
-    /// HTTP port of the owning web server (80 for nginx by default,
-    /// 8085 for Apache, ...). The UI builds the open-URL from this.
+    /// HTTP port of the owning web server (80 on its own loopback by
+    /// default).
     pub port: u16,
-    /// HTTPS port of the owning web server (443 for nginx, 8443 for
-    /// Apache by default). The UI builds the https open-URL from this.
+    /// HTTPS port of the owning web server (443 on its own loopback by
+    /// default).
     pub https_port: u16,
+    /// Public URL of the site: bare when the owner binds 80/443 on its own
+    /// loopback, otherwise the direct `:port` URL.
+    pub url: String,
+}
+
+/// Resolves the public URL of one site.
+///
+/// Each server owns 80/443 on its own loopback address, so the URL is bare
+/// whenever the owner binds the standard ports — no front door involved.
+/// A custom port override shows as `:port`, which still answers while the
+/// owner runs.
+fn resolve_site_url(hostname: &str, https: bool, http_port: u16, https_port: u16) -> String {
+    if https {
+        if https_port == 443 {
+            format!("https://{hostname}")
+        } else {
+            format!("https://{hostname}:{https_port}")
+        }
+    } else if http_port == 80 {
+        format!("http://{hostname}")
+    } else {
+        format!("http://{hostname}:{http_port}")
+    }
 }
 
 /// Lists the configured sites with their resolved PHP endpoints.
@@ -50,7 +73,10 @@ pub fn site_list(state: State<'_, AppState>) -> Result<Vec<SiteStatus>, Error> {
             }
             None => None,
         };
+        let port = server_port_for(&state, site.web_server);
+        let https_port = server_https_port_for(&state, site.web_server);
         statuses.push(SiteStatus {
+            url: resolve_site_url(&site.hostname, site.https, port, https_port),
             hostname: site.hostname.clone(),
             docroot: site.docroot.clone(),
             php_version: site.php_version.clone(),
@@ -59,8 +85,8 @@ pub fn site_list(state: State<'_, AppState>) -> Result<Vec<SiteStatus>, Error> {
             web_server: site.web_server,
             env: site.env.clone(),
             aliases: site.aliases.clone(),
-            port: server_port_for(&state, site.web_server),
-            https_port: server_https_port_for(&state, site.web_server),
+            port,
+            https_port,
             // Never expose the password hash to the UI — the user name is
             // enough to show the protected state.
             auth: site.auth.as_ref().map(|a| devx_core::config::SiteAuth {
@@ -85,14 +111,17 @@ pub fn site_list(state: State<'_, AppState>) -> Result<Vec<SiteStatus>, Error> {
 /// NRPT takes over. Best-effort: an unreachable helper is reported but
 /// never blocks the settings save.
 pub(crate) async fn reconcile_hosts_entries(state: &State<'_, AppState>, mode: devx_core::DnsMode) {
-    let names: Vec<String> = state.with_config(|store| {
+    let entries: Vec<(String, String)> = state.with_config(|store| {
         store
             .config()
             .sites
             .iter()
             .flat_map(|site| {
-                let mut names = vec![site.hostname.clone()];
-                names.extend(site.aliases.clone());
+                let ip =
+                    devx_provision::server_ip_for_component(site.web_server.component_id())
+                        .to_string();
+                let mut names = vec![(site.hostname.clone(), ip.clone())];
+                names.extend(site.aliases.iter().map(|a| (a.clone(), ip.clone())));
                 names
             })
             .collect()
@@ -101,7 +130,7 @@ pub(crate) async fn reconcile_hosts_entries(state: &State<'_, AppState>, mode: d
     let result = if mode == devx_core::DnsMode::Resolver {
         clear_hosts_entries().await
     } else {
-        sync_hosts_entries(state, &names, true).await
+        sync_hosts_entries(state, &entries, true).await
     };
 
     if let Err(err) = result {
@@ -127,13 +156,13 @@ async fn clear_hosts_entries() -> Result<(), Error> {
 
 async fn sync_hosts_entries(
     state: &State<'_, AppState>,
-    names: &[String],
+    entries: &[(String, String)],
     add: bool,
 ) -> Result<(), Error> {
     let mode = state.with_config(|store| store.config().network.dns_mode);
     // Hosts-file (and automatic, which is hosts-first) mode routes sites
     // through the hosts file; resolver mode covers everything via NRPT.
-    if mode == devx_core::DnsMode::Resolver || names.is_empty() {
+    if mode == devx_core::DnsMode::Resolver || entries.is_empty() {
         return Ok(());
     }
 
@@ -150,16 +179,16 @@ async fn sync_hosts_entries(
 
     let mut client = PipeClient::connect()?;
     client.hello().await?;
-    for name in names {
+    for (hostname, ip) in entries {
         if add {
             client
                 .add_hosts_entry(devx_ipc::HostsEntry {
-                    hostname: name.clone(),
-                    ip: "127.0.0.1".into(),
+                    hostname: hostname.clone(),
+                    ip: ip.clone(),
                 })
                 .await?;
         } else {
-            client.remove_hosts_entry(name).await?;
+            client.remove_hosts_entry(hostname).await?;
         }
     }
     Ok(())
@@ -358,14 +387,14 @@ pub(crate) fn server_port_for(state: &State<'_, AppState>, server: devx_core::co
             "nginx",
             state.with_config(|store| store.config().network.http_port),
         ),
-        devx_core::config::WebServer::Apache => server_port(state, "apache", 8085),
-        devx_core::config::WebServer::Caddy => server_port(state, "caddy", 8080),
-        devx_core::config::WebServer::FrankenPhp => server_port(state, "frankenphp", 8082),
+        devx_core::config::WebServer::Apache => server_port(state, "apache", 80),
+        devx_core::config::WebServer::Caddy => server_port(state, "caddy", 80),
+        devx_core::config::WebServer::FrankenPhp => server_port(state, "frankenphp", 80),
     }
 }
 
-/// The HTTPS port owning `server`'s sites. nginx owns 443; Apache terminates
-/// TLS on its own port (8443 by default) so the two can run side by side.
+/// The HTTPS port owning `server`'s sites. Each server binds its own
+/// loopback, so all of them own 443 by default.
 pub(crate) fn server_https_port_for(
     state: &State<'_, AppState>,
     server: devx_core::config::WebServer,
@@ -402,9 +431,9 @@ pub(crate) fn sync_site_blocks_inner(
         .copied()
         .unwrap_or(config.network.http_port);
     let (http_port, https_port) = (http, config.network.https_port);
-    let apache_port = server_port_inner(services, config, "apache", 8085);
-    let caddy_port = server_port_inner(services, config, "caddy", 8080);
-    let frankenphp_port = server_port_inner(services, config, "frankenphp", 8082);
+    let apache_port = server_port_inner(services, config, "apache", 80);
+    let caddy_port = server_port_inner(services, config, "caddy", 80);
+    let frankenphp_port = server_port_inner(services, config, "frankenphp", 80);
     let apache_https_port = devx_provision::apache_https_port(&config.service_ports);
 
     let sync_sites: Vec<devx_provision::SyncSite> = sites
@@ -441,6 +470,57 @@ pub(crate) fn sync_site_blocks_inner(
     Ok(())
 }
 
+/// Re-syncs everything name resolution needs after a (re)start: server
+/// blocks, hosts-file entries, resolver cache flush, and the bundled
+/// resolver's hostname map.
+///
+/// Blocks alone are not enough: after an update changes binds or certs, the
+/// hosts file may still point at the previous address (bare URL refused
+/// while `:port` works). Best-effort throughout; failures only warn.
+pub(crate) async fn resync_resolution(state: &AppState) {
+    let config = state.with_config(|store| store.config().clone());
+
+    if let Err(err) = sync_site_blocks_inner(&state.paths, &state.services, &config) {
+        tracing::warn!(error = %err, "site block re-sync failed");
+    }
+
+    if config.network.dns_mode != devx_core::DnsMode::Resolver {
+        let _ = crate::helper::ensure_helper_running().await;
+        if devx_privileged::PipeClient::is_available() {
+            if let Ok(mut client) = devx_privileged::PipeClient::connect() {
+                if client.hello().await.is_ok() {
+                    for site in &config.sites {
+                        let ip = devx_provision::server_ip_for_component(
+                            site.web_server.component_id(),
+                        )
+                        .to_string();
+                        let _ = client
+                            .add_hosts_entry(devx_ipc::HostsEntry {
+                                hostname: site.hostname.clone(),
+                                ip: ip.clone(),
+                            })
+                            .await;
+                        for alias in &site.aliases {
+                            let _ = client
+                                .add_hosts_entry(devx_ipc::HostsEntry {
+                                    hostname: alias.clone(),
+                                    ip: ip.clone(),
+                                })
+                                .await;
+                        }
+                    }
+                    let _ = client.flush_dns().await;
+                }
+            }
+        }
+    }
+
+    let fresh = crate::commands::dns::site_ip_map(&config);
+    if let Ok(mut map) = state.dns_map.write() {
+        *map = fresh;
+    }
+}
+
 /// Result of one site health check, as the UI shows it.
 #[derive(Debug, Clone, serde::Serialize, specta::Type)]
 pub struct SitePing {
@@ -452,13 +532,11 @@ pub struct SitePing {
     pub error: Option<String>,
 }
 
-/// Checks one site over HTTP(S) through the nginx front door.
+/// Checks one site over HTTP(S) against its owning server.
 ///
 /// Resolves the host through the system resolver first (the bundled DNS or
 /// the hosts file), then issues a real request so the check covers the whole
-/// chain — DNS, TLS, front-door proxy, and PHP when the docroot runs it.
-/// Non-nginx sites are reached through their nginx proxy, so the check always
-/// targets the front-door ports and never the backend `:8085`-style URL.
+/// chain — DNS, TLS, server block, and PHP when the docroot runs it.
 #[tauri::command]
 #[specta::specta]
 pub async fn site_ping(state: State<'_, AppState>, hostname: String) -> Result<SitePing, Error> {
@@ -475,18 +553,19 @@ pub async fn site_ping(state: State<'_, AppState>, hostname: String) -> Result<S
         })
         .ok_or_else(|| Error::not_found(format!("site `{hostname}` is not configured")))?;
 
-    let port = if site.https {
-        state.with_config(|store| store.config().network.https_port)
-    } else {
-        server_port_for(&state, devx_core::config::WebServer::Nginx)
-    };
+    // The check targets exactly the URL the UI advertises, so Ping and Open
+    // never disagree.
+    let url = format!(
+        "{}/",
+        resolve_site_url(
+            &hostname,
+            site.https,
+            server_port_for(&state, site.web_server),
+            server_https_port_for(&state, site.web_server),
+        )
+    );
 
     let started = std::time::Instant::now();
-    let url = if site.https {
-        format!("https://{hostname}:{port}/")
-    } else {
-        format!("http://{hostname}:{port}/")
-    };
 
     // The local CA is self-signed by design, so the check must not demand a
     // public chain — it is verifying the site answers, not WebPki.
@@ -504,14 +583,13 @@ pub async fn site_ping(state: State<'_, AppState>, hostname: String) -> Result<S
         }),
         Err(err) => {
             let mut message = err.to_string();
-            let front_up = state
+            let owner = site.web_server.component_id();
+            let owner_up = state
                 .services
-                .get("nginx")
+                .get(owner)
                 .is_some_and(|s| s.state().is_active());
-            if !front_up {
-                message = format!(
-                    "{message} (nginx is the front door for site URLs — start it from Services)"
-                );
+            if !owner_up {
+                message = format!("{message} (start {owner} from Services)");
             }
             Ok(SitePing {
                 status: None,
@@ -704,6 +782,32 @@ fn parse_caddy_access_line(line: &str) -> Option<SiteRequestEntry> {
         user_agent: header("User-Agent"),
         duration_ms,
     })
+}
+
+#[cfg(test)]
+mod url_tests {
+    use super::*;
+
+    #[test]
+    fn standard_ports_resolve_to_bare_urls() {
+        assert_eq!(resolve_site_url("mtdb.test", false, 80, 443), "http://mtdb.test");
+        assert_eq!(
+            resolve_site_url("mtdb.test", true, 80, 443),
+            "https://mtdb.test"
+        );
+    }
+
+    #[test]
+    fn custom_ports_resolve_to_port_urls() {
+        assert_eq!(
+            resolve_site_url("mtdb.test", false, 8085, 443),
+            "http://mtdb.test:8085"
+        );
+        assert_eq!(
+            resolve_site_url("mtdb.test", true, 80, 8443),
+            "https://mtdb.test:8443"
+        );
+    }
 }
 
 #[cfg(test)]

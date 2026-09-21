@@ -25,4 +25,4 @@ pub mod message;
 pub mod server;
 
 pub use message::{parse_name, NameError};
-pub use server::{serve, ResolverConfig, ServerHandle};
+pub use server::{serve, DnsMap, ResolverConfig, ServerHandle};

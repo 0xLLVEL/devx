@@ -318,13 +318,11 @@ export const commands = {
 	/**  Lists the configured sites with their resolved PHP endpoints. */
 	siteList: () => typedError<SiteStatus[], DevxError>(__TAURI_INVOKE("site_list")),
 	/**
-	 *  Checks one site over HTTP(S) through the nginx front door.
+	 *  Checks one site over HTTP(S) against its owning server.
 	 * 
 	 *  Resolves the host through the system resolver first (the bundled DNS or
 	 *  the hosts file), then issues a real request so the check covers the whole
-	 *  chain — DNS, TLS, front-door proxy, and PHP when the docroot runs it.
-	 *  Non-nginx sites are reached through their nginx proxy, so the check always
-	 *  targets the front-door ports and never the backend `:8085`-style URL.
+	 *  chain — DNS, TLS, server block, and PHP when the docroot runs it.
 	 */
 	sitePing: (hostname: string) => typedError<SitePing, DevxError>(__TAURI_INVOKE("site_ping", { hostname })),
 	/**
@@ -462,9 +460,9 @@ export const commands = {
 	/**
 	 *  Shares `hostname` publicly through a Cloudflare quick tunnel.
 	 * 
-	 *  The tunnel targets whichever port nginx actually serves (live allocation
-	 *  or configured default), so the public URL reaches the same server block
-	 *  the local `.test` host name does.
+	 *  The tunnel targets the owning server's loopback and HTTP port (live
+	 *  allocation or configured default), so the public URL reaches the same
+	 *  site block the local `.test` host name does — no front door involved.
 	 */
 	tunnelStart: (hostname: string) => typedError<TunnelStatus, DevxError>(__TAURI_INVOKE("tunnel_start", { hostname })),
 	/**  Stops the share for `hostname`, if one is running. */
@@ -1753,15 +1751,20 @@ export type SiteStatus = {
 	/**  Basic-auth user when the site is protected, `None` for public. */
 	auth: SiteAuth | null,
 	/**
-	 *  HTTP port of the owning web server (80 for nginx by default,
-	 *  8085 for Apache, ...). The UI builds the open-URL from this.
+	 *  HTTP port of the owning web server (80 on its own loopback by
+	 *  default).
 	 */
 	port: number,
 	/**
-	 *  HTTPS port of the owning web server (443 for nginx, 8443 for
-	 *  Apache by default). The UI builds the https open-URL from this.
+	 *  HTTPS port of the owning web server (443 on its own loopback by
+	 *  default).
 	 */
 	https_port: number,
+	/**
+	 *  Public URL of the site: bare when the owner binds 80/443 on its own
+	 *  loopback, otherwise the direct `:port` URL.
+	 */
+	url: string,
 };
 
 /**

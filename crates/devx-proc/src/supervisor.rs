@@ -168,6 +168,7 @@ impl Supervisor {
     pub fn health_port(&self) -> Option<u16> {
         match &self.spec.health {
             HealthCheck::TcpPort(port) => Some(*port),
+            HealthCheck::TcpAddr { port, .. } => Some(*port),
             _ => None,
         }
     }
@@ -499,7 +500,8 @@ async fn run_once(
             HealthCheck::Uptime(dur) => {
                 tokio::time::sleep(*dur).await;
             }
-            HealthCheck::TcpPort(port) => wait_for_tcp(*port).await,
+            HealthCheck::TcpPort(port) => wait_for_tcp(std::net::Ipv4Addr::LOCALHOST, *port).await,
+            HealthCheck::TcpAddr { host, port } => wait_for_tcp(*host, *port).await,
             HealthCheck::LogContains(_) => {
                 // The log pump flips `ready` when a matching line appears.
                 while ready_rx.changed().await.is_ok() {
@@ -590,9 +592,9 @@ async fn stop_child(child: &mut tokio::process::Child) -> ExitReason {
 }
 
 /// Attempts a TCP connection until it succeeds.
-async fn wait_for_tcp(port: u16) {
+async fn wait_for_tcp(host: std::net::Ipv4Addr, port: u16) {
     loop {
-        match tokio::net::TcpStream::connect(("127.0.0.1", port)).await {
+        match tokio::net::TcpStream::connect((host, port)).await {
             Ok(_) => return,
             Err(_) => tokio::time::sleep(Duration::from_millis(100)).await,
         }

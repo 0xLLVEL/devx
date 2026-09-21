@@ -39,6 +39,10 @@ pub struct AppState {
     /// The bundled DNS resolver, once started; `None` until needed and
     /// after a stop, so every reader can tell whether it is running.
     pub dns: Mutex<Option<devx_dns::ServerHandle>>,
+    /// Hostname-to-loopback map fed to the resolver. Rebuilt from the
+    /// configured sites on every mutation, so each name answers with its
+    /// owning server's address without restarting the resolver.
+    pub dns_map: devx_dns::DnsMap,
 }
 
 /// Loads configuration for `paths`, falling back to defaults when unusable.
@@ -116,6 +120,7 @@ impl AppState {
             service_config_rendered: Mutex::new(HashSet::new()),
             services: Arc::new(ServiceRegistry::new()),
             dns: Mutex::new(None),
+            dns_map: devx_dns::DnsMap::default(),
         })
     }
 

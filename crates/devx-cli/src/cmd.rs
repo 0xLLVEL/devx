@@ -265,21 +265,21 @@ fn sync_site_blocks(paths: &AppPaths, store: &ConfigStore) -> anyhow::Result<()>
                 .get("apache")
                 .copied()
                 .or_else(|| devx_provision::default_port_for("apache"))
-                .unwrap_or(8085),
+                .unwrap_or(80),
             caddy_port: store
                 .config()
                 .service_ports
                 .get("caddy")
                 .copied()
                 .or_else(|| devx_provision::default_port_for("caddy"))
-                .unwrap_or(8080),
+                .unwrap_or(80),
             frankenphp_port: store
                 .config()
                 .service_ports
                 .get("frankenphp")
                 .copied()
                 .or_else(|| devx_provision::default_port_for("frankenphp"))
-                .unwrap_or(8082),
+                .unwrap_or(80),
             apache_https_port: devx_provision::apache_https_port(
                 &store.config().service_ports,
             ),

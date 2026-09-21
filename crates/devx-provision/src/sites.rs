@@ -82,6 +82,37 @@ impl From<devx_core::config::WebServer> for WebServerKind {
     }
 }
 
+impl WebServerKind {
+    /// The loopback address this server binds.
+    ///
+    /// Every server owns port 80/443 on its own address (`127.0.0.0/8` is
+    /// all loopback), so site URLs stay bare with no front-door proxy and
+    /// no extra process: nginx `.1`, Apache `.2`, Caddy `.3`,
+    /// FrankenPHP `.4`. PHP pools stay on `.1`; only browsers use these.
+    pub fn loopback_ip(self) -> std::net::Ipv4Addr {
+        match self {
+            WebServerKind::Nginx => std::net::Ipv4Addr::new(127, 0, 0, 1),
+            WebServerKind::Apache => std::net::Ipv4Addr::new(127, 0, 0, 2),
+            WebServerKind::Caddy => std::net::Ipv4Addr::new(127, 0, 0, 3),
+            WebServerKind::FrankenPhp => std::net::Ipv4Addr::new(127, 0, 0, 4),
+        }
+    }
+}
+
+/// The loopback address for a supervised service id.
+///
+/// Web servers resolve to their per-server address; everything else stays
+/// on plain loopback.
+pub fn server_ip_for_component(component_id: &str) -> std::net::Ipv4Addr {
+    match component_id {
+        "nginx" => WebServerKind::Nginx.loopback_ip(),
+        "apache" => WebServerKind::Apache.loopback_ip(),
+        "caddy" => WebServerKind::Caddy.loopback_ip(),
+        "frankenphp" => WebServerKind::FrankenPhp.loopback_ip(),
+        _ => std::net::Ipv4Addr::LOCALHOST,
+    }
+}
+
 /// What sync produced, for the UI.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
 pub struct SiteSyncReport {
@@ -164,15 +195,26 @@ pub fn render_server_block(
     php_endpoint: Option<&str>,
     tls: Option<&str>,
 ) -> String {
-    render_server_block_with_port(spec, php_endpoint, tls, 80)
+    render_server_block_with_port(
+        spec,
+        php_endpoint,
+        tls,
+        80,
+        std::net::Ipv4Addr::LOCALHOST,
+    )
 }
 
-/// Renders one nginx `server` block for `spec` on `http_port`.
+/// Renders one nginx `server` block for `spec` on `bind_ip:http_port`.
+///
+/// The bind address must be explicit: every server owns 80/443 on its own
+/// loopback IP, so a wildcard listen here would steal the other servers'
+/// traffic (the original app.test/app2.test class of bug, at TCP level).
 pub fn render_server_block_with_port(
     spec: &SiteSpec,
     php_endpoint: Option<&str>,
     tls: Option<&str>,
     http_port: u16,
+    bind_ip: std::net::Ipv4Addr,
 ) -> String {
     let docroot = slash(&spec.docroot);
 
@@ -210,7 +252,7 @@ pub fn render_server_block_with_port(
     format!(
         r#"# devx-managed site: {log_name}
 server {{
-    listen       {http_port};
+    listen       {bind_ip}:{http_port};
     server_name  {server_names};
 {tls}    root   {docroot};
     index  {index};
@@ -225,6 +267,7 @@ server {{
 "#,
         log_name = log_name,
         server_names = server_names,
+        bind_ip = bind_ip,
         http_port = http_port,
         docroot = docroot,
         index = index,
@@ -232,51 +275,6 @@ server {{
         tls = tls.unwrap_or_default(),
         auth_lines = auth_lines,
         fallback = fallback,
-    )
-}
-
-/// Renders an nginx front-door block proxying `spec` to its owning server.
-///
-/// Non-nginx sites live on their own ports (Apache 8085, ...), so bare
-/// `http://site` / `https://site` URLs would refuse. This block lets nginx —
-/// the only server on 80/443 — answer the clean URL and forward to
-/// `127.0.0.1:backend_http_port`. `tls` is the same snippet nginx sites use,
-/// so HTTPS terminates at the front with the site's local-CA certificate and
-/// the backend stays plain HTTP. The direct `:<backend>` URL keeps working.
-pub fn render_proxy_block(
-    spec: &SiteSpec,
-    backend_http_port: u16,
-    tls: Option<&str>,
-    http_port: u16,
-) -> String {
-    let server_names = spec_hostname(spec);
-    let log_name = spec.hostname.to_ascii_lowercase();
-
-    format!(
-        r#"# devx-managed proxy: {log_name} -> 127.0.0.1:{backend}
-server {{
-    listen       {http_port};
-    server_name  {server_names};
-{tls}    access_log  logs/{log_name}.proxy.access.log;
-    error_log   logs/{log_name}.proxy.error.log;
-
-    location / {{
-        proxy_pass         http://127.0.0.1:{backend};
-        proxy_http_version 1.1;
-        proxy_set_header   Host $host;
-        proxy_set_header   X-Real-IP $remote_addr;
-        proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header   X-Forwarded-Proto $scheme;
-        proxy_set_header   Upgrade $http_upgrade;
-        proxy_set_header   Connection "upgrade";
-    }}
-}}
-"#,
-        log_name = log_name,
-        server_names = server_names,
-        backend = backend_http_port,
-        http_port = http_port,
-        tls = tls.unwrap_or_default(),
     )
 }
 
@@ -350,6 +348,7 @@ pub fn render_apache_site(
     spec: &SiteSpec,
     php_endpoint: Option<&str>,
     http_port: u16,
+    bind_ip: std::net::Ipv4Addr,
     tls: Option<&ApacheTls>,
 ) -> String {
     let docroot = slash(&spec.docroot);
@@ -387,7 +386,7 @@ pub fn render_apache_site(
     let https_host = match tls {
         Some(t) => format!(
             r#"
-<VirtualHost *:{https_port}>
+<VirtualHost {bind_ip}:{https_port}>
     ServerName {hostname}{server_alias}
     DocumentRoot "{docroot}"
     DirectoryIndex {index}
@@ -406,6 +405,7 @@ pub fn render_apache_site(
     CustomLog logs/{hostname}-tls.access.log common
 </VirtualHost>
 "#,
+            bind_ip = bind_ip,
             https_port = t.https_port,
             hostname = spec.hostname,
             server_alias = server_alias,
@@ -422,7 +422,7 @@ pub fn render_apache_site(
 
     format!(
         r#"# devx-managed site: {hostname}
-<VirtualHost *:{http_port}>
+<VirtualHost {bind_ip}:{http_port}>
     ServerName {hostname}{server_alias}
     DocumentRoot "{docroot}"
     DirectoryIndex {index}
@@ -439,6 +439,7 @@ pub fn render_apache_site(
 {https_host}"#,
         hostname = spec.hostname,
         server_alias = server_alias,
+        bind_ip = bind_ip,
         http_port = http_port,
         docroot = docroot,
         index = index,
@@ -463,7 +464,12 @@ fn render_apache_env(env: &[(String, String)]) -> String {
 /// block did: static serving, PHP proxying to the pool, and index files.
 /// TLS is left to Caddy's own internal CA on `https_port` â€” the DevX local
 /// CA handles sites it proxies, but Caddy re-terminates its own listener.
-pub fn render_caddy_site(spec: &SiteSpec, php_endpoint: Option<&str>, tls: Option<&str>) -> String {
+pub fn render_caddy_site(
+    spec: &SiteSpec,
+    php_endpoint: Option<&str>,
+    tls: Option<&str>,
+    bind_ip: std::net::Ipv4Addr,
+) -> String {
     let docroot = slash(&spec.docroot);
     let names = caddy_names(spec);
 
@@ -490,6 +496,7 @@ pub fn render_caddy_site(spec: &SiteSpec, php_endpoint: Option<&str>, tls: Optio
     format!(
         r##"# devx-managed site: {names}
 {names} {{
+	bind {bind_ip}
 	root * {docroot}{tls_line}
 	file_server{auth_block}{php_block}
 	log {{
@@ -498,6 +505,7 @@ pub fn render_caddy_site(spec: &SiteSpec, php_endpoint: Option<&str>, tls: Optio
 }}
 "##,
         names = names,
+        bind_ip = bind_ip,
         docroot = docroot,
         php_block = php_block,
         tls_line = tls_line,
@@ -514,7 +522,11 @@ pub fn render_caddy_site(spec: &SiteSpec, php_endpoint: Option<&str>, tls: Optio
 /// process environment â€” DevX renders them as directives in the site file
 /// via Caddy's `env` adapter is not needed, so they ride on the worker
 /// definition instead. Static and PHP sites are identical here.
-pub fn render_frankenphp_site(spec: &SiteSpec, tls: Option<&str>) -> String {
+pub fn render_frankenphp_site(
+    spec: &SiteSpec,
+    tls: Option<&str>,
+    bind_ip: std::net::Ipv4Addr,
+) -> String {
     let docroot = slash(&spec.docroot);
     let names = caddy_names(spec);
 
@@ -534,11 +546,13 @@ pub fn render_frankenphp_site(spec: &SiteSpec, tls: Option<&str>) -> String {
     format!(
         r##"# devx-managed site: {names}
 {names} {{
+	bind {bind_ip}
 	root * {docroot}{tls_line}
 	file_server{auth_block}
 }}
 "##,
         names = names,
+        bind_ip = bind_ip,
         docroot = docroot,
         tls_line = tls_line,
         auth_block = auth_block,
@@ -628,16 +642,24 @@ pub fn write_site_block(
     php_endpoint: Option<&str>,
     tls: Option<&str>,
 ) -> Result<PathBuf> {
-    write_site_block_with_port(sites_dir, spec, php_endpoint, tls, 80)
+    write_site_block_with_port(
+        sites_dir,
+        spec,
+        php_endpoint,
+        tls,
+        80,
+        std::net::Ipv4Addr::LOCALHOST,
+    )
 }
 
-/// Writes (or replaces) the server block for `spec` on `http_port` and reports the outcome.
+/// Writes (or replaces) the server block for `spec` on `bind_ip:http_port` and reports the outcome.
 pub fn write_site_block_with_port(
     sites_dir: &Path,
     spec: &SiteSpec,
     php_endpoint: Option<&str>,
     tls: Option<&str>,
     http_port: u16,
+    bind_ip: std::net::Ipv4Addr,
 ) -> Result<PathBuf> {
     validate_hostname(&spec.hostname)?;
     validate_docroot(&spec.docroot)?;
@@ -649,7 +671,7 @@ pub fn write_site_block_with_port(
         )
     })?;
 
-    let body = render_server_block_with_port(spec, php_endpoint, tls, http_port);
+    let body = render_server_block_with_port(spec, php_endpoint, tls, http_port, bind_ip);
     let path = sites_dir.join(block_file_name(&spec.hostname));
     devx_core::fsx::write_atomic(&path, body)?;
     Ok(path)
@@ -705,15 +727,14 @@ pub struct SyncContext<'a> {
     pub http_port: u16,
     /// The configured HTTPS port for `listen 443` blocks.
     pub https_port: u16,
-    /// Per-server HTTP ports. Each server listens on its own port, so an
-    /// Apache vhost must say `<VirtualHost *:8085>`, not `*:80`.
+    /// Per-server HTTP ports. Each server binds its own loopback IP, so
+    /// every one of them can own port 80 at once.
     pub apache_port: u16,
     /// Caddy's HTTP port.
     pub caddy_port: u16,
     /// FrankenPHP's HTTP port.
     pub frankenphp_port: u16,
-    /// Apache's HTTPS port. Apache terminates TLS itself on its own port
-    /// (8443 by default) because 443 belongs to nginx.
+    /// Apache's HTTPS port (443 on its own loopback by default).
     pub apache_https_port: u16,
 }
 
@@ -751,41 +772,37 @@ pub fn sync_site_blocks(
     let mut written = Vec::with_capacity(sites.len());
 
     for site in sites {
-        let files = crate::site_renderer::render(
+        let rendered = crate::site_renderer::render(
             site,
             &ctx,
             &crate::site_renderer::ProdCerts(ctx.certs_dir),
         )?;
-        for rendered in &files {
-            let full_path = ctx.service_config_dir.join(&rendered.path);
-            if let Some(parent) = full_path.parent() {
-                std::fs::create_dir_all(parent).map_err(|err| {
-                    Error::new(
-                        ErrorCode::Io,
-                        format!("failed to create {}: {err}", parent.display()),
-                    )
-                })?;
-            }
-            devx_core::fsx::write_atomic(&full_path, &rendered.content)?;
-        }
-        // htpasswd lives next to the direct block only (files[0]); the
-        // front-door proxy forwards Authorization to the backend untouched.
-        if let Some(direct) = files.first() {
-            let full_path = ctx.service_config_dir.join(&direct.path);
-            if let Some(parent) = full_path.parent() {
-                let auth_dir = parent.join("auth");
-                match &site.auth {
-                    Some(auth) => write_htpasswd(&auth_dir, &site.hostname, auth)?,
-                    None => remove_htpasswd(&auth_dir, &site.hostname),
-                }
+        let full_path = ctx.service_config_dir.join(&rendered.path);
+        if let Some(parent) = full_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|err| {
+                Error::new(
+                    ErrorCode::Io,
+                    format!("failed to create {}: {err}", parent.display()),
+                )
+            })?;
+            let auth_dir = parent.join("auth");
+            match &site.auth {
+                Some(auth) => write_htpasswd(&auth_dir, &site.hostname, auth)?,
+                None => remove_htpasswd(&auth_dir, &site.hostname),
             }
         }
+        devx_core::fsx::write_atomic(&full_path, rendered.content)?;
         written.push(site.hostname.clone());
     }
 
-    // The nginx dir holds direct blocks AND front-door proxies, so every
-    // hostname is live there; the other servers prune per web_server.
-    let live_nginx: Vec<String> = sites.iter().map(|s| s.hostname.clone()).collect();
+    // One file per site on its own server: prune per web_server, so an
+    // Apache site never keeps a stale nginx block alive — and stale
+    // front-door proxy blocks from older DevX are pruned as non-live.
+    let live_nginx: Vec<String> = sites
+        .iter()
+        .filter(|s| matches!(s.web_server, WebServerKind::Nginx))
+        .map(|s| s.hostname.clone())
+        .collect();
     let mut pruned = prune_stale_blocks(sites_dir, &live_nginx)?;
     for extra in ["apache", "caddy", "frankenphp"] {
         let dir = ctx.service_config_dir.join(extra).join("sites");
@@ -882,6 +899,10 @@ mod tests {
         }
     }
 
+    fn apache_ip() -> std::net::Ipv4Addr {
+        std::net::Ipv4Addr::new(127, 0, 0, 2)
+    }
+
     #[test]
     fn static_sites_render_without_php_routing() {
         let block = render_server_block(&spec("static.test", None), None, None);
@@ -898,11 +919,16 @@ mod tests {
 
     #[test]
     fn tls_directives_land_in_the_listen_block() {
-        let tls = crate::tls_listen_snippet("app.test", 443, std::path::Path::new("C:/devx/certs"));
+        let tls = crate::tls_listen_snippet(
+            "app.test",
+            443,
+            std::net::Ipv4Addr::LOCALHOST,
+            std::path::Path::new("C:/devx/certs"),
+        );
         let block = render_server_block(&spec("app.test", None), None, Some(&tls));
 
-        assert!(block.contains("listen       443 ssl;"), "{block}");
-        assert!(block.contains("listen       80;"), "{block}");
+        assert!(block.contains("listen       127.0.0.1:443 ssl;"), "{block}");
+        assert!(block.contains("listen       127.0.0.1:80;"), "{block}");
         assert!(
             block.contains("ssl_certificate     C:/devx/certs/sites/app.test/cert.pem;"),
             "{block}"
@@ -927,7 +953,12 @@ mod tests {
     fn caddy_site_renders_root_file_server_and_fastcgi() {
         let mut site = spec("app.test", Some("8.4.25"));
         site.web_server = WebServerKind::Caddy;
-        let block = render_caddy_site(&site, Some("127.0.0.1:9100"), None);
+        let block = render_caddy_site(
+            &site,
+            Some("127.0.0.1:9100"),
+            None,
+            std::net::Ipv4Addr::new(127, 0, 0, 3),
+        );
 
         assert!(block.contains("app.test {"), "{block}");
         assert!(
@@ -942,7 +973,11 @@ mod tests {
     fn frankenphp_site_needs_no_pool_endpoint() {
         let mut site = spec("app.test", Some("8.4.25"));
         site.web_server = WebServerKind::FrankenPhp;
-        let block = render_frankenphp_site(&site, None);
+        let block = render_frankenphp_site(
+            &site,
+            None,
+            std::net::Ipv4Addr::new(127, 0, 0, 4),
+        );
 
         assert!(block.contains("app.test {"), "{block}");
         assert!(block.contains("file_server"), "{block}");
@@ -1026,29 +1061,29 @@ mod tests {
     }
 
     #[test]
-    fn apache_vhost_uses_the_apache_port_not_nginx() {
+    fn apache_vhost_binds_its_own_loopback_not_nginx() {
         let ctx = SyncContext {
             service_config_dir: Path::new("C:/x"),
             certs_dir: Path::new("C:/x/certs"),
             http_port: 80,
             https_port: 443,
-            apache_port: 8085,
-            caddy_port: 8080,
-            frankenphp_port: 8082,
-            apache_https_port: 8443,
+            apache_port: 80,
+            caddy_port: 80,
+            frankenphp_port: 80,
+            apache_https_port: 443,
         };
-        assert_eq!(ctx.port_for(WebServerKind::Apache), 8085);
-        assert_eq!(ctx.port_for(WebServerKind::Nginx), 80);
+        assert_eq!(ctx.port_for(WebServerKind::Apache), 80);
         let mut site = spec("mtdb.test", Some("8.4.25"));
         site.web_server = WebServerKind::Apache;
         let block = render_apache_site(
             &site,
             Some("127.0.0.1:9100"),
             ctx.port_for(WebServerKind::Apache),
+            apache_ip(),
             None,
         );
-        assert!(block.contains("<VirtualHost *:8085>"), "{block}");
-        assert!(!block.contains("<VirtualHost *:80>"), "{block}");
+        assert!(block.contains("<VirtualHost 127.0.0.2:80>"), "{block}");
+        assert!(!block.contains("127.0.0.1:80"), "{block}");
         assert!(!block.contains("SSLEngine"), "{block}");
     }
 
@@ -1056,13 +1091,13 @@ mod tests {
     fn apache_https_site_gets_a_second_tls_vhost() {
         let site = spec("mtdb.test", Some("8.4.25"));
         let tls = ApacheTls {
-            https_port: 8443,
+            https_port: 443,
             cert_file: "C:/devx/certs/sites/mtdb.test/cert.pem".into(),
             key_file: "C:/devx/certs/sites/mtdb.test/key.pem".into(),
         };
-        let block = render_apache_site(&site, Some("127.0.0.1:9100"), 8085, Some(&tls));
-        assert!(block.contains("<VirtualHost *:8085>"), "{block}");
-        assert!(block.contains("<VirtualHost *:8443>"), "{block}");
+        let block = render_apache_site(&site, Some("127.0.0.1:9100"), 80, apache_ip(), Some(&tls));
+        assert!(block.contains("<VirtualHost 127.0.0.2:80>"), "{block}");
+        assert!(block.contains("<VirtualHost 127.0.0.2:443>"), "{block}");
         assert!(block.contains("SSLEngine on"), "{block}");
         assert!(
             block.contains("SSLCertificateFile \"C:/devx/certs/sites/mtdb.test/cert.pem\""),
@@ -1072,37 +1107,40 @@ mod tests {
     }
 
     #[test]
-    fn proxy_block_forwards_to_the_backend_on_clean_urls() {
-        let mut site = spec("mtdb.test", Some("8.4.25"));
-        site.web_server = WebServerKind::Apache;
-        site.aliases = vec!["www.mtdb.test".to_owned()];
-        let tls = crate::pki::tls_listen_snippet(
-            "mtdb.test",
-            443,
-            std::path::Path::new("C:/devx/certs"),
+    fn servers_own_distinct_loopbacks() {
+        assert_eq!(
+            WebServerKind::Nginx.loopback_ip(),
+            std::net::Ipv4Addr::new(127, 0, 0, 1)
         );
-
-        let block = render_proxy_block(&site, 8085, Some(&tls), 80);
-        assert!(block.contains("server_name  mtdb.test www.mtdb.test;"), "{block}");
-        assert!(
-            block.contains("proxy_pass         http://127.0.0.1:8085;"),
-            "{block}"
+        assert_eq!(WebServerKind::Apache.loopback_ip(), apache_ip());
+        assert_eq!(
+            WebServerKind::Caddy.loopback_ip(),
+            std::net::Ipv4Addr::new(127, 0, 0, 3)
         );
-        assert!(block.contains("proxy_set_header   Host $host;"), "{block}");
-        assert!(
-            block.contains("proxy_set_header   X-Forwarded-Proto $scheme;"),
-            "{block}"
+        assert_eq!(
+            WebServerKind::FrankenPhp.loopback_ip(),
+            std::net::Ipv4Addr::new(127, 0, 0, 4)
         );
-        assert!(block.contains("listen       443 ssl;"), "{block}");
-        // No port suffix needed: the front door owns 80/443.
-        assert!(!block.contains("8085;") || block.contains("proxy_pass"), "{block}");
+        assert_eq!(
+            server_ip_for_component("apache"),
+            std::net::Ipv4Addr::new(127, 0, 0, 2)
+        );
+        assert_eq!(
+            server_ip_for_component("mariadb"),
+            std::net::Ipv4Addr::LOCALHOST
+        );
     }
 
     #[test]
     fn caddy_names_are_comma_separated() {
         let mut site = spec("app.test", None);
         site.aliases = vec!["www.app.test".to_owned()];
-        let block = render_caddy_site(&site, None, None);
+        let block = render_caddy_site(
+            &site,
+            None,
+            None,
+            std::net::Ipv4Addr::new(127, 0, 0, 3),
+        );
         assert!(block.contains("app.test, www.app.test {"), "{block}");
     }
 
@@ -1257,7 +1295,7 @@ mod tests {
     }
 
     #[test]
-    fn sync_writes_an_nginx_proxy_for_apache_sites() {
+    fn sync_writes_each_site_to_its_own_server_dir() {
         let dir = tempfile::tempdir().expect("temp");
         let certs = dir.path().join("certs");
         crate::pki::ensure_ca(&certs).expect("local CA");
@@ -1285,21 +1323,23 @@ mod tests {
                 certs_dir: &certs,
                 http_port: 80,
                 https_port: 443,
-                apache_port: 8085,
-                caddy_port: 8080,
-                frankenphp_port: 8082,
-                apache_https_port: 8443,
+                apache_port: 80,
+                caddy_port: 80,
+                frankenphp_port: 80,
+                apache_https_port: 443,
             },
         )
         .expect("sync");
 
+        // One file on the owning server, bound to its own loopback: no
+        // proxy file in the nginx dir.
         let direct = service_config.join("apache").join("sites").join("mtdb.test.conf");
-        let proxy = sites_dir.join("mtdb.test.conf");
         assert!(direct.is_file());
-        assert!(proxy.is_file());
-        let proxy_body = std::fs::read_to_string(&proxy).expect("read proxy");
-        assert!(proxy_body.contains("proxy_pass         http://127.0.0.1:8085;"), "{proxy_body}");
-        assert!(proxy_body.contains("server_name  mtdb.test;"), "{proxy_body}");
+        assert!(!sites_dir.join("mtdb.test.conf").exists());
+        let body = std::fs::read_to_string(&direct).expect("read block");
+        assert!(body.contains("<VirtualHost 127.0.0.2:80>"), "{body}");
+        assert!(body.contains("<VirtualHost 127.0.0.2:443>"), "{body}");
+        assert!(body.contains("ServerName mtdb.test"), "{body}");
     }
 
     #[test]
@@ -1308,8 +1348,8 @@ mod tests {
         site.aliases = vec!["www.app.test".into()];
         site.env = vec![("APP_ENV".into(), "production".into())];
 
-        let block = render_apache_site(&site, Some("127.0.0.1:9100"), 8085, None);
-        assert!(block.contains("<VirtualHost *:8085>"), "{block}");
+        let block = render_apache_site(&site, Some("127.0.0.1:9100"), 80, apache_ip(), None);
+        assert!(block.contains("<VirtualHost 127.0.0.2:80>"), "{block}");
         assert!(block.contains("ServerName app.test"), "{block}");
         assert!(block.contains("ServerAlias www.app.test"), "{block}");
         assert!(

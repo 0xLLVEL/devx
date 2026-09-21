@@ -77,12 +77,9 @@ impl<'a> SiteOrchestrator<'a> {
         self.ensure_certs(&site).await;
         let mut names = vec![site.hostname.clone()];
         names.extend(site.aliases.clone());
-        self.reconcile_hosts(&names).await;
+        self.reconcile_hosts(&names, &site).await;
         self.flush_dns().await;
         self.restart_server(site.web_server.component_id()).await;
-        if site.web_server.component_id() != "nginx" {
-            self.restart_server("nginx").await;
-        }
 
         crate::commands::sites::site_list(self.state.clone())
     }
@@ -120,9 +117,6 @@ impl<'a> SiteOrchestrator<'a> {
             );
             self.flush_dns().await;
             self.restart_server(site.web_server.component_id()).await;
-            if site.web_server.component_id() != "nginx" {
-                self.restart_server("nginx").await;
-            }
         }
         crate::commands::sites::site_list(self.state.clone())
     }
@@ -246,7 +240,15 @@ impl<'a> SiteOrchestrator<'a> {
             let _ = self.state.with_config_mut(|store| store.replace(snap));
             return Err(e);
         }
-        self.reconcile_hosts(&[alias_lc]).await;
+        if let Some(site) = self.state.with_config(|s| {
+            s.config()
+                .sites
+                .iter()
+                .find(|s| s.hostname.eq_ignore_ascii_case(hostname))
+                .cloned()
+        }) {
+            self.reconcile_hosts(&[alias_lc], &site).await;
+        }
         self.flush_dns().await;
         self.restart_for(hostname).await;
         crate::commands::sites::site_list(self.state.clone())
@@ -283,7 +285,16 @@ impl<'a> SiteOrchestrator<'a> {
     }
 
     async fn sync_all(&self) -> Result<(), Error> {
-        crate::commands::sites::sync_site_blocks(&self.state)
+        let out = crate::commands::sites::sync_site_blocks(&self.state);
+        // Keep the resolver's hostname map equal to the config, so each
+        // name answers with its owning server's loopback without a restart.
+        let fresh = self
+            .state
+            .with_config(|store| crate::commands::dns::site_ip_map(store.config()));
+        if let Ok(mut map) = self.state.dns_map.write() {
+            *map = fresh;
+        }
+        out
     }
 
     async fn ensure_certs(&self, site: &ConfigSite) {
@@ -297,13 +308,17 @@ impl<'a> SiteOrchestrator<'a> {
         );
     }
 
-    async fn reconcile_hosts(&self, names: &[String]) {
+    async fn reconcile_hosts(&self, names: &[String], site: &ConfigSite) {
         if names.is_empty()
             || self.state.with_config(|s| s.config().network.dns_mode)
                 == devx_core::DnsMode::Resolver
         {
             return;
         }
+        // Each name points at its owning server's loopback, so bare URLs
+        // land on the right server with no proxy involved.
+        let ip = devx_provision::server_ip_for_component(site.web_server.component_id())
+            .to_string();
         let _ = crate::helper::ensure_helper_running().await;
         if !devx_privileged::PipeClient::is_available() {
             return;
@@ -314,7 +329,7 @@ impl<'a> SiteOrchestrator<'a> {
                 let _ = c
                     .add_hosts_entry(devx_ipc::HostsEntry {
                         hostname: n.clone(),
-                        ip: "127.0.0.1".into(),
+                        ip: ip.clone(),
                     })
                     .await;
             }
@@ -363,8 +378,8 @@ impl<'a> SiteOrchestrator<'a> {
 
     /// Restarts the server owning `hostname` (best-effort when unknown).
     ///
-    /// Non-nginx sites also own an nginx front-door proxy, so nginx restarts
-    /// alongside the backend whenever it is running.
+    /// Each server binds its own loopback, so only the owner ever needs a
+    /// restart — there is no front door to reload.
     async fn restart_for(&self, hostname: &str) {
         let id = self
             .state
@@ -377,9 +392,6 @@ impl<'a> SiteOrchestrator<'a> {
             })
             .unwrap_or_else(|| "nginx".to_owned());
         self.restart_server(&id).await;
-        if id != "nginx" {
-            self.restart_server("nginx").await;
-        }
     }
 
     /// Restarts the owning web server when it is running, so an Apache site

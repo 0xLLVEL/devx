@@ -162,3 +162,30 @@ async fn stop_is_idempotent_while_stopped() {
     sup.stop().await;
     assert_eq!(sup.state(), ServiceState::Stopped);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tcp_addr_health_dials_the_configured_loopback() {
+    use std::net::Ipv4Addr;
+
+    let dir = tempfile::tempdir().expect("temp");
+    // A listener on 127.0.0.2 only: nothing answers on 127.0.0.1 for this
+    // port, so a check dialling plain loopback would hang until timeout.
+    let listener = tokio::net::TcpListener::bind((Ipv4Addr::new(127, 0, 0, 2), 0))
+        .await
+        .expect("bind 127.0.0.2");
+    let port = listener.local_addr().expect("addr").port();
+
+    let mut spec = long_running("loopback-two", dir.path(), 30);
+    spec.health = HealthCheck::TcpAddr {
+        host: Ipv4Addr::new(127, 0, 0, 2),
+        port,
+    };
+    spec.health_timeout = Duration::from_secs(10);
+    let sup = Supervisor::new(spec);
+
+    sup.start().await.expect("health must pass on 127.0.0.2");
+    assert_eq!(sup.state(), ServiceState::Running);
+
+    sup.stop().await;
+    drop(listener);
+}

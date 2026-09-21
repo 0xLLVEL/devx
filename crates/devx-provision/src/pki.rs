@@ -266,7 +266,12 @@ pub fn site_cert_files(certs_dir: &Path, hostname: &str) -> (String, String) {
 /// certificate. The paths are absolute — nginx's prefix points at the
 /// nginx *install* directory, so relative certificate paths would resolve
 /// to the wrong place.
-pub fn tls_listen_snippet(hostname: &str, https_port: u16, certs_dir: &Path) -> String {
+pub fn tls_listen_snippet(
+    hostname: &str,
+    https_port: u16,
+    bind_ip: std::net::Ipv4Addr,
+    certs_dir: &Path,
+) -> String {
     let cert_dir = certs_dir
         .join("sites")
         .join(hostname.to_ascii_lowercase())
@@ -274,7 +279,7 @@ pub fn tls_listen_snippet(hostname: &str, https_port: u16, certs_dir: &Path) -> 
         .to_string()
         .replace('\\', "/");
     format!(
-        "    listen       {https_port} ssl;\n    ssl_certificate     {cert_dir}/cert.pem;\n    ssl_certificate_key {cert_dir}/key.pem;\n"
+        "    listen       {bind_ip}:{https_port} ssl;\n    ssl_certificate     {cert_dir}/cert.pem;\n    ssl_certificate_key {cert_dir}/key.pem;\n"
     )
 }
 
@@ -379,8 +384,13 @@ mod tests {
     #[test]
     fn tls_snippet_points_at_the_site_certificate() {
         let certs = std::path::Path::new("C:/devx/certs");
-        let snippet = tls_listen_snippet("MyApp.test", 443, certs);
-        assert!(snippet.contains("listen       443 ssl;"), "{snippet}");
+        let snippet = tls_listen_snippet(
+            "MyApp.test",
+            443,
+            std::net::Ipv4Addr::new(127, 0, 0, 2),
+            certs,
+        );
+        assert!(snippet.contains("listen       127.0.0.2:443 ssl;"), "{snippet}");
         assert!(
             snippet.contains("C:/devx/certs/sites/myapp.test/cert.pem;"),
             "{snippet}"

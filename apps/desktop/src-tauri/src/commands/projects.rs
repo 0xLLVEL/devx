@@ -402,6 +402,7 @@ mod tests {
             auth: None,
             port: 80,
             https_port: 443,
+            url: format!("http://{hostname}"),
         }
     }
 

@@ -499,6 +499,7 @@ describe("ServicesPage", () => {
         auth: null,
         port: 80,
         https_port: 443,
+        url: "https://laravel.test",
       },
       {
         hostname: "nextjs.local",
@@ -512,6 +513,7 @@ describe("ServicesPage", () => {
         auth: null,
         port: 8080,
         https_port: 443,
+        url: "http://nextjs.local",
       },
     ]);
 

@@ -56,6 +56,25 @@ pub async fn dns_status(state: State<'_, AppState>) -> Result<DnsStatus, Error> 
     })
 }
 
+/// Builds the hostname-to-loopback map from the configured sites.
+///
+/// Every hostname and alias resolves to its owning server's address, so the
+/// bundled resolver answers each name on the right loopback without a
+/// restart. Pure over the config, so it is unit-testable without state.
+pub(crate) fn site_ip_map(
+    config: &devx_core::config::Config,
+) -> std::collections::HashMap<String, std::net::Ipv4Addr> {
+    let mut map = std::collections::HashMap::new();
+    for site in &config.sites {
+        let ip = devx_provision::server_ip_for_component(site.web_server.component_id());
+        map.insert(site.hostname.to_ascii_lowercase(), ip);
+        for alias in &site.aliases {
+            map.insert(alias.to_ascii_lowercase(), ip);
+        }
+    }
+    map
+}
+
 /// Starts the bundled DNS resolver and (through the helper) points the NRPT
 /// rule at it. Idempotent: starting twice keeps the running instance.
 #[tauri::command]
@@ -63,6 +82,18 @@ pub async fn dns_status(state: State<'_, AppState>) -> Result<DnsStatus, Error> 
 pub async fn dns_start(state: State<'_, AppState>) -> Result<DnsStatus, Error> {
     let suffix = state.with_config(|store| store.config().network.domain_suffix.clone());
     let dns_port = state.with_config(|store| store.config().network.dns_port);
+
+    // Refresh the shared map from the current sites before (re)starting, so
+    // a resolver that survives config edits still answers fresh data.
+    let fresh = state.with_config(|store| site_ip_map(store.config()));
+    if let Ok(mut map) = state.dns_map.write() {
+        *map = fresh;
+    }
+    let config = {
+        let mut cfg = devx_dns::ResolverConfig::default_for(&suffix);
+        cfg.hosts = state.dns_map.clone();
+        cfg
+    };
 
     // The MutexGuard must not live across the `.await`: std guards are not
     // `Send`, and the Tauri runtime requires `Send` futures. Bind first,
@@ -73,11 +104,9 @@ pub async fn dns_start(state: State<'_, AppState>) -> Result<DnsStatus, Error> {
         // unelevated — there is no low-port privilege) and fall back to an
         // ephemeral one only when it is genuinely taken. The NRPT rule names
         // the resolver's actual port either way.
-        let handle = match devx_dns::serve(dns_port, devx_dns::ResolverConfig::default_for(&suffix))
-            .await
-        {
+        let handle = match devx_dns::serve(dns_port, config.clone()).await {
             Ok(handle) => handle,
-            Err(_) => devx_dns::serve(0, devx_dns::ResolverConfig::default_for(&suffix))
+            Err(_) => devx_dns::serve(0, config)
                 .await
                 .map_err(|err| {
                     Error::conflict(format!("could not start the DNS resolver: {err}")).with_hint(
@@ -125,6 +154,48 @@ pub async fn dns_start(state: State<'_, AppState>) -> Result<DnsStatus, Error> {
     }
 
     dns_status(state).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn site(hostname: &str, server: devx_core::config::WebServer, alias: Option<&str>) -> devx_core::config::Site {
+        devx_core::config::Site {
+            hostname: hostname.to_owned(),
+            docroot: "C:\\sites\\app".to_owned(),
+            php_version: String::new(),
+            https: false,
+            web_server: server,
+            env: Default::default(),
+            aliases: alias.map(|a| vec![a.to_owned()]).unwrap_or_default(),
+            auth: None,
+        }
+    }
+
+    #[test]
+    fn ip_map_points_each_name_at_its_owner_loopback() {
+        use devx_core::config::WebServer;
+        let mut config = devx_core::config::Config::default();
+        config.sites.push(site("app.test", WebServer::Nginx, None));
+        config
+            .sites
+            .push(site("mtdb.test", WebServer::Apache, Some("www.mtdb.test")));
+
+        let map = site_ip_map(&config);
+        assert_eq!(
+            map.get("app.test"),
+            Some(&std::net::Ipv4Addr::new(127, 0, 0, 1))
+        );
+        assert_eq!(
+            map.get("mtdb.test"),
+            Some(&std::net::Ipv4Addr::new(127, 0, 0, 2))
+        );
+        assert_eq!(
+            map.get("www.mtdb.test"),
+            Some(&std::net::Ipv4Addr::new(127, 0, 0, 2))
+        );
+    }
 }
 
 /// Re-installs the NRPT rule for the running resolver, prompting for

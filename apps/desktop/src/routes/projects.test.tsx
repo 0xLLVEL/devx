@@ -43,6 +43,7 @@ function project(overrides: Record<string, unknown> = {}) {
         auth: null,
         port: 80,
         https_port: 443,
+        url: "http://myapp.test",
       },
     ],
     workers: [

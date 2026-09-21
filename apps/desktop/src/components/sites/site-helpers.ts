@@ -15,7 +15,11 @@ export function serverLabel(server: SiteStatus["web_server"]): string {
 }
 
 export function siteUrl(site: SiteStatus): string {
-  // ponytail: nginx is the front door, so site URLs are always bare —
-  // backends keep their own ports, but users never type them.
+  // ponytail: the backend owns URL resolution (bare on the owner's
+  // loopback, `:port` on override); the UI just opens what it is told.
+  const url = (site as { url?: unknown }).url;
+  if (typeof url === "string" && url.length > 0) {
+    return url;
+  }
   return `${site.https ? "https" : "http"}://${site.hostname}`;
 }

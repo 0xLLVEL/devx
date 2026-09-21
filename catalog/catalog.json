@@ -48,7 +48,7 @@
       "id": "nginx",
       "name": "Nginx",
       "kind": "web_server",
-      "summary": "Reverse proxy and static file server that fronts every DevX site.",
+      "summary": "High-performance HTTP server for DevX sites on its own loopback.",
       "homepage": "https://nginx.org/",
       "license": "BSD-2-Clause",
       "multi_version": false,

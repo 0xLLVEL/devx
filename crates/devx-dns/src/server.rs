@@ -14,6 +14,14 @@ use tokio::net::UdpSocket;
 
 use crate::message::{ARecord, Message, MAX_MESSAGE_BYTES};
 
+/// Shared hostname-to-address map, keyed by lowercased FQDN.
+///
+/// Held in an `Arc` so the desktop app rewrites it on every site mutation
+/// while the UDP loop keeps answering: no resolver restart is needed to
+/// pick up a new site. A plain `std` lock is enough; writes are rare and
+/// reads never block on I/O while holding it.
+pub type DnsMap = std::sync::Arc<std::sync::RwLock<std::collections::HashMap<String, Ipv4Addr>>>;
+
 /// Where non-DevX names are forwarded, and what DevX names resolve to.
 #[derive(Debug, Clone)]
 pub struct ResolverConfig {
@@ -21,6 +29,10 @@ pub struct ResolverConfig {
     pub local_suffix: String,
     /// Address DevX sites resolve to.
     pub local_address: Ipv4Addr,
+    /// Per-site overrides: exact hostnames (and aliases) to their owning
+    /// server's loopback address. Shared with the desktop app, which keeps
+    /// it equal to the configured sites.
+    pub hosts: DnsMap,
     /// System resolvers that receive forwarded queries, in order.
     pub forwarders: Vec<SocketAddr>,
     /// Answer TTL in seconds; short so shutdowns are honoured fast.
@@ -38,6 +50,7 @@ impl ResolverConfig {
         Self {
             local_suffix: suffix.to_ascii_lowercase(),
             local_address: Ipv4Addr::LOCALHOST,
+            hosts: DnsMap::default(),
             forwarders: vec![
                 SocketAddr::from(([1, 1, 1, 1], 53)),
                 SocketAddr::from(([8, 8, 8, 8], 53)),
@@ -69,12 +82,34 @@ impl ResolverConfig {
     }
 
     /// The answer for a local name, when it should have one.
+    ///
+    /// Exact map hits win (site hostnames and aliases point at their
+    /// owning server's loopback); otherwise the longest registered parent
+    /// suffix wins, so `api.mtdb.test` follows `mtdb.test` to Apache.
+    /// Anything else falls back to the single loopback address, preserving
+    /// the old wildcard behaviour for unmapped names.
     fn local_answer(&self, name: &str) -> Option<ARecord> {
+        let address = self.mapped_address(name).unwrap_or(self.local_address);
         Some(ARecord {
             name: name.to_owned(),
-            address: self.local_address,
+            address,
             ttl: self.ttl,
         })
+    }
+
+    /// Looks `name` up in the shared map with parent-suffix fallback.
+    fn mapped_address(&self, name: &str) -> Option<Ipv4Addr> {
+        let map = self.hosts.read().ok()?;
+        let mut cursor = name.to_ascii_lowercase();
+        loop {
+            if let Some(addr) = map.get(&cursor) {
+                return Some(*addr);
+            }
+            match cursor.find('.') {
+                Some(dot) => cursor = cursor[dot + 1..].to_owned(),
+                None => return None,
+            }
+        }
     }
 }
 
@@ -258,6 +293,40 @@ mod tests {
         let reply = build_reply(&config, &packet).expect("answer");
 
         assert!(reply.ends_with(&[127, 0, 0, 1]), "loopback answer");
+    }
+
+    fn mapped_config() -> ResolverConfig {
+        let config = ResolverConfig::default_for("test");
+        config.hosts.write().expect("lock").insert(
+            "mtdb.test".to_owned(),
+            Ipv4Addr::new(127, 0, 0, 2),
+        );
+        config
+    }
+
+    #[test]
+    fn mapped_names_answer_with_their_owner_loopback() {
+        let config = mapped_config();
+        let reply = build_reply(&config, &query("mtdb.test", 1)).expect("answer");
+        assert!(reply.ends_with(&[127, 0, 0, 2]), "owner answer");
+
+        // Case-insensitive, like the rest of DNS.
+        let reply = build_reply(&config, &query("MTDB.TEST", 1)).expect("answer");
+        assert!(reply.ends_with(&[127, 0, 0, 2]), "owner answer");
+    }
+
+    #[test]
+    fn subdomains_follow_their_parent_mapping() {
+        let config = mapped_config();
+        let reply = build_reply(&config, &query("api.mtdb.test", 1)).expect("answer");
+        assert!(reply.ends_with(&[127, 0, 0, 2]), "parent answer");
+    }
+
+    #[test]
+    fn unmapped_names_keep_the_plain_loopback() {
+        let config = mapped_config();
+        let reply = build_reply(&config, &query("other.test", 1)).expect("answer");
+        assert!(reply.ends_with(&[127, 0, 0, 1]), "fallback answer");
     }
 
     #[test]

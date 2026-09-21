@@ -30,7 +30,8 @@ pub const QUICK_TUNNEL_SUFFIX: &str = "trycloudflare.com";
 /// `local_url` (e.g. `http://127.0.0.1:80`).
 ///
 /// The URL must be loopback or localhost — a share is a bridge to something
-/// DevX itself serves, never a proxy for an arbitrary remote.
+/// DevX itself serves, never a proxy for an arbitrary remote. The whole
+/// `127.0.0.0/8` range counts: each web server binds its own loopback.
 pub fn tunnel_args(local_url: &str) -> Vec<String> {
     let lowered = local_url.to_ascii_lowercase();
     let loopback = {
@@ -39,7 +40,11 @@ pub fn tunnel_args(local_url: &str) -> Vec<String> {
             .map(|(_, rest)| rest)
             .unwrap_or(&lowered);
         let host = after_scheme.split(['/', ':']).next().unwrap_or_default();
-        host == "127.0.0.1" || host == "localhost" || host == "::1"
+        host == "localhost"
+            || host == "::1"
+            || host
+                .strip_prefix("127.")
+                .is_some_and(|rest| rest.split('.').all(|p| p.parse::<u8>().is_ok()))
     };
     if !loopback {
         // The desktop layer validates further; this is the last-line check.
@@ -105,6 +110,15 @@ mod tests {
     fn tunnel_args_refuse_non_loopback_targets() {
         assert!(tunnel_args("http://example.com").is_empty());
         assert!(tunnel_args("http://10.1.2.3:9000").is_empty());
+    }
+
+    #[test]
+    fn tunnel_args_accept_any_loopback_octet() {
+        // Each web server binds its own 127.x address.
+        let args = tunnel_args("http://127.0.0.2:80");
+        assert!(args.contains(&"--url".to_owned()));
+        assert!(args.contains(&"http://127.0.0.2:80".to_owned()));
+        assert!(tunnel_args("http://127.0.0.999:80").is_empty());
     }
 
     #[test]

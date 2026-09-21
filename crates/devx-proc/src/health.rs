@@ -18,6 +18,18 @@ pub enum HealthCheck {
     ///
     /// The usual check for servers: it proves the port is actually accepting.
     TcpPort(u16),
+    /// Ready when a TCP connection to `host:port` succeeds.
+    ///
+    /// For servers bound to their own loopback (each DevX web server owns
+    /// 80/443 on a distinct `127.x` address), the plain `TcpPort` check
+    /// dials the wrong address: it either never passes (stuck `Starting`)
+    /// or passes against a *different* server on the same port.
+    TcpAddr {
+        /// Loopback address the service bound.
+        host: std::net::Ipv4Addr,
+        /// Port the service bound.
+        port: u16,
+    },
     /// Ready when a line matching this substring appears in the output.
     LogContains(String),
 }
@@ -49,6 +61,13 @@ mod tests {
     #[test]
     fn non_log_checks_never_match_a_line() {
         assert!(!log_line_signals_ready(&HealthCheck::TcpPort(3306), "3306"));
+        assert!(!log_line_signals_ready(
+            &HealthCheck::TcpAddr {
+                host: std::net::Ipv4Addr::LOCALHOST,
+                port: 80,
+            },
+            "80"
+        ));
         assert!(!log_line_signals_ready(
             &HealthCheck::Uptime(Duration::from_secs(1)),
             "anything"

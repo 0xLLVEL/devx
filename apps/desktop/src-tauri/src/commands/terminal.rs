@@ -45,9 +45,9 @@ fn cloudflared_exe(state: &AppState) -> Result<std::path::PathBuf, Error> {
 
 /// Shares `hostname` publicly through a Cloudflare quick tunnel.
 ///
-/// The tunnel targets whichever port nginx actually serves (live allocation
-/// or configured default), so the public URL reaches the same server block
-/// the local `.test` host name does.
+/// The tunnel targets the owning server's loopback and HTTP port (live
+/// allocation or configured default), so the public URL reaches the same
+/// site block the local `.test` host name does — no front door involved.
 #[tauri::command]
 #[specta::specta]
 pub async fn tunnel_start(
@@ -57,18 +57,21 @@ pub async fn tunnel_start(
     devx_provision::sites::validate_hostname(&hostname)?;
     let exe = cloudflared_exe(&state)?;
 
-    // nginx must be running to have anything to forward to; the port comes
-    // from its supervisor (reallocated ports included), else the default.
-    let nginx_port = state
-        .services
-        .port_of("nginx")
-        .or_else(|| {
-            devx_provision::definition_for("nginx")
-                .ok()
-                .and_then(|def| def.default_port)
+    // Forward to the owning server's own loopback and HTTP port (live
+    // allocation included), else its default.
+    let site = state
+        .with_config(|store| {
+            store
+                .config()
+                .sites
+                .iter()
+                .find(|s| s.hostname.eq_ignore_ascii_case(&hostname))
+                .cloned()
         })
-        .ok_or_else(|| Error::conflict("nginx has no port to forward"))?;
-    let local_url = format!("http://127.0.0.1:{nginx_port}");
+        .ok_or_else(|| Error::not_found(format!("site `{hostname}` is not configured")))?;
+    let bind_ip = devx_provision::server_ip_for_component(site.web_server.component_id());
+    let http_port = crate::commands::sites::server_port_for(&state, site.web_server);
+    let local_url = format!("http://{bind_ip}:{http_port}");
 
     let id = tunnel_service_id(&hostname);
     let args = devx_provision::tunnel::tunnel_args(&local_url);

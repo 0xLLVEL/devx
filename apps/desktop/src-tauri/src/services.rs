@@ -106,11 +106,17 @@ pub fn plan_service(
         let _ = std::fs::create_dir_all(&sites_dir);
     }
 
-    // Apache terminates TLS on its own HTTPS port (443 belongs to nginx);
-    // the httpd.conf template renders `Listen` for it from this extra value.
-    // Resolved from the on-disk config so httpd.conf and the site vhosts
-    // (written at sync time) always agree.
+    // Each web server binds its own loopback IP, so all of them own 80/443
+    // and site URLs stay bare with no proxy. Apache additionally terminates
+    // TLS on its own HTTPS port; both are resolved from the on-disk config
+    // so the main conf and the site vhosts (written at sync time) agree.
     let mut extra = std::collections::BTreeMap::new();
+    if matches!(component_id, "nginx" | "apache" | "caddy" | "frankenphp") {
+        extra.insert(
+            "bind_ip".to_owned(),
+            devx_provision::server_ip_for_component(component_id).to_string(),
+        );
+    }
     if component_id == "apache" {
         let ports = devx_core::ConfigStore::load(paths)
             .map(|store| store.config().service_ports.clone())
@@ -154,8 +160,15 @@ fn build_spec(
     spec.args = plan.args.clone();
     spec.env = plan.env.clone();
     spec.working_dir = plan.working_dir.clone();
+    // The check must dial the address the service actually bound: each web
+    // server owns 80/443 on its own loopback, so plain-localhost probing
+    // would either hang forever or pass against the wrong server.
+    let bind_ip = devx_provision::server_ip_for_component(component_id);
     spec.health = match (&plan.readiness, port) {
-        (Readiness::TcpPort, Some(port)) => HealthCheck::TcpPort(port),
+        (Readiness::TcpPort, Some(port)) => HealthCheck::TcpAddr {
+            host: bind_ip,
+            port,
+        },
         (Readiness::TcpPort, None) => HealthCheck::Uptime(Duration::from_millis(500)),
         (Readiness::LogContains(needle), _) => HealthCheck::LogContains(needle.clone()),
         (Readiness::UptimeMs(ms), _) => HealthCheck::Uptime(Duration::from_millis(*ms)),
@@ -443,6 +456,40 @@ mod tests {
 
         let plan = plan_service(&paths, "apache", "2.4.68", &[], Some(9999)).expect("plan");
         assert_eq!(plan.port.resolved_port(), Some(9999));
+    }
+
+    #[test]
+    fn health_check_dials_the_servers_own_loopback() {
+        use devx_proc::HealthCheck;
+
+        let dir = tempfile::tempdir().expect("temp");
+        let paths = AppPaths::rooted_at(dir.path());
+        paths.ensure_dirs().expect("dirs");
+
+        // Apache binds 127.0.0.2: probing plain loopback would hang forever
+        // (or pass against a different server on the same port).
+        let apache = plan_service(&paths, "apache", "2.4.68", &[], Some(9999)).expect("plan");
+        assert!(
+            matches!(
+                apache.spec.health,
+                HealthCheck::TcpAddr { host, port }
+                if host == std::net::Ipv4Addr::new(127, 0, 0, 2) && port == 9999
+            ),
+            "unexpected health: {:?}",
+            apache.spec.health
+        );
+
+        let nginx = plan_service(&paths, "nginx", "1.31.5", &[], None).expect("plan");
+        let nginx_port = nginx.port.resolved_port().expect("port");
+        assert!(
+            matches!(
+                nginx.spec.health,
+                HealthCheck::TcpAddr { host, port }
+                if host == std::net::Ipv4Addr::LOCALHOST && port == nginx_port
+            ),
+            "unexpected health: {:?}",
+            nginx.spec.health
+        );
     }
 
     // --- PHP pools ---------------------------------------------------------

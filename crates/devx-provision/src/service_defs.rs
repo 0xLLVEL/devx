@@ -14,9 +14,10 @@ use devx_core::{Error, Result};
 
 use crate::service::{ConfigFile, InitStep, Readiness, ServiceDefinition};
 
-/// Default HTTPS port for Apache. 443 belongs to nginx, so Apache terminates
-/// TLS on its own port; override with [`APACHE_HTTPS_PORT_KEY`].
-pub const DEFAULT_APACHE_HTTPS_PORT: u16 = 8443;
+/// Default HTTPS port for Apache. Each server owns 80/443 on its own
+/// loopback IP, so sharing the port number is safe; override with
+/// [`APACHE_HTTPS_PORT_KEY`].
+pub const DEFAULT_APACHE_HTTPS_PORT: u16 = 443;
 
 /// `service_ports` key overriding the Apache HTTPS port.
 pub const APACHE_HTTPS_PORT_KEY: &str = "apache-https";
@@ -113,7 +114,7 @@ http {
     scgi_temp_path        {{ data_dir }}/scgi_temp;
 
     server {
-        listen       {{ port }};
+        listen       {{ bind_ip }}:{{ port }};
         server_name  localhost;
         location / {
             root   {{ install_dir }}/html;
@@ -125,8 +126,10 @@ http {
 
     # Catch-all: unknown Host must not fall into the first
     # alphabetical site (app.test vs app2.test). Return 404.
+    # The bind is explicit: the other servers own 80/443 on their own
+    # loopback IPs, and a wildcard here would steal their traffic.
     server {
-        listen       {{ port }} default_server;
+        listen       {{ bind_ip }}:{{ port }} default_server;
         server_name  _;
         return 404;
     }
@@ -300,21 +303,25 @@ fn meilisearch() -> ServiceDefinition {
 fn caddy() -> ServiceDefinition {
     // A minimal Caddyfile: serve the data directory statically on the
     // assigned port. Admin endpoint and auto-HTTPS are off so a local dev
-    // instance binds exactly one port and never prompts for certs.
+    // instance binds exactly one port and never prompts for certs. Per-site
+    // files under `sites/` carry their own `bind`, so this base file binds
+    // the server's loopback IP explicitly instead of all interfaces.
     let caddyfile = r##"{
 	admin off
 	auto_https off
 }
 
-:{{ port }} {
+{{ bind_ip }}:{{ port }} {
 	root * {{ data_dir }}/www
 	file_server
 }
+
+import {{ config_dir }}/sites/*.conf
 "##;
 
     ServiceDefinition {
         component_id: "caddy".into(),
-        default_port: Some(8080),
+        default_port: Some(80),
         config_files: vec![ConfigFile {
             relative_path: "Caddyfile".into(),
             template: caddyfile.into(),
@@ -417,7 +424,7 @@ fn frankenphp() -> ServiceDefinition {
     // `php-server` mode: one binary serving PHP directly, no FastCGI pool.
     ServiceDefinition {
         component_id: "frankenphp".into(),
-        default_port: Some(8082),
+        default_port: Some(80),
         config_files: vec![],
         init_steps: vec![],
         program: "frankenphp.exe".into(),
@@ -426,7 +433,7 @@ fn frankenphp() -> ServiceDefinition {
             "--root".into(),
             "{{ data_dir }}/www".into(),
             "--listen".into(),
-            "127.0.0.1:{{ port }}".into(),
+            "{{ bind_ip }}:{{ port }}".into(),
         ],
         env: vec![],
         working_dir: None,
@@ -452,8 +459,8 @@ fn apache() -> ServiceDefinition {
     //    would otherwise send a `/C:/...` path (leading slash), and php-cgi
     //    refuses scripts without REDIRECT_STATUS (cgi.force_redirect).
     let httpd_conf = r##"ServerRoot "{{ install_dir }}/Apache24"
-Listen 127.0.0.1:{{ port }}
-Listen 127.0.0.1:{{ https_port }}
+Listen {{ bind_ip }}:{{ port }}
+Listen {{ bind_ip }}:{{ https_port }}
 ServerName localhost
 
 LoadModule ssl_module modules/mod_ssl.so
@@ -503,7 +510,7 @@ IncludeOptional "{{ config_dir }}/sites/*.conf"
 
     ServiceDefinition {
         component_id: "apache".into(),
-        default_port: Some(8085),
+        default_port: Some(80),
         config_files: vec![ConfigFile {
             relative_path: "httpd.conf".into(),
             template: httpd_conf.into(),
@@ -530,13 +537,16 @@ mod tests {
     use std::path::Path;
 
     fn ctx(port: u16) -> RenderContext {
+        let mut extra = BTreeMap::new();
+        extra.insert("bind_ip".into(), "127.0.0.1".into());
+        extra.insert("https_port".into(), "443".into());
         RenderContext {
             install_dir: Path::new("C:/devx/install").to_path_buf(),
             config_dir: Path::new("C:/devx/config").to_path_buf(),
             data_dir: Path::new("C:/devx/data").to_path_buf(),
             log_dir: Path::new("C:/devx/logs").to_path_buf(),
             port: Some(port),
-            extra: BTreeMap::new(),
+            extra,
         }
     }
 
@@ -558,7 +568,7 @@ mod tests {
 
     #[test]
     fn web_servers_resolve_with_their_ports() {
-        for (id, port) in [("traefik", 8090), ("frankenphp", 8082)] {
+        for (id, port) in [("traefik", 8090), ("frankenphp", 80)] {
             let def = definition_for(id).unwrap_or_else(|_| panic!("missing {id}"));
             assert_eq!(def.default_port, Some(port));
         }
@@ -568,11 +578,12 @@ mod tests {
     fn apache_config_renders_with_port_and_fastcgi_proxy() {
         let def = apache();
         let file = &def.config_files[0];
-        let mut ctx = ctx(8085);
+        let mut ctx = ctx(80);
+        ctx.extra.insert("bind_ip".into(), "127.0.0.2".into());
         ctx.extra
             .insert("https_port".into(), DEFAULT_APACHE_HTTPS_PORT.to_string());
         let rendered = render_template(&file.template, &ctx);
-        assert!(rendered.contains("Listen 127.0.0.1:8085"), "{rendered}");
+        assert!(rendered.contains("Listen 127.0.0.2:80"), "{rendered}");
         assert!(
             rendered.contains("SetHandler \"proxy:fcgi://127.0.0.1:9100/\""),
             "{rendered}"
@@ -593,10 +604,11 @@ mod tests {
     fn apache_config_listens_for_tls_with_ssl_loaded() {
         let def = apache();
         let file = &def.config_files[0];
-        let mut ctx = ctx(8085);
-        ctx.extra.insert("https_port".into(), "8443".into());
+        let mut ctx = ctx(80);
+        ctx.extra.insert("bind_ip".into(), "127.0.0.2".into());
+        ctx.extra.insert("https_port".into(), "443".into());
         let rendered = render_template(&file.template, &ctx);
-        assert!(rendered.contains("Listen 127.0.0.1:8443"), "{rendered}");
+        assert!(rendered.contains("Listen 127.0.0.2:443"), "{rendered}");
         assert!(
             rendered.contains("LoadModule ssl_module modules/mod_ssl.so"),
             "{rendered}"
@@ -606,7 +618,7 @@ mod tests {
 
     #[test]
     fn apache_https_port_defaults_and_overrides() {
-        assert_eq!(apache_https_port(&BTreeMap::new()), 8443);
+        assert_eq!(apache_https_port(&BTreeMap::new()), 443);
         let mut ports = BTreeMap::new();
         ports.insert(APACHE_HTTPS_PORT_KEY.to_owned(), 9443);
         assert_eq!(apache_https_port(&ports), 9443);
@@ -616,16 +628,19 @@ mod tests {
     fn caddyfile_renders_with_the_assigned_port_and_no_tls() {
         let def = caddy();
         let file = &def.config_files[0];
-        let rendered = render_template(&file.template, &ctx(8080));
-        assert!(rendered.contains(":8080 {"), "{rendered}");
+        let mut ctx = ctx(80);
+        ctx.extra.insert("bind_ip".into(), "127.0.0.3".into());
+        let rendered = render_template(&file.template, &ctx);
+        assert!(rendered.contains("127.0.0.3:80 {"), "{rendered}");
         assert!(rendered.contains("admin off"), "{rendered}");
+        assert!(rendered.contains("import "), "{rendered}");
         assert!(!rendered.contains('\\'), "paths must use forward slashes");
     }
 
     #[test]
     fn new_services_resolve_with_their_ports() {
         for (id, port) in [
-            ("caddy", 8080),
+            ("caddy", 80),
             ("nats-server", 4222),
             ("etcd", 2379),
             ("mongodb", 27017),
@@ -640,8 +655,8 @@ mod tests {
     fn nginx_config_renders_with_the_assigned_port() {
         let def = nginx();
         let file = &def.config_files[0];
-        let rendered = render_template(&file.template, &ctx(8080));
-        assert!(rendered.contains("listen       8080;"), "{rendered}");
+        let rendered = render_template(&file.template, &ctx(80));
+        assert!(rendered.contains("listen       127.0.0.1:80;"), "{rendered}");
         assert!(!rendered.contains('\\'), "paths must use forward slashes");
     }
 
