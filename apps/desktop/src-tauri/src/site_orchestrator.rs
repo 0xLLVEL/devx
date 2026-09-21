@@ -108,10 +108,7 @@ impl<'a> SiteOrchestrator<'a> {
             let mut names = vec![site.hostname.clone()];
             names.extend(site.aliases.clone());
             self.remove_hosts(&names).await;
-            devx_provision::pki::remove_site_cert(
-                &self.state.paths.certs_dir(),
-                &site.hostname,
-            );
+            devx_provision::pki::remove_site_cert(&self.state.paths.certs_dir(), &site.hostname);
             self.flush_dns().await;
             self.restart_server(site.web_server.component_id()).await;
         }
@@ -295,9 +292,7 @@ impl<'a> SiteOrchestrator<'a> {
     /// would otherwise keep pointing at a previous address forever — exactly
     /// the "one site works, the other refuses" failure.
     async fn reconcile_all_hosts(&self) {
-        if self.state.with_config(|s| s.config().network.dns_mode)
-            == devx_core::DnsMode::Resolver
-        {
+        if self.state.with_config(|s| s.config().network.dns_mode) == devx_core::DnsMode::Resolver {
             return;
         }
         let entries: Vec<(String, String)> = self.state.with_config(|store| {
@@ -306,10 +301,9 @@ impl<'a> SiteOrchestrator<'a> {
                 .sites
                 .iter()
                 .flat_map(|site| {
-                    let ip = devx_provision::server_ip_for_component(
-                        site.web_server.component_id(),
-                    )
-                    .to_string();
+                    let ip =
+                        devx_provision::server_ip_for_component(site.web_server.component_id())
+                            .to_string();
                     let mut names = vec![(site.hostname.clone(), ip.clone())];
                     names.extend(site.aliases.iter().map(|a| (a.clone(), ip.clone())));
                     names

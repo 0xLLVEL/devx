@@ -182,12 +182,24 @@ mod tests {
     fn apache_https_renders_tls_vhost_with_cert_paths() {
         let (_dir, svc, certs) = ctx();
         let ctx = sync_ctx(&svc, &certs);
-        let rendered = render(&site("mtdb.test", WebServerKind::Apache), &ctx, &NoopCerts)
-            .expect("render");
+        let rendered =
+            render(&site("mtdb.test", WebServerKind::Apache), &ctx, &NoopCerts).expect("render");
         assert_eq!(rendered.path, PathBuf::from("apache/sites/mtdb.test.conf"));
-        assert!(rendered.content.contains("<VirtualHost 127.0.0.2:8085>"), "{}", rendered.content);
-        assert!(rendered.content.contains("<VirtualHost 127.0.0.2:8443>"), "{}", rendered.content);
-        assert!(rendered.content.contains("SSLEngine on"), "{}", rendered.content);
+        assert!(
+            rendered.content.contains("<VirtualHost 127.0.0.2:8085>"),
+            "{}",
+            rendered.content
+        );
+        assert!(
+            rendered.content.contains("<VirtualHost 127.0.0.2:8443>"),
+            "{}",
+            rendered.content
+        );
+        assert!(
+            rendered.content.contains("SSLEngine on"),
+            "{}",
+            rendered.content
+        );
         assert!(
             rendered.content.contains("sites/mtdb.test/cert.pem"),
             "{}",
@@ -199,23 +211,39 @@ mod tests {
     fn nginx_sites_bind_their_own_loopback() {
         let (_dir, svc, certs) = ctx();
         let ctx = sync_ctx(&svc, &certs);
-        let rendered = render(&site("app.test", WebServerKind::Nginx), &ctx, &NoopCerts)
-            .expect("render");
+        let rendered =
+            render(&site("app.test", WebServerKind::Nginx), &ctx, &NoopCerts).expect("render");
         assert_eq!(rendered.path, PathBuf::from("nginx/sites/app.test.conf"));
-        assert!(rendered.content.contains("listen       127.0.0.1:80;"), "{}", rendered.content);
+        assert!(
+            rendered.content.contains("listen       127.0.0.1:80;"),
+            "{}",
+            rendered.content
+        );
     }
 
     #[test]
     fn caddy_https_uses_tls_directive_not_nginx_syntax() {
         let (_dir, svc, certs) = ctx();
         let ctx = sync_ctx(&svc, &certs);
-        let rendered = render(&site("app.test", WebServerKind::Caddy), &ctx, &NoopCerts)
-            .expect("render");
+        let rendered =
+            render(&site("app.test", WebServerKind::Caddy), &ctx, &NoopCerts).expect("render");
         assert_eq!(rendered.path, PathBuf::from("caddy/sites/app.test.conf"));
         assert!(rendered.content.contains("tls "), "{}", rendered.content);
-        assert!(rendered.content.contains("cert.pem"), "{}", rendered.content);
-        assert!(rendered.content.contains("bind 127.0.0.3"), "{}", rendered.content);
-        assert!(!rendered.content.contains("ssl_certificate"), "{}", rendered.content);
+        assert!(
+            rendered.content.contains("cert.pem"),
+            "{}",
+            rendered.content
+        );
+        assert!(
+            rendered.content.contains("bind 127.0.0.3"),
+            "{}",
+            rendered.content
+        );
+        assert!(
+            !rendered.content.contains("ssl_certificate"),
+            "{}",
+            rendered.content
+        );
         assert!(!rendered.content.contains("listen"), "{}", rendered.content);
     }
 }

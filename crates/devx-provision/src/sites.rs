@@ -195,13 +195,7 @@ pub fn render_server_block(
     php_endpoint: Option<&str>,
     tls: Option<&str>,
 ) -> String {
-    render_server_block_with_port(
-        spec,
-        php_endpoint,
-        tls,
-        80,
-        std::net::Ipv4Addr::LOCALHOST,
-    )
+    render_server_block_with_port(spec, php_endpoint, tls, 80, std::net::Ipv4Addr::LOCALHOST)
 }
 
 /// Renders one nginx `server` block for `spec` on `bind_ip:http_port`.
@@ -973,11 +967,7 @@ mod tests {
     fn frankenphp_site_needs_no_pool_endpoint() {
         let mut site = spec("app.test", Some("8.4.25"));
         site.web_server = WebServerKind::FrankenPhp;
-        let block = render_frankenphp_site(
-            &site,
-            None,
-            std::net::Ipv4Addr::new(127, 0, 0, 4),
-        );
+        let block = render_frankenphp_site(&site, None, std::net::Ipv4Addr::new(127, 0, 0, 4));
 
         assert!(block.contains("app.test {"), "{block}");
         assert!(block.contains("file_server"), "{block}");
@@ -1135,12 +1125,7 @@ mod tests {
     fn caddy_names_are_comma_separated() {
         let mut site = spec("app.test", None);
         site.aliases = vec!["www.app.test".to_owned()];
-        let block = render_caddy_site(
-            &site,
-            None,
-            None,
-            std::net::Ipv4Addr::new(127, 0, 0, 3),
-        );
+        let block = render_caddy_site(&site, None, None, std::net::Ipv4Addr::new(127, 0, 0, 3));
         assert!(block.contains("app.test, www.app.test {"), "{block}");
     }
 
@@ -1333,7 +1318,10 @@ mod tests {
 
         // One file on the owning server, bound to its own loopback: no
         // proxy file in the nginx dir.
-        let direct = service_config.join("apache").join("sites").join("mtdb.test.conf");
+        let direct = service_config
+            .join("apache")
+            .join("sites")
+            .join("mtdb.test.conf");
         assert!(direct.is_file());
         assert!(!sites_dir.join("mtdb.test.conf").exists());
         let body = std::fs::read_to_string(&direct).expect("read block");

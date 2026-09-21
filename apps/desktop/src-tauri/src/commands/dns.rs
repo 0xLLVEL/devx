@@ -106,13 +106,11 @@ pub async fn dns_start(state: State<'_, AppState>) -> Result<DnsStatus, Error> {
         // the resolver's actual port either way.
         let handle = match devx_dns::serve(dns_port, config.clone()).await {
             Ok(handle) => handle,
-            Err(_) => devx_dns::serve(0, config)
-                .await
-                .map_err(|err| {
-                    Error::conflict(format!("could not start the DNS resolver: {err}")).with_hint(
-                        "another resolver may own the port; stop it or change dns_port in Settings",
-                    )
-                })?,
+            Err(_) => devx_dns::serve(0, config).await.map_err(|err| {
+                Error::conflict(format!("could not start the DNS resolver: {err}")).with_hint(
+                    "another resolver may own the port; stop it or change dns_port in Settings",
+                )
+            })?,
         };
         tracing::info!(port = handle.local_addr().port(), "DNS resolver started");
         let mut guard = state
@@ -160,7 +158,11 @@ pub async fn dns_start(state: State<'_, AppState>) -> Result<DnsStatus, Error> {
 mod tests {
     use super::*;
 
-    fn site(hostname: &str, server: devx_core::config::WebServer, alias: Option<&str>) -> devx_core::config::Site {
+    fn site(
+        hostname: &str,
+        server: devx_core::config::WebServer,
+        alias: Option<&str>,
+    ) -> devx_core::config::Site {
         devx_core::config::Site {
             hostname: hostname.to_owned(),
             docroot: "C:\\sites\\app".to_owned(),

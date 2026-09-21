@@ -208,24 +208,15 @@ async fn start_service(state: &AppState, component_id: &str) -> Result<()> {
     let id = plan.spec.id.clone();
 
     // Same self-heal as `service_start`: blocks, hosts, resolver map.
-    if matches!(
-        component_id,
-        "nginx" | "apache" | "caddy" | "frankenphp"
-    ) {
+    if matches!(component_id, "nginx" | "apache" | "caddy" | "frankenphp") {
         crate::commands::sites::resync_resolution(state).await;
     }
 
     // Self-heal stale site blocks on restore, same as `service_start`.
-    if matches!(
-        component_id,
-        "nginx" | "apache" | "caddy" | "frankenphp"
-    ) {
+    if matches!(component_id, "nginx" | "apache" | "caddy" | "frankenphp") {
         let config = state.with_config(|store| store.config().clone());
-        let _ = crate::commands::sites::sync_site_blocks_inner(
-            &state.paths,
-            &state.services,
-            &config,
-        );
+        let _ =
+            crate::commands::sites::sync_site_blocks_inner(&state.paths, &state.services, &config);
     }
 
     crate::services::run_init_steps(&plan.init_steps).await?;

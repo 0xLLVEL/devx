@@ -202,9 +202,7 @@ pub fn ensure_site_cert(
 
 /// Removes a site's certificate directory. Idempotent.
 pub fn remove_site_cert(certs_dir: &Path, hostname: &str) {
-    let dir = certs_dir
-        .join("sites")
-        .join(hostname.to_ascii_lowercase());
+    let dir = certs_dir.join("sites").join(hostname.to_ascii_lowercase());
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -348,20 +346,14 @@ mod tests {
         ensure_ca(&certs).expect("ca");
 
         ensure_site_cert(&certs, "app.test", &[]).expect("issue");
-        let before = std::fs::read_to_string(
-            certs.join("sites").join("app.test").join("cert.pem"),
-        )
-        .expect("read");
+        let before = std::fs::read_to_string(certs.join("sites").join("app.test").join("cert.pem"))
+            .expect("read");
         ensure_site_cert(&certs, "app.test", &["www.app.test".to_owned()]).expect("reissue");
-        let after = std::fs::read_to_string(
-            certs.join("sites").join("app.test").join("cert.pem"),
-        )
-        .expect("read");
+        let after = std::fs::read_to_string(certs.join("sites").join("app.test").join("cert.pem"))
+            .expect("read");
         assert_ne!(before, after, "new SAN set must reissue");
-        let sans = std::fs::read_to_string(
-            certs.join("sites").join("app.test").join("sans.txt"),
-        )
-        .expect("sans");
+        let sans = std::fs::read_to_string(certs.join("sites").join("app.test").join("sans.txt"))
+            .expect("sans");
         assert!(sans.contains("www.app.test"), "{sans}");
     }
 
@@ -390,7 +382,10 @@ mod tests {
             std::net::Ipv4Addr::new(127, 0, 0, 2),
             certs,
         );
-        assert!(snippet.contains("listen       127.0.0.2:443 ssl;"), "{snippet}");
+        assert!(
+            snippet.contains("listen       127.0.0.2:443 ssl;"),
+            "{snippet}"
+        );
         assert!(
             snippet.contains("C:/devx/certs/sites/myapp.test/cert.pem;"),
             "{snippet}"

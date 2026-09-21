@@ -117,9 +117,8 @@ pub(crate) async fn reconcile_hosts_entries(state: &State<'_, AppState>, mode: d
             .sites
             .iter()
             .flat_map(|site| {
-                let ip =
-                    devx_provision::server_ip_for_component(site.web_server.component_id())
-                        .to_string();
+                let ip = devx_provision::server_ip_for_component(site.web_server.component_id())
+                    .to_string();
                 let mut names = vec![(site.hostname.clone(), ip.clone())];
                 names.extend(site.aliases.iter().map(|a| (a.clone(), ip.clone())));
                 names
@@ -354,12 +353,10 @@ pub(crate) fn newest_installed_component(
 ///
 /// One sync per mutation keeps the include directory exactly equal to the
 /// configured set, which is what makes web server restarts deterministic.
-fn server_port(
-    state: &State<'_, AppState>,
-    component_id: &str,
-    fallback: u16,
-) -> u16 {
-    state.with_config(|store| server_port_inner(&state.services, store.config(), component_id, fallback))
+fn server_port(state: &State<'_, AppState>, component_id: &str, fallback: u16) -> u16 {
+    state.with_config(|store| {
+        server_port_inner(&state.services, store.config(), component_id, fallback)
+    })
 }
 
 /// Registry + config variant, for call sites holding `&AppState` instead of
@@ -380,7 +377,10 @@ pub(crate) fn server_port_inner(
     devx_provision::default_port_for(component_id).unwrap_or(fallback)
 }
 
-pub(crate) fn server_port_for(state: &State<'_, AppState>, server: devx_core::config::WebServer) -> u16 {
+pub(crate) fn server_port_for(
+    state: &State<'_, AppState>,
+    server: devx_core::config::WebServer,
+) -> u16 {
     match server {
         devx_core::config::WebServer::Nginx => server_port(
             state,
@@ -403,9 +403,8 @@ pub(crate) fn server_https_port_for(
         devx_core::config::WebServer::Nginx => {
             state.with_config(|store| store.config().network.https_port)
         }
-        devx_core::config::WebServer::Apache => state.with_config(|store| {
-            devx_provision::apache_https_port(&store.config().service_ports)
-        }),
+        devx_core::config::WebServer::Apache => state
+            .with_config(|store| devx_provision::apache_https_port(&store.config().service_ports)),
         devx_core::config::WebServer::Caddy | devx_core::config::WebServer::FrankenPhp => {
             state.with_config(|store| store.config().network.https_port)
         }
@@ -485,32 +484,40 @@ pub(crate) async fn resync_resolution(state: &AppState) {
     }
 
     if config.network.dns_mode != devx_core::DnsMode::Resolver {
-        let _ = crate::helper::ensure_helper_running().await;
-        if devx_privileged::PipeClient::is_available() {
-            if let Ok(mut client) = devx_privileged::PipeClient::connect() {
-                if client.hello().await.is_ok() {
-                    for site in &config.sites {
-                        let ip = devx_provision::server_ip_for_component(
-                            site.web_server.component_id(),
-                        )
-                        .to_string();
-                        let _ = client
+        if let Err(err) = crate::helper::ensure_helper_running().await {
+            tracing::warn!(error = %err, "helper not running: hosts entries not re-synced");
+        } else if !devx_privileged::PipeClient::is_available() {
+            tracing::warn!("helper pipe unavailable: hosts entries not re-synced");
+        } else if let Ok(mut client) = devx_privileged::PipeClient::connect() {
+            if client.hello().await.is_ok() {
+                for site in &config.sites {
+                    let ip =
+                        devx_provision::server_ip_for_component(site.web_server.component_id())
+                            .to_string();
+                    if let Err(err) = client
+                        .add_hosts_entry(devx_ipc::HostsEntry {
+                            hostname: site.hostname.clone(),
+                            ip: ip.clone(),
+                        })
+                        .await
+                    {
+                        tracing::warn!(error = %err, host = %site.hostname, "hosts entry not written");
+                    }
+                    for alias in &site.aliases {
+                        if let Err(err) = client
                             .add_hosts_entry(devx_ipc::HostsEntry {
-                                hostname: site.hostname.clone(),
+                                hostname: alias.clone(),
                                 ip: ip.clone(),
                             })
-                            .await;
-                        for alias in &site.aliases {
-                            let _ = client
-                                .add_hosts_entry(devx_ipc::HostsEntry {
-                                    hostname: alias.clone(),
-                                    ip: ip.clone(),
-                                })
-                                .await;
+                            .await
+                        {
+                            tracing::warn!(error = %err, host = %alias, "hosts entry not written");
                         }
                     }
-                    let _ = client.flush_dns().await;
                 }
+                let _ = client.flush_dns().await;
+            } else {
+                tracing::warn!("helper handshake failed: hosts entries not re-synced");
             }
         }
     }
@@ -790,7 +797,10 @@ mod url_tests {
 
     #[test]
     fn standard_ports_resolve_to_bare_urls() {
-        assert_eq!(resolve_site_url("mtdb.test", false, 80, 443), "http://mtdb.test");
+        assert_eq!(
+            resolve_site_url("mtdb.test", false, 80, 443),
+            "http://mtdb.test"
+        );
         assert_eq!(
             resolve_site_url("mtdb.test", true, 80, 443),
             "https://mtdb.test"

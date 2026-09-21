@@ -1,4 +1,4 @@
-﻿//! Built-in service definitions for the catalog components.
+//! Built-in service definitions for the catalog components.
 //!
 //! These are the recipes that make an installed component runnable. Each is
 //! hand-written from the component's documented Windows invocation and verified
@@ -656,7 +656,10 @@ mod tests {
         let def = nginx();
         let file = &def.config_files[0];
         let rendered = render_template(&file.template, &ctx(80));
-        assert!(rendered.contains("listen       127.0.0.1:80;"), "{rendered}");
+        assert!(
+            rendered.contains("listen       127.0.0.1:80;"),
+            "{rendered}"
+        );
         assert!(!rendered.contains('\\'), "paths must use forward slashes");
     }
 

@@ -295,10 +295,11 @@ mod tests {
 
     fn mapped_config() -> ResolverConfig {
         let config = ResolverConfig::default_for("test");
-        config.hosts.write().expect("lock").insert(
-            "mtdb.test".to_owned(),
-            Ipv4Addr::new(127, 0, 0, 2),
-        );
+        config
+            .hosts
+            .write()
+            .expect("lock")
+            .insert("mtdb.test".to_owned(), Ipv4Addr::new(127, 0, 0, 2));
         config
     }
 
