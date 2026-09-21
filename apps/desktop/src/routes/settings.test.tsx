@@ -95,6 +95,23 @@ describe("SettingsPage", () => {
     );
   });
 
+  it("saves the Apache HTTPS port override for clean-URL takeover", async () => {
+    const user = userEvent.setup();
+    mocks.configSet.mockResolvedValue(configFixture());
+
+    renderWithProviders(<SettingsPage />);
+
+    const input = await screen.findByLabelText("Apache HTTPS port");
+    await user.clear(input);
+    await user.type(input, "443");
+    await user.click(screen.getByRole("button", { name: /save changes/i }));
+
+    await waitFor(() => expect(mocks.configSet).toHaveBeenCalledTimes(1));
+    expect(mocks.configSet.mock.calls[0]?.[0]).toMatchObject({
+      service_ports: { "apache-https": 443 },
+    });
+  });
+
   it("shows the validation error and hint when the backend rejects a value", async () => {
     const user = userEvent.setup();
     const { IpcError } = await import("@/lib/ipc");

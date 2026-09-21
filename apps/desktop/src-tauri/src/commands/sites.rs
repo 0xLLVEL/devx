@@ -452,11 +452,13 @@ pub struct SitePing {
     pub error: Option<String>,
 }
 
-/// Checks one site over HTTP(S) against the local web server.
+/// Checks one site over HTTP(S) through the nginx front door.
 ///
 /// Resolves the host through the system resolver first (the bundled DNS or
 /// the hosts file), then issues a real request so the check covers the whole
-/// chain — DNS, TLS, server block, and PHP when the docroot runs it.
+/// chain — DNS, TLS, front-door proxy, and PHP when the docroot runs it.
+/// Non-nginx sites are reached through their nginx proxy, so the check always
+/// targets the front-door ports and never the backend `:8085`-style URL.
 #[tauri::command]
 #[specta::specta]
 pub async fn site_ping(state: State<'_, AppState>, hostname: String) -> Result<SitePing, Error> {
@@ -474,9 +476,9 @@ pub async fn site_ping(state: State<'_, AppState>, hostname: String) -> Result<S
         .ok_or_else(|| Error::not_found(format!("site `{hostname}` is not configured")))?;
 
     let port = if site.https {
-        server_https_port_for(&state, site.web_server)
+        state.with_config(|store| store.config().network.https_port)
     } else {
-        server_port_for(&state, site.web_server)
+        server_port_for(&state, devx_core::config::WebServer::Nginx)
     };
 
     let started = std::time::Instant::now();
@@ -500,11 +502,23 @@ pub async fn site_ping(state: State<'_, AppState>, hostname: String) -> Result<S
             latency_ms: Some(started.elapsed().as_millis() as u32),
             error: None,
         }),
-        Err(err) => Ok(SitePing {
-            status: None,
-            latency_ms: None,
-            error: Some(err.to_string()),
-        }),
+        Err(err) => {
+            let mut message = err.to_string();
+            let front_up = state
+                .services
+                .get("nginx")
+                .is_some_and(|s| s.state().is_active());
+            if !front_up {
+                message = format!(
+                    "{message} (nginx is the front door for site URLs — start it from Services)"
+                );
+            }
+            Ok(SitePing {
+                status: None,
+                latency_ms: None,
+                error: Some(message),
+            })
+        }
     }
 }
 

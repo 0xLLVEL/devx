@@ -80,6 +80,9 @@ impl<'a> SiteOrchestrator<'a> {
         self.reconcile_hosts(&names).await;
         self.flush_dns().await;
         self.restart_server(site.web_server.component_id()).await;
+        if site.web_server.component_id() != "nginx" {
+            self.restart_server("nginx").await;
+        }
 
         crate::commands::sites::site_list(self.state.clone())
     }
@@ -117,6 +120,9 @@ impl<'a> SiteOrchestrator<'a> {
             );
             self.flush_dns().await;
             self.restart_server(site.web_server.component_id()).await;
+            if site.web_server.component_id() != "nginx" {
+                self.restart_server("nginx").await;
+            }
         }
         crate::commands::sites::site_list(self.state.clone())
     }
@@ -356,6 +362,9 @@ impl<'a> SiteOrchestrator<'a> {
     }
 
     /// Restarts the server owning `hostname` (best-effort when unknown).
+    ///
+    /// Non-nginx sites also own an nginx front-door proxy, so nginx restarts
+    /// alongside the backend whenever it is running.
     async fn restart_for(&self, hostname: &str) {
         let id = self
             .state
@@ -368,6 +377,9 @@ impl<'a> SiteOrchestrator<'a> {
             })
             .unwrap_or_else(|| "nginx".to_owned());
         self.restart_server(&id).await;
+        if id != "nginx" {
+            self.restart_server("nginx").await;
+        }
     }
 
     /// Restarts the owning web server when it is running, so an Apache site

@@ -491,7 +491,8 @@ export function SettingsPage() {
           <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {[
               { id: "nginx", label: "Nginx HTTP port", fallback: draft.network.http_port },
-              { id: "apache", label: "Apache port", fallback: 8080 },
+              { id: "apache", label: "Apache port", fallback: 8085 },
+              { id: "apache-https", label: "Apache HTTPS port", fallback: 8443 },
               { id: "mariadb", label: "MariaDB / MySQL port", fallback: 3306 },
               { id: "postgresql", label: "PostgreSQL port", fallback: 5432 },
               { id: "redis", label: "Redis port", fallback: 6379 },

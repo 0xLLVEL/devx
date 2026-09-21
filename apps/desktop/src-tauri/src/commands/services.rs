@@ -178,8 +178,12 @@ pub async fn service_set_port(
             .await?;
         let _ = crate::commands::sites::sync_site_blocks(&state);
     } else {
-        // If nginx port changed, re-sync site server blocks
-        if component_id == "nginx" {
+        // A web-server port change moves every site's vhost, so re-sync site
+        // server blocks for any web server (or the Apache HTTPS port).
+        if matches!(
+            component_id.as_str(),
+            "nginx" | "apache" | "apache-https" | "caddy" | "frankenphp"
+        ) {
             let _ = crate::commands::sites::sync_site_blocks(&state);
         }
 

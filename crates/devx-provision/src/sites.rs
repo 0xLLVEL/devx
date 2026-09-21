@@ -235,6 +235,51 @@ server {{
     )
 }
 
+/// Renders an nginx front-door block proxying `spec` to its owning server.
+///
+/// Non-nginx sites live on their own ports (Apache 8085, ...), so bare
+/// `http://site` / `https://site` URLs would refuse. This block lets nginx —
+/// the only server on 80/443 — answer the clean URL and forward to
+/// `127.0.0.1:backend_http_port`. `tls` is the same snippet nginx sites use,
+/// so HTTPS terminates at the front with the site's local-CA certificate and
+/// the backend stays plain HTTP. The direct `:<backend>` URL keeps working.
+pub fn render_proxy_block(
+    spec: &SiteSpec,
+    backend_http_port: u16,
+    tls: Option<&str>,
+    http_port: u16,
+) -> String {
+    let server_names = spec_hostname(spec);
+    let log_name = spec.hostname.to_ascii_lowercase();
+
+    format!(
+        r#"# devx-managed proxy: {log_name} -> 127.0.0.1:{backend}
+server {{
+    listen       {http_port};
+    server_name  {server_names};
+{tls}    access_log  logs/{log_name}.proxy.access.log;
+    error_log   logs/{log_name}.proxy.error.log;
+
+    location / {{
+        proxy_pass         http://127.0.0.1:{backend};
+        proxy_http_version 1.1;
+        proxy_set_header   Host $host;
+        proxy_set_header   X-Real-IP $remote_addr;
+        proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+        proxy_set_header   Upgrade $http_upgrade;
+        proxy_set_header   Connection "upgrade";
+    }}
+}}
+"#,
+        log_name = log_name,
+        server_names = server_names,
+        backend = backend_http_port,
+        http_port = http_port,
+        tls = tls.unwrap_or_default(),
+    )
+}
+
 /// Renders the nginx basic-auth directives for one site.
 ///
 /// The `auth_basic` plus `auth_basic_user_file` pair sits at `server` level
@@ -706,35 +751,41 @@ pub fn sync_site_blocks(
     let mut written = Vec::with_capacity(sites.len());
 
     for site in sites {
-        let rendered = crate::site_renderer::render(
+        let files = crate::site_renderer::render(
             site,
             &ctx,
             &crate::site_renderer::ProdCerts(ctx.certs_dir),
         )?;
-        let full_path = ctx.service_config_dir.join(&rendered.path);
-        if let Some(parent) = full_path.parent() {
-            std::fs::create_dir_all(parent).map_err(|err| {
-                Error::new(
-                    ErrorCode::Io,
-                    format!("failed to create {}: {err}", parent.display()),
-                )
-            })?;
-            let auth_dir = parent.join("auth");
-            match &site.auth {
-                Some(auth) => write_htpasswd(&auth_dir, &site.hostname, auth)?,
-                None => remove_htpasswd(&auth_dir, &site.hostname),
+        for rendered in &files {
+            let full_path = ctx.service_config_dir.join(&rendered.path);
+            if let Some(parent) = full_path.parent() {
+                std::fs::create_dir_all(parent).map_err(|err| {
+                    Error::new(
+                        ErrorCode::Io,
+                        format!("failed to create {}: {err}", parent.display()),
+                    )
+                })?;
+            }
+            devx_core::fsx::write_atomic(&full_path, &rendered.content)?;
+        }
+        // htpasswd lives next to the direct block only (files[0]); the
+        // front-door proxy forwards Authorization to the backend untouched.
+        if let Some(direct) = files.first() {
+            let full_path = ctx.service_config_dir.join(&direct.path);
+            if let Some(parent) = full_path.parent() {
+                let auth_dir = parent.join("auth");
+                match &site.auth {
+                    Some(auth) => write_htpasswd(&auth_dir, &site.hostname, auth)?,
+                    None => remove_htpasswd(&auth_dir, &site.hostname),
+                }
             }
         }
-        devx_core::fsx::write_atomic(&full_path, rendered.content)?;
         written.push(site.hostname.clone());
     }
 
-    // ponytail: prune per web_server so an Apache site never keeps a stale nginx block alive.
-    let live_nginx: Vec<String> = sites
-        .iter()
-        .filter(|s| matches!(s.web_server, WebServerKind::Nginx))
-        .map(|s| s.hostname.clone())
-        .collect();
+    // The nginx dir holds direct blocks AND front-door proxies, so every
+    // hostname is live there; the other servers prune per web_server.
+    let live_nginx: Vec<String> = sites.iter().map(|s| s.hostname.clone()).collect();
     let mut pruned = prune_stale_blocks(sites_dir, &live_nginx)?;
     for extra in ["apache", "caddy", "frankenphp"] {
         let dir = ctx.service_config_dir.join(extra).join("sites");
@@ -1021,6 +1072,33 @@ mod tests {
     }
 
     #[test]
+    fn proxy_block_forwards_to_the_backend_on_clean_urls() {
+        let mut site = spec("mtdb.test", Some("8.4.25"));
+        site.web_server = WebServerKind::Apache;
+        site.aliases = vec!["www.mtdb.test".to_owned()];
+        let tls = crate::pki::tls_listen_snippet(
+            "mtdb.test",
+            443,
+            std::path::Path::new("C:/devx/certs"),
+        );
+
+        let block = render_proxy_block(&site, 8085, Some(&tls), 80);
+        assert!(block.contains("server_name  mtdb.test www.mtdb.test;"), "{block}");
+        assert!(
+            block.contains("proxy_pass         http://127.0.0.1:8085;"),
+            "{block}"
+        );
+        assert!(block.contains("proxy_set_header   Host $host;"), "{block}");
+        assert!(
+            block.contains("proxy_set_header   X-Forwarded-Proto $scheme;"),
+            "{block}"
+        );
+        assert!(block.contains("listen       443 ssl;"), "{block}");
+        // No port suffix needed: the front door owns 80/443.
+        assert!(!block.contains("8085;") || block.contains("proxy_pass"), "{block}");
+    }
+
+    #[test]
     fn caddy_names_are_comma_separated() {
         let mut site = spec("app.test", None);
         site.aliases = vec!["www.app.test".to_owned()];
@@ -1176,6 +1254,52 @@ mod tests {
         // references a cert that does not exist.
         assert!(certs.join("sites").join("app.test").is_dir());
         assert!(!certs.join("sites").join("plain.test").exists());
+    }
+
+    #[test]
+    fn sync_writes_an_nginx_proxy_for_apache_sites() {
+        let dir = tempfile::tempdir().expect("temp");
+        let certs = dir.path().join("certs");
+        crate::pki::ensure_ca(&certs).expect("local CA");
+        let service_config = dir.path().join("svc");
+        let sites_dir = service_config.join("nginx").join("sites");
+        let docroot = dir.path().join("www");
+        std::fs::create_dir_all(&docroot).expect("docroot");
+
+        let sites = vec![SyncSite {
+            hostname: "mtdb.test".into(),
+            docroot,
+            php_version: None,
+            https: true,
+            env: Vec::new(),
+            aliases: Vec::new(),
+            web_server: WebServerKind::Apache,
+            auth: None,
+        }];
+
+        sync_site_blocks(
+            &sites_dir,
+            &sites,
+            SyncContext {
+                service_config_dir: &service_config,
+                certs_dir: &certs,
+                http_port: 80,
+                https_port: 443,
+                apache_port: 8085,
+                caddy_port: 8080,
+                frankenphp_port: 8082,
+                apache_https_port: 8443,
+            },
+        )
+        .expect("sync");
+
+        let direct = service_config.join("apache").join("sites").join("mtdb.test.conf");
+        let proxy = sites_dir.join("mtdb.test.conf");
+        assert!(direct.is_file());
+        assert!(proxy.is_file());
+        let proxy_body = std::fs::read_to_string(&proxy).expect("read proxy");
+        assert!(proxy_body.contains("proxy_pass         http://127.0.0.1:8085;"), "{proxy_body}");
+        assert!(proxy_body.contains("server_name  mtdb.test;"), "{proxy_body}");
     }
 
     #[test]

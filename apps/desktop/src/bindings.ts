@@ -318,11 +318,13 @@ export const commands = {
 	/**  Lists the configured sites with their resolved PHP endpoints. */
 	siteList: () => typedError<SiteStatus[], DevxError>(__TAURI_INVOKE("site_list")),
 	/**
-	 *  Checks one site over HTTP(S) against the local web server.
+	 *  Checks one site over HTTP(S) through the nginx front door.
 	 * 
 	 *  Resolves the host through the system resolver first (the bundled DNS or
 	 *  the hosts file), then issues a real request so the check covers the whole
-	 *  chain — DNS, TLS, server block, and PHP when the docroot runs it.
+	 *  chain — DNS, TLS, front-door proxy, and PHP when the docroot runs it.
+	 *  Non-nginx sites are reached through their nginx proxy, so the check always
+	 *  targets the front-door ports and never the backend `:8085`-style URL.
 	 */
 	sitePing: (hostname: string) => typedError<SitePing, DevxError>(__TAURI_INVOKE("site_ping", { hostname })),
 	/**
