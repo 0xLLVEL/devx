@@ -75,9 +75,6 @@ impl<'a> SiteOrchestrator<'a> {
         }
 
         self.ensure_certs(&site).await;
-        let mut names = vec![site.hostname.clone()];
-        names.extend(site.aliases.clone());
-        self.reconcile_hosts(&names, &site).await;
         self.flush_dns().await;
         self.restart_server(site.web_server.component_id()).await;
 
@@ -240,15 +237,6 @@ impl<'a> SiteOrchestrator<'a> {
             let _ = self.state.with_config_mut(|store| store.replace(snap));
             return Err(e);
         }
-        if let Some(site) = self.state.with_config(|s| {
-            s.config()
-                .sites
-                .iter()
-                .find(|s| s.hostname.eq_ignore_ascii_case(hostname))
-                .cloned()
-        }) {
-            self.reconcile_hosts(&[alias_lc], &site).await;
-        }
         self.flush_dns().await;
         self.restart_for(hostname).await;
         crate::commands::sites::site_list(self.state.clone())
@@ -286,15 +274,66 @@ impl<'a> SiteOrchestrator<'a> {
 
     async fn sync_all(&self) -> Result<(), Error> {
         let out = crate::commands::sites::sync_site_blocks(&self.state);
-        // Keep the resolver's hostname map equal to the config, so each
-        // name answers with its owning server's loopback without a restart.
-        let fresh = self
-            .state
-            .with_config(|store| crate::commands::dns::site_ip_map(store.config()));
-        if let Ok(mut map) = self.state.dns_map.write() {
-            *map = fresh;
+        // Only touch name resolution when the blocks landed: on failure the
+        // caller rolls the config back, and hosts must keep matching it.
+        if out.is_ok() {
+            self.reconcile_all_hosts().await;
+            let fresh = self
+                .state
+                .with_config(|store| crate::commands::dns::site_ip_map(store.config()));
+            if let Ok(mut map) = self.state.dns_map.write() {
+                *map = fresh;
+            }
         }
         out
+    }
+
+    /// Rewrites the hosts entries of EVERY site with its owner's loopback.
+    ///
+    /// One central place instead of per-flow single-site writes: a site that
+    /// is never touched again (like a second Apache site added months ago)
+    /// would otherwise keep pointing at a previous address forever — exactly
+    /// the "one site works, the other refuses" failure.
+    async fn reconcile_all_hosts(&self) {
+        if self.state.with_config(|s| s.config().network.dns_mode)
+            == devx_core::DnsMode::Resolver
+        {
+            return;
+        }
+        let entries: Vec<(String, String)> = self.state.with_config(|store| {
+            store
+                .config()
+                .sites
+                .iter()
+                .flat_map(|site| {
+                    let ip = devx_provision::server_ip_for_component(
+                        site.web_server.component_id(),
+                    )
+                    .to_string();
+                    let mut names = vec![(site.hostname.clone(), ip.clone())];
+                    names.extend(site.aliases.iter().map(|a| (a.clone(), ip.clone())));
+                    names
+                })
+                .collect()
+        });
+        if entries.is_empty() {
+            return;
+        }
+        let _ = crate::helper::ensure_helper_running().await;
+        if !devx_privileged::PipeClient::is_available() {
+            return;
+        }
+        if let Ok(mut c) = devx_privileged::PipeClient::connect() {
+            let _ = c.hello().await;
+            for (hostname, ip) in &entries {
+                let _ = c
+                    .add_hosts_entry(devx_ipc::HostsEntry {
+                        hostname: hostname.clone(),
+                        ip: ip.clone(),
+                    })
+                    .await;
+            }
+        }
     }
 
     async fn ensure_certs(&self, site: &ConfigSite) {
@@ -306,34 +345,6 @@ impl<'a> SiteOrchestrator<'a> {
             &site.hostname,
             &site.aliases,
         );
-    }
-
-    async fn reconcile_hosts(&self, names: &[String], site: &ConfigSite) {
-        if names.is_empty()
-            || self.state.with_config(|s| s.config().network.dns_mode)
-                == devx_core::DnsMode::Resolver
-        {
-            return;
-        }
-        // Each name points at its owning server's loopback, so bare URLs
-        // land on the right server with no proxy involved.
-        let ip = devx_provision::server_ip_for_component(site.web_server.component_id())
-            .to_string();
-        let _ = crate::helper::ensure_helper_running().await;
-        if !devx_privileged::PipeClient::is_available() {
-            return;
-        }
-        if let Ok(mut c) = devx_privileged::PipeClient::connect() {
-            let _ = c.hello().await;
-            for n in names {
-                let _ = c
-                    .add_hosts_entry(devx_ipc::HostsEntry {
-                        hostname: n.clone(),
-                        ip: ip.clone(),
-                    })
-                    .await;
-            }
-        }
     }
 
     async fn remove_hosts(&self, names: &[String]) {

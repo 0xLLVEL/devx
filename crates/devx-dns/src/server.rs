@@ -105,10 +105,8 @@ impl ResolverConfig {
             if let Some(addr) = map.get(&cursor) {
                 return Some(*addr);
             }
-            match cursor.find('.') {
-                Some(dot) => cursor = cursor[dot + 1..].to_owned(),
-                None => return None,
-            }
+            let dot = cursor.find('.')?;
+            cursor = cursor[dot + 1..].to_owned();
         }
     }
 }
