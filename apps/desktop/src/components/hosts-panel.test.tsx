@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   hostsAdd: vi.fn(),
   hostsRemove: vi.fn(),
   hostsFlushDns: vi.fn(),
+  hostsResync: vi.fn(),
 }));
 
 vi.mock("@/lib/ipc", async () => {
@@ -61,6 +62,7 @@ describe("HostsManager", () => {
     mocks.hostsAdd.mockResolvedValue([]);
     mocks.hostsRemove.mockResolvedValue([]);
     mocks.hostsFlushDns.mockResolvedValue(null);
+    mocks.hostsResync.mockResolvedValue([]);
   });
 
   it("reads the entries only once the dialog is open", async () => {
@@ -278,6 +280,21 @@ describe("HostsManager", () => {
 
     await waitFor(() => expect(mocks.hostsFlushDns).toHaveBeenCalledTimes(1));
     expect(await screen.findByText("DNS cache flushed")).toBeInTheDocument();
+  });
+
+  it("re-syncs stale entries with their owning servers and says so", async () => {
+    const stale = { hostname: "mtdb.test", ip: "127.0.0.1" };
+    const fixed = { hostname: "mtdb.test", ip: "127.0.0.2" };
+    mocks.hostsList.mockResolvedValue([stale]);
+    mocks.hostsResync.mockResolvedValue([fixed]);
+    const user = await openManager();
+
+    await row("mtdb.test");
+    await user.click(screen.getByRole("button", { name: "Re-sync with sites" }));
+
+    await waitFor(() => expect(mocks.hostsResync).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText("Hosts entries re-synced with your sites")).toBeInTheDocument();
+    expect(await row("mtdb.test")).toBeInTheDocument();
   });
 
   it("reports a refused flush instead of a silent success", async () => {

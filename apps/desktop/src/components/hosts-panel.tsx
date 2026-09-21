@@ -129,6 +129,24 @@ function HostsManager({ open, onClose }: { open: boolean; onClose: () => void })
     },
   });
 
+  const resync = useMutation({
+    mutationFn: ipc.hostsResync,
+    onSuccess: (result) => {
+      queryClient.setQueryData(HOSTS_KEY, result);
+      toast.success("Hosts entries re-synced with your sites", {
+        description:
+          "Every site hostname and alias now points at its owning server. Hand-added lines were left alone.",
+      });
+    },
+    onError: (error) => {
+      toast.error("Hosts entries were not re-synced", {
+        description: reasonOf(error),
+        details: hintOf(error),
+      });
+      void queryClient.invalidateQueries({ queryKey: HOSTS_KEY });
+    },
+  });
+
   const rows = entries.data ?? [];
   const busy = save.isPending || remove.isPending;
 
@@ -142,6 +160,21 @@ function HostsManager({ open, onClose }: { open: boolean; onClose: () => void })
         description="The lines DevX manages in the Windows hosts file. Entries you or other software added are not listed here and are never touched."
         footer={
           <>
+            <Tooltip label="Rewrite every site hostname and alias with its owning server's address">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={resync.isPending}
+                onClick={() => resync.mutate()}
+              >
+                {resync.isPending ? (
+                  <Loader2 className="animate-spin" aria-hidden />
+                ) : (
+                  <RefreshCw aria-hidden />
+                )}
+                Re-sync with sites
+              </Button>
+            </Tooltip>
             <Tooltip label="Drops the whole machine's DNS cache, not just these names">
               <Button
                 type="button"

@@ -256,6 +256,7 @@ export const ipc = {
     unwrap(commands.hostsAdd(hostname, ip)),
   hostsRemove: (hostname: string) => unwrap(commands.hostsRemove(hostname)),
   hostsFlushDns: () => unwrap(commands.hostsFlushDns()),
+  hostsResync: () => unwrap(commands.hostsResync()),
   caStatus: () => unwrap(commands.caStatus()),
   caInstall: () => unwrap(commands.caInstall()),
   caRemove: () => unwrap(commands.caRemove()),

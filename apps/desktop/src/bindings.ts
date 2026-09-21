@@ -629,6 +629,15 @@ export const commands = {
 	 *  helper's refusal when `ipconfig /flushdns` itself fails.
 	 */
 	hostsFlushDns: () => typedError<null, DevxError>(__TAURI_INVOKE("hosts_flush_dns")),
+	/**
+	 *  Rewrites every site hostname and alias with its owning server's loopback.
+	 * 
+	 *  The one-click repair for entries left stale by older DevX (a name pointing
+	 *  at a previous address while its server moved on): entries for names no
+	 *  site owns are left alone, so hand-added custom lines are never touched.
+	 *  Returns the list as it stands after the change.
+	 */
+	hostsResync: () => typedError<HostsEntry[], DevxError>(__TAURI_INVOKE("hosts_resync")),
 };
 
 /** Events */

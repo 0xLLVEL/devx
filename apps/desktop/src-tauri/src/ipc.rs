@@ -133,6 +133,7 @@ pub fn builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::hosts_add,
             commands::hosts_remove,
             commands::hosts_flush_dns,
+            commands::hosts_resync,
         ])
         .events(collect_events![
             events::InstallProgress,

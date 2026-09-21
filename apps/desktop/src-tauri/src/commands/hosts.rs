@@ -106,6 +106,24 @@ pub async fn hosts_flush_dns() -> Result<(), Error> {
     Ok(())
 }
 
+/// Rewrites every site hostname and alias with its owning server's loopback.
+///
+/// The one-click repair for entries left stale by older DevX (a name pointing
+/// at a previous address while its server moved on): entries for names no
+/// site owns are left alone, so hand-added custom lines are never touched.
+/// Returns the list as it stands after the change.
+#[tauri::command]
+#[specta::specta]
+pub async fn hosts_resync(state: tauri::State<'_, crate::state::AppState>) -> Result<Vec<HostsEntry>, Error> {
+    crate::commands::sites::resync_resolution(&state).await;
+
+    if !PipeClient::is_available() {
+        return Err(helper_unavailable());
+    }
+    let mut client = PipeClient::connect()?;
+    client.list_hosts_entries().await
+}
+
 /// Connects to the helper, prompting for elevation when it is not running.
 ///
 /// The prompt this may raise is exactly the one the UI warned about before the
