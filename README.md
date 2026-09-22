@@ -6,7 +6,30 @@ domains with automatic HTTPS, and keeps everything supervised from one window.
 
 Comparable to ServBay or Laravel Herd, built with Rust and Tauri 2.
 
-> Status: under active development. See [Implementation status](#implementation-status).
+## Features
+
+- **Local sites on `.test` domains** — map any project folder to a hostname
+  with automatic HTTP and HTTPS; bare URLs, no port suffixes.
+- **Four web servers** — nginx, Apache, Caddy and FrankenPHP, each on its own
+  loopback address, mixable per site.
+- **Automatic HTTPS** — a local root CA with per-site certificates covering
+  hostnames and aliases, installed to the machine trust store in one click.
+- **Two name-resolution modes** — managed hosts-file entries or a bundled
+  wildcard DNS resolver with NRPT, including subdomains.
+- **Supervised services** — thirteen backing services with health checks,
+  crash restarts, live logs, CPU/RAM metrics and failure notifications.
+- **Multi-version PHP** — isolated FastCGI pools per PHP version with a
+  per-version extension manager.
+- **Queue workers and scheduled tasks** — supervised background processes and
+  real Windows scheduled tasks.
+- **Database browser** — browse and query MariaDB, PostgreSQL and Redis with
+  backups and restore.
+- **Mail catcher** — Mailpit captures outbound mail; nothing leaves the machine.
+- **Public sharing** — expose any site through an ephemeral Cloudflare quick tunnel.
+- **In-app terminal, site templates, site aliases and per-site environment variables.**
+- **System integration** — tray popup with quick actions, autostart, single
+  instance, session restore, update checks, and a scriptable `devx` CLI
+  companion sharing the same on-disk state.
 
 ## Requirements
 
@@ -14,6 +37,24 @@ Comparable to ServBay or Laravel Herd, built with Rust and Tauri 2.
 - [Rust](https://rustup.rs/) stable (1.85+)
 - [Node.js](https://nodejs.org/) 22+ and npm
 - WebView2 runtime (preinstalled on Windows 11; the installer bootstraps it otherwise)
+
+## How local URLs work
+
+Every web server binds port 80 and 443 on **its own loopback address** —
+nginx on `127.0.0.1`, Apache on `127.0.0.2`, Caddy on `127.0.0.3`,
+FrankenPHP on `127.0.0.4` — so site URLs stay bare with no reverse proxy
+and no extra process in between:
+
+| Site server | `http://myapp.test` reaches | `https://myapp.test` reaches |
+| ----------- | --------------------------- | ---------------------------- |
+| nginx | `127.0.0.1:80` | `127.0.0.1:443` |
+| Apache | `127.0.0.2:80` | `127.0.0.2:443` |
+| Caddy / FrankenPHP | `127.0.0.3` / `127.0.0.4`, port 80 | via their own TLS config |
+
+Name resolution follows the same mapping: each hostname and alias points at
+its owning server, through the hosts file and through the bundled resolver
+alike. A custom port override is still honoured when set, and then the URL
+honestly shows the `:port` suffix.
 
 ## Repository layout
 
@@ -37,15 +78,15 @@ devx-rewrite/
 └─ scripts/                repository tooling
 ```
 
-Remaining crates arrive as their tasks land: none — the workspace is complete.
-
 ## Process supervision
 
 Every backing service runs as a supervised child process (`devx-proc`). A
-supervisor spawns the process, waits for a health check (TCP port, log pattern,
-or uptime) before reporting `Running`, captures output to a rotating log file
-and an in-memory tail, and restarts on failure within a retry budget with
-backoff.
+supervisor spawns the process, waits for a health check (TCP address, log
+pattern, or uptime) before reporting `Running`, captures output to a rotating
+log file and an in-memory tail, and restarts on failure within a retry budget
+with backoff. TCP health checks dial the address the service actually bound —
+each web server on its own loopback — so a check can neither hang against an
+empty address nor pass against the wrong server on the same port.
 
 The critical Windows detail is orphan-proofing: each child is assigned to a
 [job object](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects)
@@ -106,21 +147,28 @@ into the pool's generated `php.ini` — ordinary `extension =` lines, except
 refuses to start. Saving while the pool is running re-renders the ini and
 restarts the pool, so the change applies immediately.
 
-### Sites and nginx routing
+### Sites and per-server routing
 
 A *site* (`devx-provision::sites`) is a host name, a document root and the PHP
 version that serves it — the unit users actually think in. Sites live in
-`config.toml` under `[[sites]]`, and each one is rendered to exactly one nginx
-`server` block file under `service-config/nginx/sites/<hostname>.conf`:
+`config.toml` under `[[sites]]`, and each one is rendered to exactly one
+server block file on its **owning** web server, e.g.
+`service-config/apache/sites/<hostname>.conf` for an Apache site:
 
-- PHP sites get a `location ~ \.php$` whose `fastcgi_pass` is read from the
-  chosen pool's rendered `pool.conf`, never hardcoded, so ports follow pools.
-  The standard front-controller fallback (`PATH_INFO`, `try_files` to
-  `index.php`) is included, so Laravel-style routing works out of the box.
-- Static sites get a plain file-serving block.
-- Every mutation (`site_add`, `site_remove`) re-syncs the whole include
-  directory and prunes blocks for removed sites, so disk state always equals
-  configured state and nginx restarts are deterministic.
+- The block binds the server's loopback explicitly (`<VirtualHost 127.0.0.2:80>`,
+  `listen 127.0.0.1:80;`), never a wildcard — a wildcard listen would steal
+  the other servers' traffic.
+- PHP sites route `\.php$` to the chosen pool: nginx via `fastcgi_pass` read
+  from the pool's rendered `pool.conf` (never hardcoded, so ports follow
+  pools), Apache via `mod_proxy_fcgi` against plain `php-cgi`, with the
+  standard front-controller fallback (`PATH_INFO`, `try_files` to
+  `index.php`), so Laravel-style routing works out of the box.
+- Static sites get a plain file-serving block (`=404` fallback, no PHP
+  reference).
+- Every mutation re-syncs the include directories and prunes blocks for
+  removed sites, so disk state always equals configured state and restarts
+  are deterministic. Starting a service re-syncs first, healing any stale
+  state left by an older DevX.
 
 Sites require the pool of their PHP version to have been started once (its
 `pool.conf` must exist) before they can be added — the endpoint has to be
@@ -145,11 +193,11 @@ blocking the rest.
 
 PHP sites take environment variables straight from DevX: each site's `env`
 map in `config.toml` (edited from the Sites page) is rendered into the
-site's nginx block as `fastcgi_param` lines, so `getenv` and frameworks like
-Laravel see them without a committed `.env`. Validation keeps the blocks
-unbreakable — variable-name shapes, no newlines, and no nginx
-metacharacters — and saving while nginx is running restarts it, so changes
-apply immediately.
+site's block as `fastcgi_param` lines (nginx) or `SetEnv` lines (Apache),
+so `getenv` and frameworks like Laravel see them without a committed
+`.env`. Validation keeps the blocks unbreakable — variable-name shapes, no
+newlines, and no server metacharacters — and saving while the owning server
+is running restarts it, so changes apply immediately.
 
 ### Backups
 
@@ -178,11 +226,12 @@ import and anything invalid leaves the running configuration untouched.
 ### Site aliases
 
 A site answers to more than its primary host name: `[[sites]]` carries an
-`aliases` list, rendered into the nginx `server_name` line alongside the
-primary name and validated for shape plus uniqueness across every site and
-alias. The bundled resolver covers alias lookups like any other `.test`
-name. Aliases are edited per site on the Sites page, and saving restarts
-nginx when it is running.
+`aliases` list, rendered into the `server_name` line (or `ServerAlias`)
+alongside the primary name and validated for shape plus uniqueness across
+every site and alias. Certificates cover aliases in their SANs and are
+reissued when the alias set changes; the bundled resolver answers alias
+lookups like any other `.test` name. Aliases are edited per site on the
+Sites page, and saving restarts the owning server when it is running.
 
 ### Terminal
 
@@ -229,16 +278,17 @@ Dashboard plus per-service badges render the result.
 
 ### Privileged helper and hardened IPC
 
-Operations that need elevation (the `hosts` file today; the certificate
-store and NRPT rules in Tasks 10–11) never run inside the desktop app.
-They go to a separate `devx-helper` service, executed elevated and
-installed by the DevX installer, over a named pipe whose two ends live in
-separate crates so they cannot drift:
+Operations that need elevation — the `hosts` file, the certificate store,
+NRPT rules, the DNS cache flush — never run inside the desktop app. They go
+to a separate `devx-helper` service, executed elevated and installed by the
+DevX installer, over a named pipe whose two ends live in separate crates so
+they cannot drift:
 
 - `devx-ipc` owns the wire protocol: versioned JSON requests and replies
-  (`Hello`, `ListHostsEntries`, `AddHostsEntry`, `RemoveHostsEntry`),
-  host-name and IP validation, and a length-prefixed frame codec with a
-  hard 1 MiB cap.
+  (`Hello`, `ListHostsEntries`, `AddHostsEntry`, `RemoveHostsEntry`,
+  `FlushDns`, `InstallCa`/`CheckCa`/`RemoveCa`,
+  `SetNrptRule`/`RemoveNrptRule`, `Shutdown`), host-name, IP, namespace and
+  PEM validation, and a length-prefixed frame codec with a hard 1 MiB cap.
 - `devx-privileged` owns the client: it opens the pipe with
   `SECURITY_IDENTIFICATION` SQoS (the helper may identify the caller but
   never act as it), and every session begins with a version handshake that
@@ -249,9 +299,12 @@ separate crates so they cannot drift:
 
 Hosts mutations are confined to lines ending in `# devx-managed`. The
 helper can add, update and remove its own entries, but it refuses to
-shadow or delete a line it did not write, so hand-crafted overrides
-survive DevX and the helper cannot be conned into rewriting them. All
-edits are atomic whole-file rewrites.
+shadow or delete a line it did not write, so hand-crafted overrides —
+including other local stacks' entries — survive DevX and the helper cannot
+be conned into rewriting them. All edits are atomic whole-file rewrites.
+The Hosts panel's one-click re-sync rewrites every site name with its
+owner's loopback and reports any name a foreign line blocks, with what to
+remove by hand.
 
 ### Local CA and automatic HTTPS
 
@@ -260,36 +313,39 @@ HTTPS for `*.test` sites comes from a miniature PKI DevX owns end to end:
 - `devx-provision::pki` generates one local **root CA** on first use
   (`data/certs/ca.crt` + `ca.key.pem`) and issues a **server certificate
   per HTTPS site** into `data/certs/sites/<hostname>/`, signed by that CA.
-  Certificates are minted once and reused: a re-rendered nginx config
-  never rewrites a cert a browser already saw.
+  Certificates cover the hostname plus its aliases and are reissued only
+  when that set changes: a re-rendered server block never churns a cert a
+  browser already saw.
 - Installing the root into the machine trust store needs elevation, so it
   goes through the helper (`InstallCa`/`CheckCa`/`RemoveCa` requests). The
   helper imports only single, shape-validated certificates into the
   machine **Root** store under the `DevX Local CA` friendly name — nothing
   else in the store is reachable through the protocol.
-- Sites with `https = true` in `config.toml` get both an HTTP `listen 80`
-  and a `listen 443 ssl` server block, with `ssl_certificate` pointing at
-  the site's issued certificate. Enabling HTTPS on a site therefore
+- HTTPS sites serve both schemes: nginx gets `listen 80` plus
+  `listen 443 ssl`, Apache a second `VirtualHost` with `SSLEngine on`,
+  each pointing at the site's issued certificate. Enabling HTTPS therefore
   requires the CA (installed once from the Sites page) but nothing else.
 
-### Wildcard DNS resolver and NRPT
+### Name resolution: hosts file and bundled resolver
 
-The hosts file maps exactly the names it lists; a resolver maps *any*
-name under its suffix, which is what wildcard subdomains need. DevX
-ships its own resolver in `devx-dns`:
+Two mechanisms route `.test` names to their owning server, and both map
+each name to that server's loopback — never a single shared address:
 
-- a small RFC 1035 UDP server that answers `A` queries for `*.<suffix>`
-  with loopback and NXDOMAIN for anything else; short TTLs (5 s) so a
-  stopped resolver is honoured quickly;
-- routing `.test` queries to it is done with an NRPT rule — Windows
-  consults the rule table before ordinary DNS — written by the helper
-  (`SetNrptRule`/`RemoveNrptRule`) into the machine policy key under a
-  fixed, DevX-owned GUID. The rule is confined to the single suffix DevX
-  documents, so the pipe can never redirect other traffic;
-- `dns_start` binds the resolver (falling back to an ephemeral port when
-  53 is not bindable unelevated) and then points the rule at the actual
-  port; `dns_stop` reverses both. Non-`.test` names never touch DevX, so
-  corporate DNS and VPN setups are untouched.
+- **Hosts file** (default): one managed entry per hostname and alias,
+  rewritten on every site mutation and on every web-server start, so stale
+  entries cannot linger after an update.
+- **Bundled resolver** (`devx-dns`): a small RFC 1035 UDP server answering
+  `A` queries. Exact hostnames and aliases resolve from a live map the app
+  keeps equal to the configured sites (no resolver restart needed);
+  deeper names fall back to the longest registered parent suffix, so
+  `api.myapp.test` follows `myapp.test`; anything else keeps the plain
+  loopback answer. Short TTLs (5 s) so a stopped resolver is honoured
+  quickly. Routing `.test` queries to it is done with an NRPT rule —
+  Windows consults the rule table before ordinary DNS — written by the
+  helper (`SetNrptRule`/`RemoveNrptRule`) into the machine policy key under
+  a fixed, DevX-owned GUID, confined to the single configured suffix so the
+  pipe can never redirect other traffic. Non-`.test` names never touch
+  DevX, so corporate DNS and VPN setups are untouched.
 
 ### Database browser
 
@@ -336,21 +392,19 @@ snake_case DTOs, with the raw shapes kept private to the crate.
 
 The Share page puts any site on a public URL with Cloudflare's *quick
 tunnels*: no account, no config file, nothing to clean up afterwards.
-One `cloudflared tunnel --url http://127.0.0.1:<nginx-port>` process
+One `cloudflared tunnel --url http://<owner-loopback>:<http-port>` process
 runs per shared site through the ordinary supervisor, so lifecycle,
 logging and crash handling are inherited rather than reinvented.
 
-- The tunnel forwards to the port nginx *actually* serves (live port
-  from its supervisor, default-port fallback), so the public URL reaches
-  the same server block the local `.test` host name does — PHP pools,
-  HTTPS-terminated-by-nginx sites and static sites all just work.
+- The tunnel forwards to the owning server's loopback and live HTTP port,
+  so the public URL reaches the same server block the local `.test` host
+  name does — PHP pools, HTTPS sites and static sites all just work. Only
+  loopback targets are accepted: a share is a bridge to something DevX
+  itself serves, never a proxy for an arbitrary remote host.
 - The assigned `https://…trycloudflare.com` URL is parsed from the
   process log (`devx_provision::tunnel::extract_tunnel_url`), matched
   defensively against the quick-tunnel suffix so other cloudflared URLs
   never leak into the UI.
-- `tunnel_args` refuses to forward to anything but loopback: a share is
-  a bridge to something DevX itself serves, never a proxy for an
-  arbitrary remote host.
 - Quick tunnels are ephemeral by design — stopping the share kills the
   process and the URL dies with it, which is exactly what a dev tool
   wants. For named, persistent tunnels, run cloudflared with your own
@@ -361,8 +415,13 @@ logging and crash handling are inherited rather than reinvented.
 The desktop shell behaves like a Windows developer utility, not a one-shot
 window:
 
-- **Tray** — a notification-area icon with Show DevX, Close to tray and
-  Quit. Closing the window hides it to the tray when `close_to_tray` is
+- **Tray** — right-clicking the notification-area icon opens a custom popup
+  (route `/tray`: frameless, transparent, always-on-top) styled like the
+  app itself, because a native OS menu cannot be styled. It shows site
+  quick-open entries, a close-to-tray toggle, Show DevX and Quit;
+  left-click still shows the main window. The popup positions itself at
+  the click, clamped to the monitor, and dismisses on blur or Escape.
+  Closing the main window hides it to the tray when `close_to_tray` is
   set (read live on every close request, so the toggle takes effect
   immediately), and quitting from the tray is the explicit way out — job
   objects take every supervised service down with it, exactly like a crash
@@ -392,7 +451,7 @@ window:
 `crates/devx-cli` builds the `devx` binary, a script-friendly window into
 the same state the desktop app manages. Both frontends share the on-disk
 contract (`devx-core::ConfigStore`, `devx-provision::sites`), so the app and
-the CLI converge on identical config and nginx blocks without talking to
+the CLI converge on identical config and server blocks without talking to
 each other — and the CLI follows the same mutation order (persist config
 first, render blocks second) so a failed save never leaves a stray block.
 
@@ -566,10 +625,11 @@ instead) before building the Rust side in a fresh clone.
 
 ### Typed IPC
 
-The frontend never calls `invoke` directly. Commands are declared in
-`apps/desktop/src-tauri/src/commands.rs`, registered in `src/ipc.rs`, and
-`tauri-specta` generates `apps/desktop/src/bindings.ts`, which is committed so
-the frontend type-checks without a Rust build.
+The frontend never calls `invoke` directly. Commands are declared across
+`apps/desktop/src-tauri/src/commands/` plus a few shell-owned modules,
+registered in `src/ipc.rs`, and `tauri-specta` generates
+`apps/desktop/src/bindings.ts`, which is committed so the frontend
+type-checks without a Rust build.
 
 After changing a command signature:
 
@@ -593,46 +653,6 @@ powershell -ExecutionPolicy Bypass -File scripts/make-app-icon.ps1
 cd apps/desktop
 npm run tauri icon ../../assets/app-icon.png
 ```
-
-## Implementation status
-
-| Task | Scope | Status |
-| ---- | ----- | ------ |
-| 1 | Workspace scaffold, Tauri shell, typed IPC, CI | Done |
-| 2 | Paths, versioned config, diagnostics | Done |
-| 3 | Component catalog and version resolvers | Done |
-| 4 | Download, verify, extract, atomic install | Done |
-| 5 | Process supervisor with Job Objects | Done |
-| 6 | Service specs, config templating, port allocation | Done |
-| 7 | Multi-version PHP FastCGI pools | Done |
-| 8 | Privileged helper service and hardened IPC | Done |
-| 9 | Site management and reverse proxy config | Done |
-| 10 | Local CA and automatic HTTPS | Done |
-| 11 | Wildcard DNS resolver and NRPT | Done |
-| 12 | Database browser | Done |
-| 13 | Mail catcher | Done |
-| 14 | Cloudflare Tunnel sharing | Done |
-| 15 | `devx.exe` CLI companion | Done |
-| 16 | Tray, autostart, diagnostics, updater | Done |
-| 17 | NSIS installer and release hardening | Done |
-| 18 | Service events, failure notifications | Done |
-| 19 | Resource metrics (CPU/RAM) dashboard | Done |
-| 20 | PHP extension manager | Done |
-| 21 | Queue workers | Done |
-| 22 | Central log viewer | Done |
-| 23 | Site environment variables | Done |
-| 24 | Database backups and restore | Done |
-| 25 | Configuration import/export | Done |
-| 26 | Site aliases (multi-domain) | Done |
-| 27 | In-app terminal | Done |
-| 28 | Scheduled tasks UI | Done |
-| 29 | Site templates | Done |
-| 30 | New components: Bun, Deno, ripgrep, jq | Done |
-| 31 | New services: Caddy, NATS, etcd, MongoDB | Done |
-| 32 | MinIO removed (upstream archive 410) | Done |
-| 33 | New web servers: Traefik, FrankenPHP | Done |
-| 34 | New runtimes: Go, Python | Done |
-| 35 | New web server: Apache (Apache Lounge) | Done |
 
 ## License
 
