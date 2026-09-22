@@ -44,4 +44,4 @@ coverage
 # ZCode local agent state
 /.zcode
 
-.freebuff
+/.freebuff
