@@ -134,10 +134,13 @@ describe("AppShell", () => {
   it("shows the page context, the search trigger and every existing route", async () => {
     renderShell();
 
-    // §6: the topbar names the current page and the shortcut it answers to.
+    // §6: the topbar carries the DevX brand and version on every page,
+    // plus the search trigger and its shortcut. The brand mark is static;
+    // the version arrives with app-info, so it is awaited last — awaiting
+    // first would let the metrics footer render and double the "Services"
+    // link match below.
     const topbar = screen.getByRole("banner");
-    expect(within(topbar).getByText("Dashboard")).toBeInTheDocument();
-    expect(within(topbar).getByText("Environment")).toBeInTheDocument();
+    expect(within(topbar).getByLabelText("DevX")).toBeInTheDocument();
     expect(within(topbar).getByRole("button", { name: /search anything/i })).toHaveTextContent(
       "Ctrl K",
     );
@@ -160,6 +163,10 @@ describe("AppShell", () => {
         within(sidebar).getByRole("link", { name: new RegExp(label) }),
       ).toBeInTheDocument();
     }
+
+    // The version rides the app-info query, so it lands after the static
+    // brand mark above.
+    expect(await within(topbar).findByText("v0.1.0")).toBeInTheDocument();
   });
 
   it("opens the command palette with Ctrl+K", async () => {

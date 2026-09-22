@@ -11,13 +11,14 @@ import {
 } from "lucide-react";
 import { useEffect } from "react";
 import { Link, useLocation } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 
 import { NotificationSlot } from "@/components/notification-center";
 import { themeLabel, nextTheme, useTheme } from "@/components/theme-provider";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
 import { useToast } from "@/components/ui/toast";
-import { findNavItem, findNavSection } from "@/lib/navigation";
+import { ipc } from "@/lib/ipc";
 
 /**
  * Topbar (§6): page context on the left, the global search trigger in the
@@ -42,8 +43,7 @@ export function Topbar({
   onToggleTerminal: () => void;
 }) {
   const { pathname } = useLocation();
-  const item = findNavItem(pathname);
-  const section = findNavSection(pathname);
+  const appInfo = useQuery({ queryKey: ["app-info"], queryFn: ipc.appInfo });
   // §31: the Terminal page already shows the console, so the drawer has
   // nothing to add there — and its toggle is not offered there either (§56: no
   // control that does nothing).
@@ -65,13 +65,31 @@ export function Topbar({
           </Button>
         </Tooltip>
 
-        <div className="min-w-0">
-          {section ? (
-            <p className="truncate text-caption text-ink-muted leading-tight">{section.label}</p>
+        <div className="flex min-w-0 items-center gap-2" aria-label="DevX">
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 64 64"
+            aria-hidden
+            className="shrink-0"
+          >
+            <path
+              d="M51 12 L37 52"
+              stroke="currentColor"
+              strokeWidth="11"
+              strokeLinecap="round"
+              className="text-foreground"
+            />
+            <circle cx="19" cy="44" r="8" style={{ fill: "var(--accent)" }} />
+          </svg>
+          <span className="font-mono text-sm font-semibold tracking-tight text-foreground flex items-center">
+            Dev<span className="bg-gradient-to-r from-accent to-accent-hover bg-clip-text text-transparent font-bold">X</span>
+          </span>
+          {appInfo.data ? (
+            <span className="font-mono text-caption text-ink-muted">
+              v{appInfo.data.version}
+            </span>
           ) : null}
-          <p className="truncate text-sm font-semibold text-foreground tracking-tight">
-            {item?.label ?? "DevX"}
-          </p>
         </div>
       </div>
 
