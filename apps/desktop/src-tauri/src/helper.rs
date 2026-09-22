@@ -31,7 +31,16 @@ const PIPE_WAIT: Duration = Duration::from_secs(15);
 /// UAC prompt was declined.
 pub async fn ensure_helper_running() -> Result<()> {
     if PipeClient::is_available() {
-        return Ok(());
+        // A pipe existing does not mean a compatible helper serves it: a
+        // stale helper from an older DevX can hold the pipe while rejecting
+        // the handshake, which used to surface as an endless no-op. Verify.
+        if let Ok(mut client) = PipeClient::connect() {
+            match client.hello().await {
+                Ok(()) => return Ok(()),
+                Err(err) => return Err(stale_helper_error(&err)),
+            }
+        }
+        // The pipe vanished mid-check; fall through and launch.
     }
 
     let exe = find_helper_exe().ok_or_else(|| {
@@ -58,6 +67,34 @@ pub async fn ensure_helper_running() -> Result<()> {
         Error::privileged("the helper did not start within the wait window")
             .with_hint("accept the Windows UAC prompt to let DevX register and start the helper"),
     )
+}
+
+/// Explains a handshake failure against an existing pipe.
+///
+/// A version mismatch means a stale helper from an older DevX is squatting
+/// on the pipe: relaunching changes nothing because the pipe already exists.
+/// Anything else is reported as-is. Either way the remedy needs elevation,
+/// which this process cannot do by itself — hence the explicit hint.
+fn stale_helper_error(err: &Error) -> Error {
+    if err.message.contains("protocol") {
+        Error::privileged(format!(
+            "a helper from an older DevX is running ({})",
+            err.message
+        ))
+        .with_hint(
+            "stop devx-helper.exe from an elevated Task Manager (or reboot), \
+             then try again so the current helper can start",
+        )
+    } else {
+        Error::privileged(format!(
+            "the helper pipe exists but does not answer: {}",
+            err.message
+        ))
+        .with_hint(
+            "stop devx-helper.exe from an elevated Task Manager (or reboot), \
+             then try again so the current helper can start",
+        )
+    }
 }
 
 /// Candidate locations of the helper executable, in priority order: next to
@@ -154,6 +191,38 @@ mod tests {
         std::fs::write(&packaged, b"stub").expect("write");
         let picked = [packaged.clone(), plain].into_iter().find(|c| c.is_file());
         assert_eq!(picked, Some(packaged.clone()));
+    }
+
+    #[test]
+    fn stale_helper_errors_name_the_remedy() {
+        let mismatch = stale_helper_error(&Error::privileged(
+            "helper refused the handshake: client speaks protocol 2, helper speaks 1",
+        ));
+        assert!(
+            mismatch.message.contains("older DevX"),
+            "unexpected message: {}",
+            mismatch.message
+        );
+        assert!(
+            mismatch
+                .hint
+                .as_deref()
+                .unwrap_or_default()
+                .contains("elevated Task Manager"),
+            "must tell the user how to clear the squatter: {:?}",
+            mismatch.hint
+        );
+
+        let silent = stale_helper_error(&Error::privileged("helper did not answer in time"));
+        assert!(
+            silent.message.contains("does not answer"),
+            "unexpected message: {}",
+            silent.message
+        );
+        assert!(
+            silent.hint.is_some(),
+            "a dead end without a remedy is the bug being fixed"
+        );
     }
 
     #[test]

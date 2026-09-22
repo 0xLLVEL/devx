@@ -28,6 +28,14 @@ pub fn serve_blocking(backends: Arc<Backends>) -> Result<()> {
     tracing::info!(pipe = %devx_privileged::pipe_name::HELPER, %sddl, "helper listening");
     let shutdown = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
+    // A helper that cannot create its pipe is useless alive: it answers
+    // nothing, blocks rebuilds of its own binary, and confuses every
+    // client into blaming the pipe. Fail loudly instead of lingering.
+    // (Service managers restart on nonzero exit; the desktop app relaunches
+    // on demand with a UAC prompt.)
+    const MAX_PIPE_ATTEMPTS: u32 = 30;
+    let mut attempts = 0u32;
+
     loop {
         if shutdown.load(std::sync::atomic::Ordering::Relaxed) {
             tracing::info!("shutdown requested; helper exiting");
@@ -37,11 +45,18 @@ pub fn serve_blocking(backends: Arc<Backends>) -> Result<()> {
         let mut server = match create_pipe(&sddl) {
             Ok(server) => server,
             Err(err) => {
-                tracing::error!(error = %err, "failed to create the helper pipe");
+                attempts += 1;
+                tracing::error!(error = %err, attempt = attempts, "failed to create the helper pipe");
+                if attempts >= MAX_PIPE_ATTEMPTS {
+                    return Err(devx_core::Error::privileged(format!(
+                        "could not create the helper pipe after {attempts} attempts: {err}"
+                    )));
+                }
                 std::thread::sleep(std::time::Duration::from_secs(1));
                 continue;
             }
         };
+        attempts = 0;
 
         match connect_pipe(&mut server) {
             Ok(()) => {}
