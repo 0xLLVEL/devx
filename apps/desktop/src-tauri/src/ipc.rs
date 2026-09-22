@@ -117,6 +117,7 @@ pub fn builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::reveal_managed_dir,
             commands::settings_sync_autostart,
             commands::update_check,
+            commands::update_download_install,
             commands::terminal_run,
             commands::terminal_path,
             commands::terminal_use_version,

@@ -302,6 +302,7 @@ export const ipc = {
   revealManagedDir: (path: string) => unwrap(commands.revealManagedDir(path)),
   settingsSyncAutostart: () => unwrap(commands.settingsSyncAutostart()),
   updateCheck: () => unwrap(commands.updateCheck()),
+  updateDownloadInstall: () => unwrap(commands.updateDownloadInstall()),
 };
 
 /** Backend-to-frontend events, typed by the generated client. */

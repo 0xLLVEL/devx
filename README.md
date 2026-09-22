@@ -443,8 +443,11 @@ window:
 - **Update check** — the Settings page compares the running version against
   the latest published GitHub release (semver, drafts and prereleases
   excluded). A failed check reports "unknown" rather than an error — an
-  offline machine must not get a red banner for a missed HTTP call. DevX
-  never self-installs: the card links to the releases page.
+  offline machine must not get a red banner for a missed HTTP call. When an
+  update is available, one click downloads the published installer, verifies
+  it against the release's own SHA256SUMS, launches it (Windows raises its
+  own UAC prompt — DevX never elevates itself), and exits so files can be
+  replaced. A manual download link stays alongside for anyone who prefers it.
 
 ### `devx` CLI companion
 

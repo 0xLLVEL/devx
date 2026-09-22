@@ -521,6 +521,16 @@ export const commands = {
 	 */
 	updateCheck: () => typedError<UpdateStatus, DevxError>(__TAURI_INVOKE("update_check")),
 	/**
+	 *  Downloads the newest published installer, verifies it, launches it, and
+	 *  exits DevX so its files can be replaced.
+	 * 
+	 *  The installer is a per-machine NSIS setup, so Windows raises its own UAC
+	 *  prompt — DevX never elevates itself. The checksum comes from the release's
+	 *  own `SHA256SUMS` asset and the bytes are verified before anything runs,
+	 *  so a corrupt or tampered download aborts instead of installing.
+	 */
+	updateDownloadInstall: () => typedError<UpdateInstallOutcome, DevxError>(__TAURI_INVOKE("update_download_install")),
+	/**
 	 *  Runs one command through `cmd /c` in `cwd`, streaming its output.
 	 * 
 	 *  Streams `TerminalOutput` events as lines arrive and resolves once the
@@ -1959,6 +1969,14 @@ export type TunnelStatus = {
 	 *  `null` for a few seconds after `tunnel_start`.
 	 */
 	url: string | null,
+};
+
+/**  Outcome of downloading the published installer and handing off to it. */
+export type UpdateInstallOutcome = {
+	/**  Version that was installed (the release tag's semver). */
+	version: string,
+	/**  Local path of the verified installer that was launched. */
+	installer_path: string,
 };
 
 /**  Whether a newer DevX release is available upstream. */

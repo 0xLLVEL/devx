@@ -900,6 +900,9 @@ function UpdatesCard({ info }: { info: UseQueryResult<AppInfo> }) {
     // The comparison needs the running version, so this waits for app-info.
     enabled: info.data != null,
   });
+  const install = useMutation({
+    mutationFn: ipc.updateDownloadInstall,
+  });
 
   const current = updates.data?.current ?? info.data?.version ?? null;
 
@@ -908,7 +911,9 @@ function UpdatesCard({ info }: { info: UseQueryResult<AppInfo> }) {
       <CardHeader>
         <CardTitle>Updates</CardTitle>
         <CardDescription>
-          DevX checks the published release, never installs anything by itself.
+          DevX checks the published release and can install it for you: the
+          installer is verified against the release checksum, then Windows
+          asks for permission itself.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -944,6 +949,18 @@ function UpdatesCard({ info }: { info: UseQueryResult<AppInfo> }) {
               Try again
             </Button>
           </Callout>
+        ) : install.data ? (
+          <div className="flex items-start justify-between gap-4 rounded-md border border-success/40 bg-success/10 p-3">
+            <div className="space-y-0.5">
+              <p className="text-sm font-medium">
+                DevX {install.data.version} installer launched
+              </p>
+              <p className="text-xs text-muted-foreground" data-selectable>
+                Verified and started from {install.data.installer_path}. DevX
+                is exiting so its files can be replaced — follow the installer.
+              </p>
+            </div>
+          </div>
         ) : updates.data.update_available ? (
           <div className="flex items-start justify-between gap-4 rounded-md border border-warning/40 bg-warning/10 p-3">
             <div className="space-y-0.5">
@@ -951,21 +968,39 @@ function UpdatesCard({ info }: { info: UseQueryResult<AppInfo> }) {
                 DevX {updates.data.latest} is available
               </p>
               <p className="text-xs text-muted-foreground" data-selectable>
-                You are running {current}. Download the new installer from the
-                releases page.
+                You are running {current}. The installer is verified against
+                the release checksum before it runs.
               </p>
+              {install.error instanceof Error ? (
+                <p className="text-xs text-destructive" role="alert">
+                  {install.error.message}
+                </p>
+              ) : null}
             </div>
-            {updates.data.url ? (
-              <a
-                className="inline-flex h-9 items-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium hover:bg-accent"
-                href={updates.data.url}
-                target="_blank"
-                rel="noreferrer"
+            <div className="flex shrink-0 flex-col gap-1.5">
+              <Button
+                size="sm"
+                onClick={() => install.mutate()}
+                disabled={install.isPending}
               >
-                <Download />
-                Get the update
-              </a>
-            ) : null}
+                {install.isPending ? (
+                  <Loader2 className="animate-spin" />
+                ) : (
+                  <Download />
+                )}
+                {install.isPending ? "Downloading…" : "Download and install"}
+              </Button>
+              {updates.data.url ? (
+                <a
+                  className="inline-flex h-8 items-center justify-center gap-2 rounded-md px-3 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
+                  href={updates.data.url}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Or get it manually
+                </a>
+              ) : null}
+            </div>
           </div>
         ) : (
           <div className="flex items-start justify-between gap-4 rounded-md border border-success/40 bg-success/10 p-3">

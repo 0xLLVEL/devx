@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   revealManagedDir: vi.fn(),
   appInfo: vi.fn(),
   updateCheck: vi.fn(),
+  updateDownloadInstall: vi.fn(),
   profileList: vi.fn(),
   profileDelete: vi.fn(),
 }));
@@ -175,24 +176,59 @@ describe("SettingsPage", () => {
     expect(await screen.findByText("DevX is up to date")).toBeInTheDocument();
   });
 
-  it("offers the release page when an update is available", async () => {
+  it("offers a one-click install plus the manual release page when an update is available", async () => {
     mocks.updateCheck.mockResolvedValue({
       current: "0.1.0",
       latest: "0.2.0",
       update_available: true,
       url: "https://github.com/devx/devx/releases/latest",
     });
+    mocks.updateDownloadInstall.mockResolvedValue({
+      version: "0.2.0",
+      installer_path: "C:\\Temp\\DevX\\DevX_0.2.0_x64-setup.exe",
+    });
 
+    const user = userEvent.setup();
     renderWithProviders(<SettingsPage />);
 
     expect(
       await screen.findByText("DevX 0.2.0 is available"),
     ).toBeInTheDocument();
-    const link = screen.getByRole("link", { name: /get the update/i });
+    const link = screen.getByRole("link", { name: /or get it manually/i });
     expect(link).toHaveAttribute(
       "href",
       "https://github.com/devx/devx/releases/latest",
     );
+
+    await user.click(
+      screen.getByRole("button", { name: /download and install/i }),
+    );
+    await waitFor(() =>
+      expect(mocks.updateDownloadInstall).toHaveBeenCalledTimes(1),
+    );
+    expect(
+      await screen.findByText("DevX 0.2.0 installer launched"),
+    ).toBeInTheDocument();
+  });
+
+  it("reports a failed install instead of a silent success", async () => {
+    mocks.updateCheck.mockResolvedValue({
+      current: "0.1.0",
+      latest: "0.2.0",
+      update_available: true,
+      url: null,
+    });
+    mocks.updateDownloadInstall.mockRejectedValue(
+      new Error("could not download the installer: timeout"),
+    );
+
+    const user = userEvent.setup();
+    renderWithProviders(<SettingsPage />);
+
+    await user.click(
+      await screen.findByRole("button", { name: /download and install/i }),
+    );
+    expect(await screen.findByText(/could not download/i)).toBeInTheDocument();
   });
 
   it("treats an unknown latest release as up to date", async () => {
@@ -224,10 +260,11 @@ describe("SettingsPage", () => {
       "href",
       "/components",
     );
-    // No install IPC exists, so there is no button that claims to install one.
+    // The install button covers the DevX build only; runtimes stay on Components.
+    expect(await screen.findByText("DevX 0.2.0 is available")).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /^update$/i }),
-    ).not.toBeInTheDocument();
+      screen.getByRole("button", { name: /download and install/i }),
+    ).toBeInTheDocument();
   });
 
   it("names the failure when the saved profiles cannot be read", async () => {

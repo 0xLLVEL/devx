@@ -146,6 +146,48 @@ mod tests {
         let child = canonicalise(std::path::Path::new("C:\\devx\\service-config\\nginx"));
         assert!(child.starts_with(root));
     }
+
+    fn release_payload(tag: &str, assets: &[(&str, &str)]) -> String {
+        let assets = assets
+            .iter()
+            .map(|(name, url)| format!(r#"{{"name":"{name}","browser_download_url":"{url}"}}"#))
+            .collect::<Vec<_>>()
+            .join(",");
+        format!(r#"{{"tag_name":"{tag}","draft":false,"prerelease":false,"assets":[{assets}]}}"#)
+    }
+
+    #[test]
+    fn release_assets_resolve_installer_and_sums() {
+        let body = release_payload(
+            "v0.2.0",
+            &[
+                ("DevX_0.2.0_x64-setup.exe", "https://example.com/setup.exe"),
+                ("SHA256SUMS", "https://example.com/SHA256SUMS"),
+            ],
+        );
+        let assets = parse_release_assets(&body).expect("assets");
+        assert_eq!(assets.version, "0.2.0");
+        assert_eq!(assets.installer_name, "DevX_0.2.0_x64-setup.exe");
+        assert_eq!(assets.installer_url, "https://example.com/setup.exe");
+        assert_eq!(assets.sums_url, "https://example.com/SHA256SUMS");
+    }
+
+    #[test]
+    fn release_assets_reject_drafts_missing_installer_and_missing_sums() {
+        let draft = r#"{"tag_name":"v0.3.0","draft":true,"prerelease":false,"assets":[]}"#;
+        assert!(parse_release_assets(draft).is_err());
+
+        let no_installer = release_payload("v0.2.0", &[("SHA256SUMS", "https://example.com/s")]);
+        assert!(parse_release_assets(&no_installer).is_err());
+
+        let no_sums = release_payload(
+            "v0.2.0",
+            &[("DevX_0.2.0_x64-setup.exe", "https://example.com/e")],
+        );
+        assert!(parse_release_assets(&no_sums).is_err());
+
+        assert!(parse_release_assets("not json").is_err());
+    }
 }
 
 /// Whether a newer DevX release is available upstream.
@@ -222,3 +264,234 @@ fn parse_latest_release(body: &str) -> Option<String> {
 
 /// GitHub repository DevX publishes releases to.
 const RELEASES_REPO: &str = "0xLLVEL/devx";
+
+/// Outcome of downloading the published installer and handing off to it.
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
+pub struct UpdateInstallOutcome {
+    /// Version that was installed (the release tag's semver).
+    pub version: String,
+    /// Local path of the verified installer that was launched.
+    pub installer_path: String,
+}
+
+/// Downloads the newest published installer, verifies it, launches it, and
+/// exits DevX so its files can be replaced.
+///
+/// The installer is a per-machine NSIS setup, so Windows raises its own UAC
+/// prompt — DevX never elevates itself. The checksum comes from the release's
+/// own `SHA256SUMS` asset and the bytes are verified before anything runs,
+/// so a corrupt or tampered download aborts instead of installing.
+#[tauri::command]
+#[specta::specta]
+pub async fn update_download_install(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, crate::state::AppState>,
+) -> Result<UpdateInstallOutcome, Error> {
+    let body = state
+        .http
+        .get_text_with_headers(
+            &format!("https://api.github.com/repos/{RELEASES_REPO}/releases/latest"),
+            &[("Accept", "application/vnd.github+json")],
+        )
+        .await
+        .map(|response| response.body)
+        .map_err(|err| {
+            Error::new(
+                devx_core::ErrorCode::Network,
+                format!("could not read the latest release: {err}"),
+            )
+            .with_hint("check the connection, then try again")
+        })?;
+
+    let release = parse_release_assets(&body)?;
+    let dest = std::env::temp_dir()
+        .join("DevX")
+        .join(&release.installer_name);
+
+    // A previous run may have left a verified copy behind; reuse it instead
+    // of downloading tens of megabytes again.
+    let verified = verify_installer(&dest, &release).await.is_ok();
+    if !verified {
+        let downloader = devx_provision::download::Downloader::new().map_err(|err| {
+            Error::new(
+                devx_core::ErrorCode::Network,
+                format!("could not start the download: {err}"),
+            )
+        })?;
+        downloader
+            .download(&release.installer_url, &dest, None, |_| {})
+            .await
+            .map_err(|err| {
+                Error::new(
+                    devx_core::ErrorCode::Network,
+                    format!("could not download the installer: {err}"),
+                )
+                .with_hint("check the connection, then try again")
+            })?;
+        verify_installer(&dest, &release).await?;
+    }
+
+    launch_detached(&dest).map_err(|err| {
+        Error::new(
+            devx_core::ErrorCode::Process,
+            format!("could not launch the installer: {err}"),
+        )
+    })?;
+
+    // The installer replaces DevX's own files, which it cannot do while they
+    // are running. Give the user a beat to read the confirmation, then exit
+    // through the normal path (services stop with the job objects).
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        app.exit(0);
+    });
+
+    Ok(UpdateInstallOutcome {
+        version: release.version,
+        installer_path: dest.display().to_string(),
+    })
+}
+
+/// The two release assets an update needs, resolved from the API payload.
+struct ReleaseAssets {
+    version: String,
+    installer_name: String,
+    installer_url: String,
+    sums_url: String,
+}
+
+/// Picks the `-setup.exe` installer and its `SHA256SUMS` out of a
+/// `releases/latest` payload. Drafts and prereleases are never candidates.
+fn parse_release_assets(body: &str) -> Result<ReleaseAssets, Error> {
+    #[derive(serde::Deserialize)]
+    struct Release {
+        tag_name: String,
+        #[serde(default)]
+        draft: bool,
+        #[serde(default)]
+        prerelease: bool,
+        #[serde(default)]
+        assets: Vec<Asset>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Asset {
+        name: String,
+        browser_download_url: String,
+    }
+
+    let release: Release = serde_json::from_str(body).map_err(|err| {
+        Error::new(
+            devx_core::ErrorCode::Network,
+            format!("could not understand the release response: {err}"),
+        )
+    })?;
+    if release.draft || release.prerelease {
+        return Err(Error::new(
+            devx_core::ErrorCode::NotFound,
+            "the latest release is a draft or prerelease",
+        ));
+    }
+    let version = release.tag_name.trim_start_matches('v').to_owned();
+    semver::Version::parse(&version).map_err(|_| {
+        Error::new(
+            devx_core::ErrorCode::Network,
+            format!("release tag `{}` is not valid semver", release.tag_name),
+        )
+    })?;
+
+    let installer = release
+        .assets
+        .iter()
+        .find(|asset| {
+            asset.name.ends_with("-setup.exe")
+                && !asset.name.contains('/')
+                && !asset.name.contains('\\')
+        })
+        .ok_or_else(|| {
+            Error::new(
+                devx_core::ErrorCode::NotFound,
+                "the latest release has no installer asset",
+            )
+        })?;
+    let sums = release
+        .assets
+        .iter()
+        .find(|asset| asset.name.eq_ignore_ascii_case("SHA256SUMS"))
+        .ok_or_else(|| {
+            Error::new(
+                devx_core::ErrorCode::NotFound,
+                "the latest release has no SHA256SUMS asset",
+            )
+        })?;
+
+    Ok(ReleaseAssets {
+        version,
+        installer_name: installer.name.clone(),
+        installer_url: installer.browser_download_url.clone(),
+        sums_url: sums.browser_download_url.clone(),
+    })
+}
+
+/// Verifies `dest` against the release's published checksum document.
+async fn verify_installer(dest: &std::path::Path, release: &ReleaseAssets) -> Result<(), Error> {
+    let client = reqwest::Client::builder()
+        .user_agent(format!("DevX/{}", env!("CARGO_PKG_VERSION")))
+        .build()
+        .map_err(|err| {
+            Error::new(
+                devx_core::ErrorCode::Network,
+                format!("failed to build HTTP client: {err}"),
+            )
+        })?;
+    let document = client
+        .get(&release.sums_url)
+        .send()
+        .await
+        .map_err(|err| {
+            Error::new(
+                devx_core::ErrorCode::Network,
+                format!("could not download SHA256SUMS: {err}"),
+            )
+        })?
+        .error_for_status()
+        .map_err(|err| {
+            Error::new(
+                devx_core::ErrorCode::Network,
+                format!("could not download SHA256SUMS: {err}"),
+            )
+        })?
+        .text()
+        .await
+        .map_err(|err| {
+            Error::new(
+                devx_core::ErrorCode::Network,
+                format!("could not read SHA256SUMS: {err}"),
+            )
+        })?;
+    let expected = devx_provision::verify::parse_sums_document(&document, &release.installer_name)
+        .map_err(|err| {
+            Error::new(
+                devx_core::ErrorCode::Integrity,
+                format!("SHA256SUMS does not cover the installer: {err}"),
+            )
+        })?;
+    devx_provision::verify::verify_sha256(dest, &expected).await
+}
+
+/// Starts the installer detached so it survives DevX's own exit.
+fn launch_detached(installer: &std::path::Path) -> std::io::Result<()> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP: no console, no Ctrl-C
+        // forwarding, outlives the parent.
+        std::process::Command::new(installer)
+            .creation_flags(0x00000008 | 0x00000200)
+            .spawn()?;
+    }
+    #[cfg(not(windows))]
+    {
+        std::process::Command::new(installer).spawn()?;
+    }
+    Ok(())
+}
