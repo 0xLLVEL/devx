@@ -90,6 +90,36 @@ pub fn webview2_version() -> Option<String> {
     None
 }
 
+/// Whether the Windows taskbar uses the light theme.
+///
+/// Read live from the Personalize key on every call — theme switches are
+/// rare, and a stale answer only lasts until the next tray interaction.
+/// Unknown or unreadable state means light: a dark mark stays visible on an
+/// unknown bar, while a white mark could vanish entirely.
+#[cfg(windows)]
+pub fn taskbar_uses_light_theme() -> bool {
+    use winreg::enums::{HKEY_CURRENT_USER, KEY_READ};
+    use winreg::RegKey;
+
+    let key = RegKey::predef(HKEY_CURRENT_USER).open_subkey_with_flags(
+        "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+        KEY_READ,
+    );
+    let Ok(key) = key else {
+        return true;
+    };
+    key.get_value::<u32, _>("TaskbarUsesLightTheme")
+        .or_else(|_| key.get_value::<u32, _>("SystemUsesLightColor"))
+        .map(|value| value != 0)
+        .unwrap_or(true)
+}
+
+/// Always light off Windows; keeps editor tooling on other platforms working.
+#[cfg(not(windows))]
+pub fn taskbar_uses_light_theme() -> bool {
+    true
+}
+
 /// Returns the bytes available to this user on the volume holding `path`.
 ///
 /// `path` need not exist: the nearest existing ancestor is queried instead,
@@ -175,6 +205,12 @@ mod tests {
         let available = available_space(Path::new("Q:\\devx-does-not-exist"));
 
         assert_eq!(available, None);
+    }
+
+    #[test]
+    fn taskbar_theme_reports_a_bool_without_panicking() {
+        // The value depends on the machine; only the shape is asserted.
+        let _ = taskbar_uses_light_theme();
     }
 
     #[test]

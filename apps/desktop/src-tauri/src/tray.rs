@@ -14,6 +14,7 @@
 //! out and takes the job objects (and every supervised service) with it.
 
 use tauri::{
+    path::BaseDirectory,
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Manager, PhysicalPosition, PhysicalSize,
 };
@@ -43,12 +44,44 @@ pub fn init(app: &AppHandle) -> tauri::Result<()> {
         .tooltip("DevX")
         .on_tray_icon_event(on_tray_icon_event);
 
-    if let Some(icon) = app.default_window_icon() {
-        tray = tray.icon(icon.clone());
+    match themed_tray_icon(app) {
+        Some(icon) => {
+            tray = tray.icon(icon);
+        }
+        None => {
+            // Bundled PNG missing (dev overlays, partial checkouts): fall
+            // back to the window icon rather than shipping no icon at all.
+            if let Some(icon) = app.default_window_icon() {
+                tray = tray.icon(icon.clone());
+            }
+        }
     }
     tray.build(app)?;
 
     Ok(())
+}
+
+/// Loads the E2 tray mark matching the current taskbar theme: dark mark on
+/// light bars, white mark on dark ones. Re-read on every popup toggle, so a
+/// theme switch takes effect at the next click without a restart.
+fn themed_tray_icon(app: &AppHandle) -> Option<tauri::image::Image<'_>> {
+    let name = if devx_sys::taskbar_uses_light_theme() {
+        "icons/tray-light.png"
+    } else {
+        "icons/tray-dark.png"
+    };
+    let path = app.path().resolve(name, BaseDirectory::Resource).ok()?;
+    tauri::image::Image::from_path(path).ok()
+}
+
+/// Refreshes the tray mark for the current theme. Best-effort: a missing
+/// file keeps whatever mark is already there.
+fn refresh_tray_icon(app: &AppHandle) {
+    if let Some(tray) = app.tray_by_id("devx-tray") {
+        if let Some(icon) = themed_tray_icon(app) {
+            let _ = tray.set_icon(Some(icon));
+        }
+    }
 }
 
 /// Global window-event hook: hides windows that should not really close.
@@ -141,6 +174,8 @@ fn toggle_popup(app: &AppHandle, position: PhysicalPosition<f64>) {
         let _ = window.hide();
         return;
     }
+
+    refresh_tray_icon(app);
 
     let (w, h) = popup_physical_size(app, position);
     let (x, y) = popup_position(app, position, w, h);

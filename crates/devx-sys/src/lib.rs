@@ -16,4 +16,4 @@ pub mod probe;
 pub mod process;
 
 pub use ports::{listening_ports, owner_of, try_listening_ports, PortOwner};
-pub use probe::WindowsProbe;
+pub use probe::{taskbar_uses_light_theme, WindowsProbe};

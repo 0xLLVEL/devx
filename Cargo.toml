@@ -105,7 +105,7 @@ specta-typescript = "0.0.12"
 tauri-specta = { version = "=2.0.0-rc.25", features = ["derive", "typescript"] }
 
 # --- Tauri ---
-tauri = { version = "2.11", features = ["tray-icon"] }
+tauri = { version = "2.11", features = ["tray-icon", "image-png"] }
 tauri-build = { version = "2.5", features = [] }
 tauri-plugin-opener = "2.5"
 tauri-plugin-autostart = "2.5"

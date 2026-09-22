@@ -28,6 +28,7 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
+    "resources": ["icons/tray-light.png", "icons/tray-dark.png"],
     "publisher": "DevX Contributors",
     "copyright": "Copyright © 2026 DevX Contributors",
     "shortDescription": "Local development environments for Windows",

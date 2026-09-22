@@ -36,13 +36,27 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
       className="flex shrink-0 flex-col border-r border-sidebar-border bg-sidebar transition-[width] duration-[220ms] ease-standard"
     >
       <div className="flex h-14 items-center gap-2 px-4">
+        <svg
+          width="18"
+          height="18"
+          viewBox="0 0 64 64"
+          aria-hidden
+          className="shrink-0"
+        >
+          <path
+            d="M51 12 L37 52"
+            stroke="currentColor"
+            strokeWidth="11"
+            strokeLinecap="round"
+            className="text-foreground"
+          />
+          <circle cx="19" cy="44" r="8" style={{ fill: "var(--accent)" }} />
+        </svg>
         <span
           aria-label={collapsed ? "DevX" : undefined}
           className="font-mono text-sm font-semibold tracking-tight text-foreground flex items-center"
         >
-          {collapsed ? (
-            "D"
-          ) : (
+          {collapsed ? null : (
             <>
               Dev<span className="bg-gradient-to-r from-accent to-accent-hover bg-clip-text text-transparent font-bold">X</span>
             </>
