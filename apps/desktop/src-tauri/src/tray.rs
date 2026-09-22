@@ -188,14 +188,9 @@ fn popup_position(app: &AppHandle, position: PhysicalPosition<f64>, w: u32, h: u
             let origin = monitor.position();
             let size = monitor.size();
             popup_rect(
-                anchor_x,
-                anchor_y,
-                w,
-                h,
-                origin.x,
-                origin.y,
-                size.width,
-                size.height,
+                (anchor_x, anchor_y),
+                (w, h),
+                (origin.x, origin.y, size.width, size.height),
             )
         }
         // No monitor reported: show above the cursor and hope for the best.
@@ -216,19 +211,14 @@ fn monitor_containing(app: &AppHandle, position: PhysicalPosition<f64>) -> Optio
     })
 }
 
-/// Top-left corner for a popup of `w`x`h` anchored at a click, clamped to
-/// the monitor. Prefers above the cursor (taskbar at the bottom, the common
-/// case) and flips below when there is no room; always stays on screen, so
-/// top taskbars and multi-monitor offsets cannot push it out of view.
+/// Top-left corner for a popup anchored at a click, clamped to the monitor.
+/// Prefers above the cursor (taskbar at the bottom, the common case) and
+/// flips below when there is no room; always stays on screen, so top
+/// taskbars and multi-monitor offsets cannot push it out of view.
 fn popup_rect(
-    anchor_x: i32,
-    anchor_y: i32,
-    w: u32,
-    h: u32,
-    mon_x: i32,
-    mon_y: i32,
-    mon_w: u32,
-    mon_h: u32,
+    (anchor_x, anchor_y): (i32, i32),
+    (w, h): (u32, u32),
+    (mon_x, mon_y, mon_w, mon_h): (i32, i32, u32, u32),
 ) -> (i32, i32) {
     let w = w as i32;
     let h = h as i32;
@@ -257,28 +247,28 @@ mod tests {
 
     #[test]
     fn popup_prefers_above_the_cursor() {
-        let (x, y) = popup_rect(1800, 1060, 320, 460, MON.0, MON.1, MON.2, MON.3);
+        let (x, y) = popup_rect((1800, 1060), (320, 460), MON);
         assert_eq!((x, y), (1600, 592));
     }
 
     #[test]
     fn popup_flips_below_when_no_room_above() {
         // Top taskbar: the cursor sits near the top edge.
-        let (x, y) = popup_rect(1800, 20, 320, 460, MON.0, MON.1, MON.2, MON.3);
+        let (x, y) = popup_rect((1800, 20), (320, 460), MON);
         assert_eq!((x, y), (1600, 28));
     }
 
     #[test]
     fn popup_clamps_into_narrow_monitors() {
         // A popup taller than the monitor still stays on screen.
-        let (x, y) = popup_rect(100, 100, 320, 2000, MON.0, MON.1, MON.2, MON.3);
+        let (x, y) = popup_rect((100, 100), (320, 2000), MON);
         assert_eq!((x, y), (0, 0));
     }
 
     #[test]
     fn popup_handles_offset_monitors() {
         // Second monitor to the right of the primary.
-        let (x, y) = popup_rect(2100, 1060, 320, 460, 1920, 0, 1920, 1080);
+        let (x, y) = popup_rect((2100, 1060), (320, 460), (1920, 0, 1920, 1080));
         assert_eq!((x, y), (1940, 592));
     }
 }
