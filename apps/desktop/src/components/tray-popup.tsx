@@ -85,7 +85,7 @@ export function TrayPopup() {
   return (
     <div className="flex h-screen flex-col overflow-hidden rounded-lg border border-border bg-card text-card-foreground">
       <div className="flex items-center justify-between border-b border-border/60 px-3 py-2">
-        <span className="text-sm font-semibold tracking-tight">DevX</span>
+        <span className="font-mono text-sm font-semibold tracking-tight">DEVX</span>
         <span className="font-mono text-xs text-muted-foreground">
           {entries.length} site{entries.length === 1 ? "" : "s"}
         </span>
@@ -146,7 +146,7 @@ export function TrayPopup() {
         </div>
         <div className="flex gap-1.5">
           <Button type="button" size="sm" className="flex-1" onClick={showMain} autoFocus>
-            Show DevX
+            Show DEVX
           </Button>
           <Button
             type="button"
@@ -154,7 +154,7 @@ export function TrayPopup() {
             variant="ghost"
             className="flex-1 text-destructive hover:bg-destructive/10 hover:text-destructive"
             onClick={quit}
-            aria-label="Quit DevX"
+            aria-label="Quit DEVX"
           >
             <Power aria-hidden className="size-3.5" />
             Quit

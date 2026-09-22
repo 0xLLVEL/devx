@@ -74,10 +74,10 @@ describe("TrayPopup", () => {
     renderWithProviders(<TrayPopup />);
     await screen.findByRole("menuitem", { name: /open myapp\.test in browser/i });
 
-    await user.click(screen.getByRole("button", { name: "Show DevX" }));
+    await user.click(screen.getByRole("button", { name: "Show DEVX" }));
     expect(mocks.trayShowMain).toHaveBeenCalledTimes(1);
 
-    await user.click(screen.getByRole("button", { name: "Quit DevX" }));
+    await user.click(screen.getByRole("button", { name: "Quit DEVX" }));
     expect(mocks.trayQuit).toHaveBeenCalledTimes(1);
     expect(hide).toHaveBeenCalled();
   });

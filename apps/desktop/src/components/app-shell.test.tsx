@@ -140,7 +140,7 @@ describe("AppShell", () => {
     // first would let the metrics footer render and double the "Services"
     // link match below.
     const topbar = screen.getByRole("banner");
-    expect(within(topbar).getByLabelText("DevX")).toBeInTheDocument();
+    expect(within(topbar).getByLabelText("DEVX")).toBeInTheDocument();
     expect(within(topbar).getByRole("button", { name: /search anything/i })).toHaveTextContent(
       "Ctrl K",
     );

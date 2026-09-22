@@ -65,7 +65,7 @@ export function Topbar({
           </Button>
         </Tooltip>
 
-        <div className="flex min-w-0 items-center gap-2" aria-label="DevX">
+        <div className="flex min-w-0 items-center gap-2" aria-label="DEVX">
           <svg
             width="18"
             height="18"
@@ -83,7 +83,7 @@ export function Topbar({
             <circle cx="19" cy="44" r="8" style={{ fill: "var(--accent)" }} />
           </svg>
           <span className="font-mono text-sm font-semibold tracking-tight text-foreground flex items-center">
-            Dev<span className="bg-gradient-to-r from-accent to-accent-hover bg-clip-text text-transparent font-bold">X</span>
+            DEV<span className="bg-gradient-to-r from-accent to-accent-hover bg-clip-text text-transparent font-bold">X</span>
           </span>
           {appInfo.data ? (
             <span className="font-mono text-caption text-ink-muted">
