@@ -1,10 +1,49 @@
-# DevX
+# DEVX
 
 A developer environment manager for Windows. DevX provisions portable language
 runtimes and backing services on demand, serves your projects over local `.test`
 domains with automatic HTTPS, and keeps everything supervised from one window.
 
 Comparable to ServBay or Laravel Herd, built with Rust and Tauri 2.
+
+## Contents
+
+- [Features](#features)
+- [Requirements](#requirements)
+- [How local URLs work](#how-local-urls-work)
+- [Repository layout](#repository-layout)
+- [Process supervision](#process-supervision)
+  - [Service definitions](#service-definitions)
+  - [PHP FastCGI pools](#php-fastcgi-pools)
+  - [Sites and per-server routing](#sites-and-per-server-routing)
+  - [Queue workers](#queue-workers)
+  - [Site environment variables](#site-environment-variables)
+  - [Backups](#backups)
+  - [Log viewer and configuration transfer](#log-viewer-and-configuration-transfer)
+  - [Site aliases](#site-aliases)
+  - [Terminal](#terminal)
+  - [Scheduled tasks](#scheduled-tasks)
+  - [Site templates](#site-templates)
+  - [Failure notifications and resource metrics](#failure-notifications-and-resource-metrics)
+  - [Privileged helper and hardened IPC](#privileged-helper-and-hardened-ipc)
+  - [Local CA and automatic HTTPS](#local-ca-and-automatic-https)
+  - [Name resolution: hosts file and bundled resolver](#name-resolution-hosts-file-and-bundled-resolver)
+  - [Database browser](#database-browser)
+  - [Mail catcher](#mail-catcher)
+  - [Cloudflare Tunnel sharing](#cloudflare-tunnel-sharing)
+  - [Tray, autostart, session restore and updates](#tray-autostart-session-restore-and-updates)
+  - [`devx` CLI companion](#devx-cli-companion)
+- [Component catalog](#component-catalog)
+  - [Integrity policy](#integrity-policy)
+  - [Checking the catalog against reality](#checking-the-catalog-against-reality)
+  - [Install pipeline](#install-pipeline)
+  - [Windows installer](#windows-installer)
+- [Data locations](#data-locations)
+- [Development](#development)
+  - [Checks](#checks)
+  - [Typed IPC](#typed-ipc)
+  - [App icon](#app-icon)
+- [License](#license)
 
 ## Features
 
@@ -138,14 +177,23 @@ build, starts its pool, and proves the FastCGI socket accepts connections.
 
 #### PHP extension manager
 
-Extensions ship unenabled in every PHP build's `ext/` directory; the Services
-page enumerates them (`list_php_extensions` scans `ext/php_*.dll`) and turns
-them on or off per version. Enabled extensions are recorded in `config.toml`
-under `php_extensions` (DLL file names, keyed by PHP version) and rendered
-into the pool's generated `php.ini` — ordinary `extension =` lines, except
+The extension list merges two sources: DLLs on disk (`list_php_extensions`
+scans `ext/php_*.dll`) and the shipped `php.ini-production` (fallback
+`php.ini-development`), parsed for `extension=` / `zend_extension=` lines.
+Every spelling normalises to a short name (`php_curl.dll`, `curl` and
+`"curl"` are all `curl`), which is also what the UI shows. Names without a
+DLL on disk are listed but cannot be enabled, so the UI can never ask for
+an ini PHP refuses to start with.
+
+Enabled short names are recorded in `config.toml` under `php_extensions`
+(old configs storing DLL file names keep working) and rendered into the
+pool's generated `php.ini` — ordinary `extension =` lines, except
 `opcache` and `xdebug`, which must load through `zend_extension` or PHP
-refuses to start. Saving while the pool is running re-renders the ini and
-restarts the pool, so the change applies immediately.
+refuses to start. The **Import from php.ini** button copies the shipped
+ini's uncommented, DLL-backed extensions into the enabled set in one step
+(never removing anything); afterwards toggles stay manual. Saving while
+the pool is running re-renders the ini and restarts the pool, so the
+change applies immediately.
 
 ### Sites and per-server routing
 
