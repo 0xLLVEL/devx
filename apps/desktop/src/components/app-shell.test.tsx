@@ -272,12 +272,12 @@ describe("AppShell", () => {
     const user = userEvent.setup();
     renderShell();
 
-    expect(screen.getByRole("navigation")).toHaveStyle({ width: "232px" });
+    expect(screen.getByRole("navigation")).toHaveStyle({ width: "200px" });
     expect(within(screen.getByRole("navigation")).getByText("Environment")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /collapse sidebar/i }));
 
-    expect(screen.getByRole("navigation")).toHaveStyle({ width: "68px" });
+    expect(screen.getByRole("navigation")).toHaveStyle({ width: "56px" });
     // §5: the collapsed rail keeps the routes, drops the section labels.
     expect(
       within(screen.getByRole("navigation")).queryByText("Environment"),

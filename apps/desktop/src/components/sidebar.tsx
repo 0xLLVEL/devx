@@ -15,7 +15,7 @@ const COLLAPSED_WIDTH = "56px";
 /**
  * Sidebar (§5).
  *
- * Expanded 232px, collapsed 68px, 220ms on the §52 easing. The active item is
+ * Expanded 200px, collapsed 56px, 220ms on the §52 easing. The active item is
  * marked four ways at once — raised background, thin accent line, accent icon,
  * high-contrast text — so the state never rests on colour alone (§55). Counts
  * come from real queries only: before the backend answers, a row shows no
