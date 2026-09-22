@@ -285,14 +285,24 @@ export const commands = {
 	 *  reaching into service ids by hand.
 	 */
 	phpPoolLogs: (version: string, after: number) => typedError<LogEntry[], DevxError>(__TAURI_INVOKE("php_pool_logs", { version, after })),
-	/**  Lists the extensions of one installed PHP version and which are enabled. */
+	/**
+	 *  Lists the extensions of one installed PHP version and which are enabled.
+	 * 
+	 *  Rows merge DLLs on disk with the shipped php.ini, but enabled state comes
+	 *  from the ini alone: uncommented means on. A name without a DLL is listed
+	 *  but cannot be enabled, so the UI can never ask for an ini PHP refuses to
+	 *  start with. Stored config entries from older DevX are not consulted.
+	 */
 	phpExtList: (version: string) => typedError<PhpExtensionInfo, DevxError>(__TAURI_INVOKE("php_ext_list", { version })),
 	/**
 	 *  Enables or disables one extension of a PHP version.
 	 * 
-	 *  The setting is persisted first; a running pool is then restarted with a
-	 *  re-rendered `php.ini`, so the change applies immediately. A failed restart
-	 *  does not roll back the setting — the next manual start picks it up.
+	 *  The shipped php.ini is the truth: toggling comments or uncomments its
+	 *  line (either spelling works, `curl` or `php_curl.dll`), so a hand-edited
+	 *  ini and the UI can never disagree. The config list is kept as a mirror
+	 *  for older readers. A running pool then restarts with the re-rendered
+	 *  `php.ini`, so the change applies immediately. A failed restart does not
+	 *  roll back the setting — the next manual start picks it up.
 	 */
 	phpExtSet: (version: string, extension: string, enabled: boolean) => typedError<PhpExtensionInfo, DevxError>(__TAURI_INVOKE("php_ext_set", { version, extension, enabled })),
 	/**  Reads the Xdebug configuration of one installed PHP version. */
@@ -1518,14 +1528,28 @@ export type NotificationList = {
 	recorded: number,
 };
 
+/**  One extension row: every spelling merged to its short name. */
+export type PhpExtensionEntry = {
+	/**  Short name (`curl`, `opcache`). */
+	name: string,
+	/**  Whether the DLL ships in `ext/` (required to enable). */
+	has_dll: boolean,
+	/**  Whether the shipped php.ini mentions it. */
+	from_ini: boolean,
+	/**  Whether it is currently enabled. */
+	enabled: boolean,
+};
+
 /**  The PHP extensions a version ships and which are enabled, for the UI. */
 export type PhpExtensionInfo = {
 	/**  PHP version these extensions belong to. */
 	version: string,
 	/**  Every extension DLL the installed version ships, sorted. */
 	installed: string[],
-	/**  Extension DLLs currently enabled for the version. */
+	/**  Short names currently enabled for the version. */
 	enabled: string[],
+	/**  Merged rows: DLL scan union shipped php.ini, sorted by name. */
+	entries: PhpExtensionEntry[],
 };
 
 /**  A summary of one PHP FastCGI pool, including its live state. */

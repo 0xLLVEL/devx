@@ -44,9 +44,10 @@ pub use download::{DownloadOptions, Downloader, Progress};
 pub use http::HttpClient;
 pub use install::{InstallStage, Installer};
 pub use php_pool::{
-    is_pool_id, list_php_extensions, plan_pool, pool_id, pool_listen_addr, validate_workers,
-    version_of_pool, write_pool_files, PhpPoolPlan, PhpPoolSummary, PoolPlanOptions,
-    DEFAULT_WORKERS, FIRST_POOL_PORT, MAX_WORKERS,
+    enabled_ini_extensions, is_pool_id, list_php_extensions, parse_php_ini_extensions, plan_pool,
+    pool_id, pool_listen_addr, read_php_ini_source, set_php_ini_extension, shipped_php_ini_path,
+    short_extension_name, validate_workers, version_of_pool, write_pool_files, IniExtension,
+    PhpPoolPlan, PhpPoolSummary, PoolPlanOptions, DEFAULT_WORKERS, FIRST_POOL_PORT, MAX_WORKERS,
 };
 pub use pki::{
     ensure_ca, ensure_site_cert, load_ca, remove_site_cert, tls_listen_snippet, CertificateFiles,

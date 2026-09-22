@@ -203,6 +203,19 @@ pub fn php_pool_logs(
     service_logs(state, devx_provision::pool_id(&version), after)
 }
 
+/// One extension row: every spelling merged to its short name.
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
+pub struct PhpExtensionEntry {
+    /// Short name (`curl`, `opcache`).
+    pub name: String,
+    /// Whether the DLL ships in `ext/` (required to enable).
+    pub has_dll: bool,
+    /// Whether the shipped php.ini mentions it.
+    pub from_ini: bool,
+    /// Whether it is currently enabled.
+    pub enabled: bool,
+}
+
 /// The PHP extensions a version ships and which are enabled, for the UI.
 #[derive(Debug, Clone, serde::Serialize, specta::Type)]
 pub struct PhpExtensionInfo {
@@ -210,11 +223,18 @@ pub struct PhpExtensionInfo {
     pub version: String,
     /// Every extension DLL the installed version ships, sorted.
     pub installed: Vec<String>,
-    /// Extension DLLs currently enabled for the version.
+    /// Short names currently enabled for the version.
     pub enabled: Vec<String>,
+    /// Merged rows: DLL scan union shipped php.ini, sorted by name.
+    pub entries: Vec<PhpExtensionEntry>,
 }
 
 /// Lists the extensions of one installed PHP version and which are enabled.
+///
+/// Rows merge DLLs on disk with the shipped php.ini, but enabled state comes
+/// from the ini alone: uncommented means on. A name without a DLL is listed
+/// but cannot be enabled, so the UI can never ask for an ini PHP refuses to
+/// start with. Stored config entries from older DevX are not consulted.
 #[tauri::command]
 #[specta::specta]
 pub fn php_ext_list(
@@ -228,27 +248,49 @@ pub fn php_ext_list(
     }
 
     let installed = devx_provision::list_php_extensions(&install_dir)?;
-    let enabled = state.with_config(|store| {
-        store
-            .config()
-            .php_extensions
-            .get(&version)
-            .cloned()
-            .unwrap_or_default()
-    });
+    let dll_shorts: std::collections::BTreeSet<String> = installed
+        .iter()
+        .map(|name| devx_provision::short_extension_name(name))
+        .collect();
+    let parsed: Vec<devx_provision::IniExtension> =
+        devx_provision::read_php_ini_source(&install_dir)
+            .map(|body| devx_provision::parse_php_ini_extensions(&body))
+            .unwrap_or_default();
+    let ini_names: std::collections::BTreeSet<String> =
+        parsed.iter().map(|entry| entry.name.clone()).collect();
+    let ini_on: std::collections::BTreeSet<String> = parsed
+        .into_iter()
+        .filter(|entry| entry.enabled)
+        .map(|entry| entry.name)
+        .collect();
+
+    let entries = dll_shorts
+        .union(&ini_names)
+        .map(|name| PhpExtensionEntry {
+            enabled: ini_on.contains(name),
+            has_dll: dll_shorts.contains(name),
+            from_ini: ini_names.contains(name),
+            name: name.clone(),
+        })
+        .collect();
+    let enabled = ini_on.into_iter().collect();
 
     Ok(PhpExtensionInfo {
         version,
         installed,
         enabled,
+        entries,
     })
 }
 
 /// Enables or disables one extension of a PHP version.
 ///
-/// The setting is persisted first; a running pool is then restarted with a
-/// re-rendered `php.ini`, so the change applies immediately. A failed restart
-/// does not roll back the setting — the next manual start picks it up.
+/// The shipped php.ini is the truth: toggling comments or uncomments its
+/// line (either spelling works, `curl` or `php_curl.dll`), so a hand-edited
+/// ini and the UI can never disagree. The config list is kept as a mirror
+/// for older readers. A running pool then restarts with the re-rendered
+/// `php.ini`, so the change applies immediately. A failed restart does not
+/// roll back the setting — the next manual start picks it up.
 #[tauri::command]
 #[specta::specta]
 pub async fn php_ext_set(
@@ -259,23 +301,38 @@ pub async fn php_ext_set(
 ) -> Result<PhpExtensionInfo, Error> {
     // The extension must be one the installed version actually ships, so a
     // typo can never render an ini PHP refuses to start with.
+    let short = devx_provision::short_extension_name(&extension);
     let install_dir = state.paths.runtimes_dir().join("php").join(&version);
+    if !install_dir.join(".devx-ok").is_file() {
+        return Err(Error::not_found(format!("php {version} is not installed"))
+            .with_hint("install the PHP version first"));
+    }
     let installed = devx_provision::list_php_extensions(&install_dir)?;
-    if enabled && !installed.contains(&extension) {
+    if enabled
+        && !installed
+            .iter()
+            .any(|name| devx_provision::short_extension_name(name) == short)
+    {
         return Err(Error::not_found(format!(
             "php {version} does not ship {extension}"
         )));
     }
 
+    devx_provision::set_php_ini_extension(&install_dir, &short, enabled)?;
+
     state.with_config_mut(|store| {
         store.update(|config| {
             if enabled {
                 let entry = config.php_extensions.entry(version.clone()).or_default();
-                if !entry.contains(&extension) {
-                    entry.push(extension.clone());
+                if !entry
+                    .iter()
+                    .any(|e| devx_provision::short_extension_name(e) == short)
+                {
+                    entry.push(short.clone());
                 }
+                entry.sort();
             } else if let Some(list) = config.php_extensions.get_mut(&version) {
-                list.retain(|e| e != &extension);
+                list.retain(|e| devx_provision::short_extension_name(e) != short);
             }
         })
     })?;
@@ -393,8 +450,16 @@ pub async fn php_xdebug_set(
     php_xdebug_get(state, version)
 }
 
-/// The enabled extensions for `version`, from the stored configuration.
+/// The enabled extensions for `version`, from the shipped php.ini.
+///
+/// The ini is truth here too: uncommented lines with a DLL on disk, so a
+/// hand-edited ini renders exactly what it says. Without a shipped ini,
+/// fall back to the stored configuration.
 pub(crate) fn pool_extensions(state: &AppState, version: &str) -> Vec<String> {
+    let install_dir = state.paths.runtimes_dir().join("php").join(version);
+    if devx_provision::shipped_php_ini_path(&install_dir).is_ok() {
+        return devx_provision::enabled_ini_extensions(&install_dir);
+    }
     state.with_config(|store| {
         store
             .config()

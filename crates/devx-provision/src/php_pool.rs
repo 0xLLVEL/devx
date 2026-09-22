@@ -334,21 +334,151 @@ fn render_extension_lines(extensions: &[String]) -> String {
         } else {
             "extension"
         };
-        lines.push(format!("{directive} = {name}"));
+        lines.push(format!("{directive} = {}", render_extension_name(name)));
     }
     lines.join("\n")
 }
 
 /// Whether an extension DLL must load as a Zend extension.
 ///
-/// Names are the DLL file names as discovered in `ext/`; the plain stem is
-/// matched so either `opcache` or `php_opcache.dll` classifies the same.
-fn is_zend_extension(file_name: &str) -> bool {
-    let stem = file_name
-        .strip_prefix("php_")
-        .and_then(|rest| rest.strip_suffix(".dll"))
-        .unwrap_or(file_name);
-    matches!(stem, "opcache" | "xdebug")
+/// Accepts either form (`opcache`, `php_opcache.dll`), so old configs and
+/// php.ini spellings classify the same.
+fn is_zend_extension(name: &str) -> bool {
+    matches!(short_extension_name(name).as_str(), "opcache" | "xdebug")
+}
+
+/// Canonical short name shared by every spelling: `php_curl.dll`, `curl`,
+/// `"curl"` and `php_curl.so` all become `curl`.
+pub fn short_extension_name(raw: &str) -> String {
+    let mut name = raw
+        .trim()
+        .trim_matches(|c| c == '"' || c == '\'')
+        .trim()
+        .to_ascii_lowercase();
+    for suffix in [".dll", ".so"] {
+        if let Some(stripped) = name.strip_suffix(suffix) {
+            name = stripped.to_owned();
+            break;
+        }
+    }
+    if let Some(stripped) = name.strip_prefix("php_") {
+        name = stripped.to_owned();
+    }
+    name
+}
+
+/// File name to render for a stored entry. Old configs store `php_x.dll`
+/// verbatim and keep working; short names gain the canonical prefix.
+fn render_extension_name(stored: &str) -> String {
+    if stored.to_ascii_lowercase().ends_with(".dll") {
+        stored.to_owned()
+    } else {
+        format!("php_{}.dll", short_extension_name(stored))
+    }
+}
+
+/// One `extension=` / `zend_extension=` line parsed from a php.ini.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IniExtension {
+    /// Short name (`curl`, `opcache`).
+    pub name: String,
+    /// Whether the line is uncommented.
+    pub enabled: bool,
+    /// Whether it uses the `zend_extension` directive.
+    pub zend: bool,
+}
+
+/// Parses extension directives out of php.ini text.
+///
+/// Commented lines (`;extension=curl`) parse as disabled; inline `;`
+/// comments after the value are stripped. Duplicate names resolve
+/// last-wins, mirroring PHP itself. Anything without `=` is ignored, so
+/// section headers and other directives never leak in.
+pub fn parse_php_ini_extensions(text: &str) -> Vec<IniExtension> {
+    let mut order: Vec<String> = Vec::new();
+    let mut by_name: std::collections::HashMap<String, IniExtension> =
+        std::collections::HashMap::new();
+
+    for raw_line in text.lines() {
+        let line = raw_line.trim();
+        let (enabled, rest) = match line.strip_prefix(';') {
+            Some(commented) => (false, commented.trim()),
+            None => (true, line),
+        };
+        let Some((directive, value)) = rest.split_once('=') else {
+            continue;
+        };
+        let zend = match directive.trim().to_ascii_lowercase().as_str() {
+            "extension" => false,
+            "zend_extension" => true,
+            _ => continue,
+        };
+        let value = value.split(';').next().unwrap_or("").trim();
+        let name = short_extension_name(value);
+        if name.is_empty() {
+            continue;
+        }
+        if !by_name.contains_key(&name) {
+            order.push(name.clone());
+        }
+        by_name.insert(
+            name.clone(),
+            IniExtension {
+                name,
+                enabled,
+                zend,
+            },
+        );
+    }
+
+    order
+        .into_iter()
+        .filter_map(|name| by_name.remove(&name))
+        .collect()
+}
+
+/// Locates the shipped php.ini inside an installed PHP version.
+///
+/// Prefers `php.ini-production` (safer defaults), falls back to
+/// `php.ini-development`.
+pub fn shipped_php_ini_path(install_dir: &Path) -> Result<PathBuf> {
+    for candidate in ["php.ini-production", "php.ini-development"] {
+        let path = install_dir.join(candidate);
+        if path.is_file() {
+            return Ok(path);
+        }
+    }
+    Err(Error::not_found(format!(
+        "no php.ini-production or php.ini-development in {}",
+        install_dir.display()
+    ))
+    .with_hint("reinstall the PHP version to restore its shipped ini files"))
+}
+
+/// Reads the upstream php.ini shipped inside an installed PHP version.
+///
+/// Prefers `php.ini-production` (safer defaults), falls back to
+/// `php.ini-development`. A missing directory is not an error here — the
+/// caller decides whether a version without any ini is listable.
+pub fn read_php_ini_source(install_dir: &Path) -> Result<String> {
+    for candidate in ["php.ini-production", "php.ini-development"] {
+        let path = install_dir.join(candidate);
+        match std::fs::read_to_string(&path) {
+            Ok(body) => return Ok(body),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(err) => {
+                return Err(Error::new(
+                    ErrorCode::Io,
+                    format!("failed to read {}: {err}", path.display()),
+                ))
+            }
+        }
+    }
+    Err(Error::not_found(format!(
+        "no php.ini-production or php.ini-development in {}",
+        install_dir.display()
+    ))
+    .with_hint("reinstall the PHP version to restore its shipped ini files"))
 }
 
 /// Renders the Xdebug directive block for the pool's `php.ini`.
@@ -375,6 +505,109 @@ fn render_xdebug_lines(config: Option<&devx_core::config::XdebugConfig>) -> Stri
         lines.push("xdebug.start_with_request = yes".to_owned());
     }
     lines.join("\n")
+}
+
+/// Sets one extension's on/off state inside the shipped php.ini.
+///
+/// `name` accepts any spelling (`curl`, `php_curl.dll`); matching is always
+/// by short name. Commented means off, uncommented means on: enabling
+/// uncomments matching lines, disabling comments them. A name with no
+/// directive line at all is appended under a `; DevX managed` marker, so
+/// DLL-only drops stay toggleable. Every other byte of the file is
+/// preserved; the write is atomic. Returns whether anything changed.
+pub fn set_php_ini_extension(install_dir: &Path, name: &str, enabled: bool) -> Result<bool> {
+    let path = shipped_php_ini_path(install_dir)?;
+    let body = std::fs::read_to_string(&path).map_err(|err| {
+        Error::new(
+            ErrorCode::Io,
+            format!("failed to read {}: {err}", path.display()),
+        )
+    })?;
+
+    let target = short_extension_name(name);
+    if target.is_empty() {
+        return Err(Error::invalid_input("extension name must not be empty"));
+    }
+
+    let mut changed = false;
+    let mut found = false;
+    let mut lines: Vec<String> = Vec::new();
+    for raw_line in body.lines() {
+        let trimmed = raw_line.trim();
+        let (commented, rest) = match trimmed.strip_prefix(';') {
+            Some(rest) => (true, rest.trim()),
+            None => (false, trimmed),
+        };
+        let directive_name = rest
+            .split_once('=')
+            .map(|(directive, _)| directive.trim().to_ascii_lowercase());
+        let is_target = matches!(
+            directive_name.as_deref(),
+            Some("extension" | "zend_extension")
+        ) && rest.split_once('=').is_some_and(|(_, value)| {
+            short_extension_name(value.split(';').next().unwrap_or("")) == target
+        });
+        if !is_target {
+            lines.push(raw_line.to_owned());
+            continue;
+        }
+        found = true;
+        // Duplicates are normalised to the same state so PHP's last-wins
+        // rule can never disagree with us. The original directive
+        // (`extension` vs `zend_extension`) is preserved per line.
+        let directive = rest
+            .split_once('=')
+            .map(|(d, _)| d.trim())
+            .unwrap_or("extension");
+        let want_commented = !enabled;
+        if commented == want_commented {
+            lines.push(raw_line.to_owned());
+        } else if want_commented {
+            changed = true;
+            lines.push(format!(";{directive} = {target}"));
+        } else {
+            changed = true;
+            lines.push(format!("{directive} = {target}"));
+        }
+    }
+
+    if !found && enabled {
+        changed = true;
+        lines.push("; DevX managed".to_owned());
+        lines.push(format!("extension = {target}"));
+    }
+
+    if !changed {
+        return Ok(false);
+    }
+    let mut output = lines.join("\n");
+    if body.ends_with('\n') {
+        output.push('\n');
+    }
+    devx_core::fsx::write_atomic(&path, output)?;
+    Ok(true)
+}
+
+/// Short names enabled in the shipped php.ini that also ship a DLL.
+///
+/// The intersection is what a pool may safely render: uncommented without a
+/// DLL would refuse PHP startup, so those rows surface as warnings instead.
+pub fn enabled_ini_extensions(install_dir: &Path) -> Vec<String> {
+    let dlls: std::collections::BTreeSet<String> = list_php_extensions(install_dir)
+        .unwrap_or_default()
+        .iter()
+        .map(|name| short_extension_name(name))
+        .collect();
+    let Ok(body) = read_php_ini_source(install_dir) else {
+        return Vec::new();
+    };
+    parse_php_ini_extensions(&body)
+        .into_iter()
+        .filter(|entry| entry.enabled && dlls.contains(&entry.name))
+        .map(|entry| entry.name)
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 /// Lists the extension DLLs an installed PHP version ships.
@@ -763,6 +996,148 @@ mod tests {
             "{lines}"
         );
         assert_eq!(render_extension_lines(&[]), "");
+    }
+
+    #[test]
+    fn short_names_render_to_canonical_dll_names() {
+        let lines = render_extension_lines(&["gd".to_owned(), "opcache".to_owned()]);
+
+        assert!(lines.contains("extension = php_gd.dll"), "{lines}");
+        assert!(
+            lines.contains("zend_extension = php_opcache.dll"),
+            "{lines}"
+        );
+    }
+
+    #[test]
+    fn short_names_unify_every_spelling() {
+        for (raw, short) in [
+            ("php_curl.dll", "curl"),
+            ("curl", "curl"),
+            ("\"curl\"", "curl"),
+            ("PHP_GD.DLL", "gd"),
+            ("php_intl.so", "intl"),
+            ("opcache", "opcache"),
+        ] {
+            assert_eq!(short_extension_name(raw), short, "{raw}");
+        }
+        assert!(short_extension_name("").is_empty());
+    }
+
+    #[test]
+    fn ini_parser_reads_enabled_commented_and_zend_lines() {
+        let entries = parse_php_ini_extensions(
+            "[PHP]\nextension=curl\n;extension = gd\nzend_extension = opcache\n; zend_extension=\"xdebug\"\n",
+        );
+
+        assert_eq!(
+            entries,
+            vec![
+                IniExtension {
+                    name: "curl".into(),
+                    enabled: true,
+                    zend: false
+                },
+                IniExtension {
+                    name: "gd".into(),
+                    enabled: false,
+                    zend: false
+                },
+                IniExtension {
+                    name: "opcache".into(),
+                    enabled: true,
+                    zend: true
+                },
+                IniExtension {
+                    name: "xdebug".into(),
+                    enabled: false,
+                    zend: true
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn ini_parser_ignores_garbage_and_resolves_dupes_last_wins() {
+        let entries = parse_php_ini_extensions(
+            "extension_dir = ./ext\n[PHP]\n;extension=curl\nextension = curl ; trailing\n;extension=\nextension_dir\n",
+        );
+
+        assert_eq!(
+            entries,
+            vec![IniExtension {
+                name: "curl".into(),
+                enabled: true,
+                zend: false
+            }]
+        );
+    }
+
+    #[test]
+    fn ini_source_prefers_production_then_development() {
+        let dir = tempfile::tempdir().expect("temp");
+        std::fs::write(dir.path().join("php.ini-development"), "extension=gd\n").expect("seed");
+        assert!(
+            parse_php_ini_extensions(&read_php_ini_source(dir.path()).expect("dev"))
+                .iter()
+                .any(|e| e.name == "gd")
+        );
+
+        std::fs::write(dir.path().join("php.ini-production"), "extension=curl\n").expect("seed");
+        let entries = parse_php_ini_extensions(&read_php_ini_source(dir.path()).expect("prod"));
+        assert!(entries.iter().any(|e| e.name == "curl"));
+        assert!(!entries.iter().any(|e| e.name == "gd"));
+    }
+
+    #[test]
+    fn ini_source_missing_is_a_clear_not_found() {
+        let dir = tempfile::tempdir().expect("temp");
+        assert!(read_php_ini_source(dir.path()).is_err());
+    }
+
+    #[test]
+    fn ini_write_back_comments_uncomments_and_appends() {
+        let dir = tempfile::tempdir().expect("temp");
+        std::fs::write(
+            dir.path().join("php.ini-production"),
+            "[PHP]\n;extension=curl\nzend_extension = opcache\n; a comment\n",
+        )
+        .expect("seed");
+
+        // Enabling uncomments in place, preserving the directive and the rest.
+        assert!(set_php_ini_extension(dir.path(), "curl", true).expect("enable"));
+        // Disabling comments; already-correct state reports no change.
+        assert!(set_php_ini_extension(dir.path(), "opcache", false).expect("disable"));
+        assert!(!set_php_ini_extension(dir.path(), "opcache", false).expect("idempotent"));
+        // Unknown-but-requested names append under the marker.
+        assert!(set_php_ini_extension(dir.path(), "gd", true).expect("append"));
+
+        let body = std::fs::read_to_string(dir.path().join("php.ini-production")).expect("read");
+        assert!(body.contains("extension = curl"), "{body}");
+        assert!(body.contains(";zend_extension = opcache"), "{body}");
+        assert!(body.contains("; a comment"), "{body}");
+        assert!(body.contains("; DevX managed\nextension = gd"), "{body}");
+
+        // Short, file and quoted spellings address the same line.
+        assert!(!set_php_ini_extension(dir.path(), "php_curl.dll", true).expect("same"));
+        assert!(!set_php_ini_extension(dir.path(), "\"gd\"", true).expect("same"));
+    }
+
+    #[test]
+    fn ini_enabled_set_is_uncommented_with_dll_only() {
+        let dir = tempfile::tempdir().expect("temp");
+        let ext = dir.path().join("ext");
+        std::fs::create_dir(&ext).expect("ext dir");
+        std::fs::write(ext.join("php_curl.dll"), b"x").expect("dll");
+        std::fs::write(
+            dir.path().join("php.ini-production"),
+            "extension=curl\n;extension=gd\n;extension=missing\n",
+        )
+        .expect("seed");
+
+        // gd is uncommented nowhere of consequence: commented here and its
+        // DLL is absent, so only curl counts.
+        assert_eq!(enabled_ini_extensions(dir.path()), vec!["curl".to_owned()]);
     }
 
     #[test]

@@ -2051,9 +2051,10 @@ function LimitsForm({
 }
 
 /**
- * Lists the extensions the installed PHP version ships, with a switch per
- * extension. Changing one re-renders the pool's ini and restarts the pool,
- * which the backend does as part of `php_ext_set`.
+ * Lists the extensions a PHP version offers — DLLs on disk merged with the
+ * shipped php.ini — with a switch per extension. Changing one re-renders
+ * the pool's ini and restarts the pool, which the backend does as part of
+ * `php_ext_set`. Names without a DLL are shown but cannot be enabled.
  */
 function ExtensionsPanel({ version }: { version: string }) {
   const queryClient = useQueryClient();
@@ -2107,14 +2108,14 @@ function ExtensionsPanel({ version }: { version: string }) {
       </Callout>
     );
   }
-  if (info.data.installed.length === 0) {
+  if (info.data.entries.length === 0) {
     return (
       <EmptyState
         icon={<Puzzle />}
         title="No extensions in this build."
         description={
           <>
-            This PHP build ships no extensions in its <code>ext/</code> directory.
+            This PHP build ships neither extension DLLs nor a readable php.ini.
           </>
         }
       />
@@ -2123,28 +2124,38 @@ function ExtensionsPanel({ version }: { version: string }) {
 
   return (
     <div className="space-y-2">
+      <p className="text-xs text-muted-foreground">
+        Short names from the shipped php.ini: uncommented means on. Toggling
+        edits the ini itself, so hand edits and the UI never disagree.
+      </p>
       <div className="grid gap-1.5 sm:grid-cols-2">
-        {info.data.installed.map((extension) => {
-          const enabled = info.data.enabled.includes(extension);
-          return (
-            <label
-              key={extension}
-              className="flex items-center justify-between gap-3 rounded-sm border border-border px-3 py-1.5 text-sm"
-            >
-              <span className="data-value min-w-0 truncate" data-selectable>
-                {extension}
+        {info.data.entries.map((entry) => (
+          <label
+            key={entry.name}
+            className="flex items-center justify-between gap-3 rounded-sm border border-border px-3 py-1.5 text-sm"
+          >
+            <span className="flex min-w-0 items-center gap-2">
+              <span className="data-value truncate" data-selectable>
+                {entry.name}
               </span>
-              <Switch
-                checked={enabled}
-                disabled={setExtension.isPending}
-                onCheckedChange={(checked) =>
-                  setExtension.mutate({ extension, enabled: checked })
-                }
-                aria-label={`${enabled ? "Disable" : "Enable"} ${extension}`}
-              />
-            </label>
-          );
-        })}
+              {!entry.has_dll ? (
+                <Badge variant="warning">no DLL</Badge>
+              ) : !entry.from_ini ? (
+                <Badge variant="secondary">dll only</Badge>
+              ) : null}
+            </span>
+            <Switch
+              checked={entry.enabled}
+              disabled={setExtension.isPending || !entry.has_dll}
+              onCheckedChange={(checked) =>
+                setExtension.mutate({ extension: entry.name, enabled: checked })
+              }
+              aria-label={`${entry.enabled ? "Disable" : "Enable"} ${entry.name}${
+                entry.has_dll ? "" : " (unavailable: no DLL on disk)"
+              }`}
+            />
+          </label>
+        ))}
       </div>
       {setExtension.error instanceof Error ? (
         <Callout variant="destructive" title="Could not change the extension.">

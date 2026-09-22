@@ -177,23 +177,20 @@ build, starts its pool, and proves the FastCGI socket accepts connections.
 
 #### PHP extension manager
 
-The extension list merges two sources: DLLs on disk (`list_php_extensions`
-scans `ext/php_*.dll`) and the shipped `php.ini-production` (fallback
-`php.ini-development`), parsed for `extension=` / `zend_extension=` lines.
-Every spelling normalises to a short name (`php_curl.dll`, `curl` and
-`"curl"` are all `curl`), which is also what the UI shows. Names without a
-DLL on disk are listed but cannot be enabled, so the UI can never ask for
-an ini PHP refuses to start with.
-
-Enabled short names are recorded in `config.toml` under `php_extensions`
-(old configs storing DLL file names keep working) and rendered into the
-pool's generated `php.ini` — ordinary `extension =` lines, except
-`opcache` and `xdebug`, which must load through `zend_extension` or PHP
-refuses to start. The **Import from php.ini** button copies the shipped
-ini's uncommented, DLL-backed extensions into the enabled set in one step
-(never removing anything); afterwards toggles stay manual. Saving while
-the pool is running re-renders the ini and restarts the pool, so the
-change applies immediately.
+The shipped `php.ini-production` (fallback `php.ini-development`) is the
+single source of truth: commented means off, uncommented means on. The UI
+lists short names merged from that file and the DLLs on disk
+(`php_curl.dll`, `curl` and `"curl"` are all `curl`); toggling a switch
+comments or uncomments the ini line itself — appending under a `; DevX
+managed` marker when the name has no line yet — so a hand-edited ini and
+the UI can never disagree. Names without a DLL on disk are listed but
+cannot be enabled, so the UI can never ask for an ini PHP refuses to start
+with. The pool's generated `php.ini` renders from the same ini state:
+ordinary `extension =` lines, except `opcache` and `xdebug`, which must
+load through `zend_extension` or PHP refuses to start. Saving while the
+pool is running re-renders and restarts it, so the change applies
+immediately. (`config.toml` still mirrors toggles for older readers, but
+nothing consults it anymore.)
 
 ### Sites and per-server routing
 

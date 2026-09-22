@@ -93,8 +93,13 @@ describe("ServicesPage", () => {
     });
     mocks.phpExtList.mockResolvedValue({
       version: "8.4.25",
-      installed: ["curl", "mbstring"],
+      installed: ["php_curl.dll", "php_mbstring.dll"],
       enabled: ["curl"],
+      entries: [
+        { name: "curl", has_dll: true, from_ini: true, enabled: true },
+        { name: "mbstring", has_dll: true, from_ini: true, enabled: false },
+        { name: "xdebug", has_dll: false, from_ini: true, enabled: false },
+      ],
     });
     mocks.phpXdebugGet.mockResolvedValue({
       version: "8.4.25",
@@ -555,8 +560,9 @@ describe("ServicesPage", () => {
     mocks.phpPoolList.mockResolvedValue([POOL]);
     mocks.phpExtSet.mockResolvedValue({
       version: "8.4.25",
-      installed: ["curl", "mbstring"],
+      installed: ["php_curl.dll", "php_mbstring.dll"],
       enabled: ["curl", "mbstring"],
+      entries: [],
     });
 
     renderWithProviders(<ServicesPage />);
@@ -570,6 +576,25 @@ describe("ServicesPage", () => {
     await waitFor(() =>
       expect(mocks.phpExtSet).toHaveBeenCalledWith("8.4.25", "mbstring", true),
     );
+  });
+
+  it("shows short names and marks DLL-less rows unavailable", async () => {
+    const user = userEvent.setup();
+    mocks.phpPoolList.mockResolvedValue([POOL]);
+
+    renderWithProviders(<ServicesPage />);
+
+    await screen.findByText("PHP 8.4.25");
+    await user.click(screen.getByRole("button", { name: /show details for PHP 8\.4\.25/i }));
+    await user.click(screen.getByRole("tab", { name: "Configuration" }));
+
+    // Short names from the merged list, not DLL file names.
+    expect(await screen.findByText("curl")).toBeInTheDocument();
+    expect(screen.queryByText("php_curl.dll")).not.toBeInTheDocument();
+
+    // xdebug has no DLL: flagged and its switch is disabled.
+    expect(screen.getByText("no DLL")).toBeInTheDocument();
+    expect(screen.getByLabelText(/Enable xdebug \(unavailable/)).toBeDisabled();
   });
 
   // --- the sections that were already here --------------------------------
