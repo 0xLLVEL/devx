@@ -637,6 +637,13 @@ export const commands = {
 	 *  site owns are left alone, so hand-added custom lines are never touched.
 	 */
 	hostsResync: () => typedError<HostsResyncResult, DevxError>(__TAURI_INVOKE("hosts_resync")),
+	/**  Shows the main window, focusing it. */
+	trayShowMain: () => typedError<null, DevxError>(__TAURI_INVOKE("tray_show_main")),
+	/**
+	 *  Quits the app, stopping every supervised service first (via the normal
+	 *  exit path, which the tray used before the popup existed).
+	 */
+	trayQuit: () => typedError<null, DevxError>(__TAURI_INVOKE("tray_quit")),
 };
 
 /** Events */

@@ -1,5 +1,5 @@
 import { Suspense, lazy } from "react";
-import { Route, Routes } from "react-router-dom";
+import { Route, Routes, useLocation } from "react-router-dom";
 
 import { AppShell } from "@/components/app-shell";
 import { useServiceEvents } from "@/lib/use-service-events";
@@ -50,12 +50,27 @@ const DiagnosticsPage = lazy(() =>
 const SettingsPage = lazy(() =>
   import("@/routes/settings").then((module) => ({ default: module.SettingsPage })),
 );
+const TrayPopup = lazy(() =>
+  import("@/components/tray-popup").then((module) => ({ default: module.TrayPopup })),
+);
 
 /** Route table for the DevX window. */
 export function App() {
   // One app-wide subscription: service state changes refresh queries wherever
   // a page is looking at them.
   useServiceEvents();
+
+  // The tray popup is a different window on route `/tray`: no shell, no
+  // dashboard, just the compact menu. The subscription above stays mounted
+  // and is harmless there.
+  const location = useLocation();
+  if (location.pathname === "/tray") {
+    return (
+      <Suspense fallback={null}>
+        <TrayPopup />
+      </Suspense>
+    );
+  }
 
   return (
     <AppShell>

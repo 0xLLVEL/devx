@@ -280,9 +280,7 @@ fn sync_site_blocks(paths: &AppPaths, store: &ConfigStore) -> anyhow::Result<()>
                 .copied()
                 .or_else(|| devx_provision::default_port_for("frankenphp"))
                 .unwrap_or(80),
-            apache_https_port: devx_provision::apache_https_port(
-                &store.config().service_ports,
-            ),
+            apache_https_port: devx_provision::apache_https_port(&store.config().service_ports),
         },
     )
     .context("syncing the site blocks")?;

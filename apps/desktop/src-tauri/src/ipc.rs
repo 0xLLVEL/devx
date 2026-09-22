@@ -134,6 +134,8 @@ pub fn builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::hosts_remove,
             commands::hosts_flush_dns,
             commands::hosts_resync,
+            crate::tray::tray_show_main,
+            crate::tray::tray_quit,
         ])
         .events(collect_events![
             events::InstallProgress,
