@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Profiler, type ProfilerOnRenderCallback } from "react";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -28,7 +28,7 @@ import { ToastProvider } from "@/components/ui/toast";
  * measured value, so it fails on a loop rather than on a refactor.
  */
 
-/** Every route in `src/App.tsx`, with the label its topbar context shows. */
+/** Every route in `src/App.tsx`, with the label its sidebar entry shows. */
 const ROUTES: readonly { path: string; label: string }[] = [
   { path: "/", label: "Dashboard" },
   { path: "/components", label: "Components" },
@@ -149,7 +149,7 @@ describe("every route (§132)", () => {
     expect(ROUTES.map((route) => route.path)).toContain("/");
   });
 
-  it.each(ROUTES)("mounts $path without a console error", async ({ path, label }) => {
+  it.each(ROUTES)("mounts $path ($label) without a console error", async ({ path }) => {
     renderRoute(path);
 
     // The route's own chunk replaced §102's suspense fallback...
@@ -166,10 +166,13 @@ describe("every route (§132)", () => {
       () => expect(screen.queryByText("Loading this page…")).not.toBeInTheDocument(),
       { timeout: 8000 },
     );
-    // ...and the route is the one the path names, not the fallback route.
-    const topbar = document.querySelector("header");
-    expect(topbar).not.toBeNull();
-    expect(within(topbar as HTMLElement).getByText(label)).toBeInTheDocument();
+    // ...and the sidebar selects the route the path names, not the fallback
+    // route. (The topbar shows the DevX brand now, not the page title.)
+    const sidebar = document.querySelector("nav");
+    expect(sidebar).not.toBeNull();
+    expect(
+      (sidebar as HTMLElement).querySelector(`a[href="${path}"]`),
+    ).not.toBeNull();
 
     expect(consoleErrors, `console.error while mounting ${path}`).toEqual([]);
     // Measured cold mounts: 1 commit for `/`, 5 for a lazy route.
