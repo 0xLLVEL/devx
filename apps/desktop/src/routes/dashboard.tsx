@@ -1,18 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Activity,
-  Boxes,
-  Clock,
   Cpu,
   Database,
-  FileText,
   Globe,
   Loader2,
   Play,
   Server,
   Square,
-  TerminalSquare,
-  type LucideIcon,
 } from "lucide-react";
 import { useEffect, useMemo } from "react";
 import { Link } from "react-router-dom";
@@ -21,7 +15,8 @@ import { ActivityTimeline } from "@/components/activity-timeline";
 import { PageHeader } from "@/components/page-header";
 import { ResourcePanel } from "@/components/resource-panel";
 import { StatusBadge } from "@/components/status-dot";
-import { SummaryCard, cardLinkClass, type SummaryTone } from "@/components/summary-card";
+import { SummaryCard, type SummaryTone } from "@/components/summary-card";
+import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Callout } from "@/components/ui/callout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -229,7 +224,7 @@ export function DashboardPage() {
   };
 
   return (
-    <div className="space-y-4 p-5">
+    <div className="space-y-6 p-8">
       <PageHeader
         eyebrow={greeting()}
         title={verdict(entries.length, failed.length, runningCount, metrics.isError)}
@@ -256,7 +251,7 @@ export function DashboardPage() {
               <span className="sr-only">Reading service state…</span>
               <span
                 aria-hidden
-                className="block h-14 w-52 animate-pulse rounded-lg bg-secondary"
+                className="block h-14 w-52 shimmer-skeleton rounded-lg"
               />
             </span>
           ) : null
@@ -305,93 +300,51 @@ export function DashboardPage() {
         </Callout>
       ) : null}
 
-      {/* Pool health hero — Pil 2: pools healthy is the decision, not 4 equal cards */}
-      {phpPools.data ? (
-        <Card className="overflow-hidden">
-          <CardHeader className="pb-2">
-            <CardTitle className="flex items-center gap-2 text-sm font-medium">
-              <Cpu className="size-4 text-muted-foreground" aria-hidden />
-              Pool CPU per hour, last 24h
-              <span className="ml-auto text-caption font-normal text-ink-muted">
-                {(() => {
-                  const pools = phpPools.data ?? [];
-                  const healthy = pools.filter((p) => p.state === "running").length;
-                  return `${healthy}/${pools.length} pools healthy`;
-                })()}
-              </span>
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {phpPools.isPending ? (
-              <SkeletonLines label="Loading pool CPU" />
-            ) : (phpPools.data ?? []).length === 0 ? (
-              <EmptyState
-                icon={<Cpu />}
-                title="No PHP pools yet."
-                description="Install a PHP runtime to see pool health."
-              />
-            ) : (
-              <div className="space-y-2">
-                {(phpPools.data ?? []).slice(0, 4).map((pool) => (
-                  <div key={pool.id} className="flex items-center gap-3">
-                    <span className="min-w-0 flex-1 truncate font-mono text-xs" data-selectable>
-                      {pool.version}
-                    </span>
-                    <span className="h-1.5 w-24 overflow-hidden rounded-full bg-muted">
-                      <span
-                        className="block h-full rounded-full bg-primary/70 transition-[width] duration-200"
-                        style={{ width: `${Math.min(100, (pool.port % 100))}%` }}
-                      />
-                    </span>
-                    <span className="font-mono text-xs text-muted-foreground">{pool.state}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      ) : null}
-
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <SummaryCard to="/components" icon={Cpu} label="Runtimes" {...runtimesCard} />
-        <SummaryCard to="/services" icon={Server} label="Servers" {...serversCard} />
-        <SummaryCard to="/sites" icon={Globe} label="Sites" {...sitesCard} />
-        <SummaryCard to="/databases" icon={Database} label="Databases" {...databasesCard} />
+      <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-4">
+        <SummaryCard to="/components" label="Runtimes" {...runtimesCard} />
+        <SummaryCard to="/services" label="Servers" {...serversCard} />
+        <SummaryCard to="/sites" label="Sites" {...sitesCard} />
+        <SummaryCard to="/databases" label="Databases" {...databasesCard} />
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_20rem]">
-        <div className="min-w-0 space-y-4">
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_20rem]">
+        <div className="min-w-0 space-y-6">
+          {/* Pools first — Frame 1's decision table. */}
+          <PoolsPanel
+            pools={phpPools.data ?? []}
+            pending={phpPools.isPending}
+            error={phpPools.isError ? phpPools.error : null}
+            onRetry={() => void phpPools.refetch()}
+            metrics={entries}
+          />
           <ServicesPanel
             entries={entries}
             pending={metrics.isPending}
             error={metrics.isError ? metrics.error : null}
             onRetry={() => void metrics.refetch()}
           />
-          <div className="grid gap-4 md:grid-cols-2">
-            <SitesPanel
-              sites={siteList}
-              pending={sites.isPending}
-              error={sites.isError ? sites.error : null}
-              onRetry={() => void sites.refetch()}
-            />
-            <DatabasesPanel
-              servers={serverList}
-              pending={servers.isPending}
-              error={servers.isError ? servers.error : null}
-              onRetry={() => void servers.refetch()}
-            />
-          </div>
+          <SitesPanel
+            sites={siteList}
+            pending={sites.isPending}
+            error={sites.isError ? sites.error : null}
+            onRetry={() => void sites.refetch()}
+          />
+          <DatabasesPanel
+            servers={serverList}
+            pending={servers.isPending}
+            error={servers.isError ? servers.error : null}
+            onRetry={() => void servers.refetch()}
+          />
         </div>
 
         {/* §16's right rail; it stacks under the main column below 1280px. */}
-        <aside className="min-w-0 space-y-4">
+        <aside className="min-w-0 space-y-6">
           <QuickActions />
           <Card>
             <CardHeader className="pb-1.5">
-              <CardTitle className="flex items-center gap-2 text-sm font-medium">
-                <Clock className="size-4 text-muted-foreground" aria-hidden />
+              <CardTitle className="flex items-center gap-2">
                 Recent activity
-                <span className="ml-auto text-caption font-normal text-ink-muted">
+                <span className="ml-auto text-[13px] font-normal text-ink-muted">
                   service events
                 </span>
               </CardTitle>
@@ -440,8 +393,7 @@ export function DashboardPage() {
   );
 }
 
-/**
- * Everything a §18 card says about one entity group: its headline number and
+/** Everything a §18 card says about one entity group: its headline number and
  * the state behind it.
  */
 type CardFacts = {
@@ -450,6 +402,147 @@ type CardFacts = {
   tone: SummaryTone;
   pending: boolean;
 };
+
+/**
+ * PHP pools as a dense table (preview Frame 1): pool, state badge, workers,
+ * endpoint and a CPU meter. The meter's CPU comes from the service metrics
+ * row that matches this pool's port — no invented number when absent.
+ */
+function PoolsPanel({
+  pools,
+  pending,
+  error,
+  onRetry,
+  metrics,
+}: {
+  pools: readonly { id: string; version: string; workers: number; port: number; state: string }[];
+  pending: boolean;
+  error: Error | null;
+  onRetry: () => void;
+  metrics: readonly ServiceMetrics[];
+}) {
+  const cpuFor = (port: number): number | null => {
+    const match = metrics.find(
+      (entry) => entry.id.includes("php") && entry.id.includes(String(port)),
+    );
+    // Pools report cpu on their own metrics row keyed by pool id; fall back
+    // to matching the FastCGI port in the id when the shapes differ.
+    if (match) return match.cpu_percent;
+    const byPort = metrics.find((entry) => entry.id.endsWith(`:${port}`));
+    return byPort ? byPort.cpu_percent : null;
+  };
+
+  const healthy = pools.filter((p) => p.state === "running").length;
+
+  return (
+    <Card>
+      <CardHeader className="pb-0">
+        <CardTitle className="flex items-center gap-2">
+          PHP pools
+          <span className="ml-auto text-[13px] font-normal text-ink-muted">
+            {pools.length === 0
+              ? "none installed"
+              : `${healthy}/${pools.length} healthy`}
+          </span>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="px-0 pb-0 pt-4">
+        {pending ? (
+          <div className="space-y-2 px-6 pb-6">
+            <span className="sr-only">Loading PHP pools</span>
+            {[0, 1, 2].map((row) => (
+              <span key={row} aria-hidden className="block h-5 shimmer-skeleton" />
+            ))}
+          </div>
+        ) : error ? (
+          <div className="px-6 pb-6">
+            <Callout variant="destructive" title="Could not read the PHP pools.">
+              <p>{error.message}</p>
+              <Button size="sm" variant="outline" className="mt-2" onClick={onRetry}>
+                Try again
+              </Button>
+            </Callout>
+          </div>
+        ) : pools.length === 0 ? (
+          <div className="px-6 pb-6">
+            <EmptyState
+              icon={<Cpu />}
+              title="No PHP pools yet."
+              description="Install a PHP runtime to see pool health."
+            />
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <caption className="sr-only">PHP pools with state, workers, endpoint and CPU</caption>
+              <thead>
+                <tr className="border-b border-border text-left text-xs text-muted-foreground">
+                  <th scope="col" className="px-6 py-2 font-normal">Pool</th>
+                  <th scope="col" className="px-3 py-2 font-normal">State</th>
+                  <th scope="col" className="px-3 py-2 font-normal">Workers</th>
+                  <th scope="col" className="px-3 py-2 font-normal">Endpoint</th>
+                  <th scope="col" className="px-6 py-2 text-right font-normal">CPU</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pools.map((pool, index) => {
+                  const cpu = cpuFor(pool.port);
+                  const failed = pool.state === "failed";
+                  return (
+                    <tr
+                      key={pool.id}
+                      className={cn(
+                        "border-b border-border last:border-b-0",
+                        (failed || index === 0) && "bg-surface-2",
+                        failed && "shadow-[inset_2px_0_0_var(--danger)]",
+                        index === 0 && !failed && "shadow-[inset_2px_0_0_var(--foreground)]",
+                      )}
+                    >
+                      <td className="px-6 py-2.5 font-mono text-[13px] font-semibold" data-selectable>
+                        {pool.version}
+                      </td>
+                      <td className="px-3 py-2.5">
+                        <Badge variant={failed ? "destructive" : pool.state === "running" ? "success" : "default"}>
+                          {stateLabel(pool.state)}
+                        </Badge>
+                      </td>
+                      <td className={cn("px-3 py-2.5 font-mono text-[13px]", failed && "text-ink-muted")}>
+                        {pool.workers}
+                      </td>
+                      <td className="px-3 py-2.5 font-mono text-[13px] text-ink-muted" data-selectable>
+                        127.0.0.1:{pool.port}
+                      </td>
+                      <td className="px-6 py-2.5 text-right">
+                        {pool.state !== "running" || cpu === null ? (
+                          <span className="text-ink-muted">—</span>
+                        ) : (
+                          <span className="inline-flex items-center justify-end gap-2">
+                            <span className="font-mono text-[13px]">{cpu.toFixed(0)}%</span>
+                            <span aria-hidden className="inline-block h-1.5 w-16 bg-surface-2 align-middle">
+                              <span
+                                className="block h-full bg-ink-muted"
+                                style={{ width: `${Math.min(100, Math.max(0, cpu))}%` }}
+                              />
+                            </span>
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/** `stopped` → `Stopped`, for a badge that shows the state as a word. */
+function stateLabel(state: string): string {
+  return state.charAt(0).toUpperCase() + state.slice(1);
+}
 
 /**
  * §17's status summary, opposite the headline.
@@ -470,17 +563,17 @@ function StatusSummary({
   problems: string[];
 }) {
   return (
-    <div className="flex flex-col items-end gap-0.5 rounded-lg border border-border bg-card px-3 py-2 shadow-sm">
-      <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+    <div className="flex flex-col items-end gap-0.5 border border-border bg-surface px-4 py-3 text-right text-[13px]">
+      <span className="flex items-center gap-2 font-semibold text-foreground">
         <span
           aria-hidden
           className={cn("size-2 shrink-0 rounded-full", SYSTEM_TONE[state])}
         />
         {label}
       </span>
-      <span className="text-caption text-ink-muted">{counts}</span>
+      <span className="text-xs text-ink-muted">{counts}</span>
       {problems.length > 0 ? (
-        <span className="text-caption text-warning">{problems.join(" · ")}</span>
+        <span className="text-xs text-warning">{problems.join(" · ")}</span>
       ) : null}
     </div>
   );
@@ -491,8 +584,8 @@ const SYSTEM_TONE: Record<SystemState, string> = {
   ready: "bg-success",
   attention: "bg-warning",
   error: "bg-destructive",
-  starting: "animate-pulse bg-warning",
-  stopping: "animate-pulse bg-warning",
+  starting: "bg-warning",
+  stopping: "bg-warning",
   unknown: "bg-muted-foreground/40",
 };
 
@@ -505,28 +598,19 @@ const SYSTEM_TONE: Record<SystemState, string> = {
  */
 const QUICK_ACTIONS: {
   to: string;
-  icon: LucideIcon;
   title: string;
   subtitle: string;
 }[] = [
   {
     to: "/components",
-    icon: Boxes,
     title: "Add a runtime",
     subtitle: "Install PHP, Node, Bun or Go",
   },
-  { to: "/sites", icon: Globe, title: "Add a site", subtitle: "Serve a folder locally" },
-  {
-    to: "/terminal",
-    icon: TerminalSquare,
-    title: "Open Terminal",
-    subtitle: "Run commands with the DevX tools on PATH",
-  },
+  { to: "/sites", title: "Add a site", subtitle: "Serve a folder locally" },
   {
     to: "/logs",
-    icon: FileText,
     title: "Open Logs",
-    subtitle: "Read what DevX and its services wrote",
+    subtitle: "What DevX and services wrote",
   },
 ];
 
@@ -534,29 +618,25 @@ function QuickActions() {
   return (
     <Card>
       <CardHeader className="pb-1.5">
-        <CardTitle className="flex items-center gap-2 text-sm font-medium">
-          <Boxes className="size-4 text-muted-foreground" aria-hidden />
-          Quick actions
-        </CardTitle>
+        <CardTitle>Quick actions</CardTitle>
       </CardHeader>
       <CardContent className="space-y-1.5">
-        {QUICK_ACTIONS.map(({ to, icon: Icon, title, subtitle }) => {
+        {QUICK_ACTIONS.map(({ to, title, subtitle }) => {
           const shortcut = navShortcutLabel(to);
           return (
             <Link
               key={to}
               to={to}
-              className={cn(cardLinkClass, "flex-row items-center gap-2.5 p-2")}
+              className="flex items-center gap-2.5 border-t border-border py-2.5 text-sm first:border-t-0 hover:bg-hover"
             >
-              <Icon className="size-4 shrink-0 text-ink-secondary" aria-hidden />
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm text-foreground">{title}</span>
-                <span className="block truncate text-caption text-ink-muted">
+                <span className="block truncate text-foreground">{title}</span>
+                <span className="block truncate text-[13px] text-ink-muted">
                   {subtitle}
                 </span>
               </span>
               {shortcut ? (
-                <kbd className="shrink-0 rounded-sm border border-line-subtle px-1.5 py-0.5 font-mono text-caption text-ink-muted">
+                <kbd className="shrink-0 border border-line-strong px-1.5 py-0.5 font-mono text-[11px] text-ink-muted">
                   {shortcut}
                 </kbd>
               ) : null}
@@ -590,10 +670,9 @@ function ServicesPanel({
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="flex items-center gap-2 text-sm font-medium">
-          <Activity className="size-4 text-muted-foreground" aria-hidden />
+        <CardTitle className="flex items-center gap-2">
           Supervised services
-          <Link to="/services" className="ml-auto text-xs font-normal text-primary hover:underline">
+          <Link to="/services" className="ml-auto text-[13px] font-normal text-ink-muted hover:text-foreground">
             Manage
           </Link>
         </CardTitle>
@@ -606,7 +685,7 @@ function ServicesPanel({
               <span
                 key={row}
                 aria-hidden
-                className="block h-5 animate-pulse rounded-sm bg-secondary"
+                className="block h-5 shimmer-skeleton rounded-sm"
               />
             ))}
           </div>
@@ -745,10 +824,9 @@ function SitesPanel({
   return (
     <Card>
       <CardHeader className="pb-1.5">
-        <CardTitle className="flex items-center gap-2 text-sm font-medium">
-          <Globe className="size-4 text-muted-foreground" aria-hidden />
+        <CardTitle className="flex items-center gap-2">
           Sites
-          <Link to="/sites" className="ml-auto text-xs font-normal text-primary hover:underline">
+          <Link to="/sites" className="ml-auto text-[13px] font-normal text-ink-muted hover:text-foreground">
             Manage
           </Link>
         </CardTitle>
@@ -815,12 +893,11 @@ function DatabasesPanel({
   return (
     <Card>
       <CardHeader className="pb-1.5">
-        <CardTitle className="flex items-center gap-2 text-sm font-medium">
-          <Database className="size-4 text-muted-foreground" aria-hidden />
+        <CardTitle className="flex items-center gap-2">
           Databases
           <Link
             to="/databases"
-            className="ml-auto text-xs font-normal text-primary hover:underline"
+            className="ml-auto text-[13px] font-normal text-ink-muted hover:text-foreground"
           >
             Manage
           </Link>
@@ -901,7 +978,7 @@ function SkeletonLines({ label }: { label: string }) {
         <span
           key={row}
           aria-hidden
-          className="block h-4 animate-pulse rounded-sm bg-secondary"
+          className="block h-4 shimmer-skeleton rounded-sm"
         />
       ))}
     </div>

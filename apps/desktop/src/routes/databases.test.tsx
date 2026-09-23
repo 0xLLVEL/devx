@@ -31,9 +31,21 @@ function singleColumn(name: string, values: string[]) {
   };
 }
 
-/** The detail panel, which the cards select into. */
+/** The detail panel, which the table rows select into. */
 function detail() {
   return screen.getByRole("region", { name: "Database detail" });
+}
+
+/** One engine's table row, found through its select button (waits for load). */
+async function engineRow(label: string): Promise<HTMLElement> {
+  const button = await screen.findByRole("button", {
+    name: new RegExp(`select ${label} on `, "i"),
+  });
+  const row = button.closest("tr");
+  if (!row) {
+    throw new Error(`no table row for ${label}`);
+  }
+  return row;
 }
 
 describe("DatabasesPage", () => {
@@ -89,7 +101,7 @@ describe("DatabasesPage", () => {
     ).toBeInTheDocument();
   });
 
-  it("describes each engine on its card with the real version, endpoint and count (§25)", async () => {
+  it("describes each engine on its row with the real version, endpoint and count (§25)", async () => {
     renderWithProviders(<DatabasesPage />);
 
     const mariadb = await screen.findByRole("button", {
@@ -103,24 +115,24 @@ describe("DatabasesPage", () => {
     // Version comes from the installed component, the count from the engine,
     // the state from the supervisor and reachability from the socket: four
     // separate facts, none of them invented.
-    const mariadbCard = within(screen.getByRole("group", { name: "MariaDB engine" }));
-    expect(mariadbCard.getByText("v11.4.5")).toBeInTheDocument();
-    expect(mariadbCard.getByText("2 databases")).toBeInTheDocument();
-    expect(mariadbCard.getByText("accepting connections on :3306")).toBeInTheDocument();
-    expect(mariadbCard.getByText("running")).toBeInTheDocument();
+    const mariadbRow = await engineRow("MariaDB");
+    expect(within(mariadbRow).getByText("v11.4.5")).toBeInTheDocument();
+    expect(within(mariadbRow).getByText("2 databases")).toBeInTheDocument();
+    expect(within(mariadbRow).getByText("accepting connections")).toBeInTheDocument();
+    expect(within(mariadbRow).getByText("running")).toBeInTheDocument();
 
-    const postgresCard = within(screen.getByRole("group", { name: "PostgreSQL engine" }));
-    expect(postgresCard.getByText("v16.3")).toBeInTheDocument();
-    expect(postgresCard.getByText("nothing listening on :5432")).toBeInTheDocument();
+    const postgresRow = await engineRow("PostgreSQL");
+    expect(within(postgresRow).getByText("v16.3")).toBeInTheDocument();
+    expect(within(postgresRow).getByText("nothing listening")).toBeInTheDocument();
     // The unreachable engine is never asked for a listing.
-    expect(postgresCard.getByText("database count unknown")).toBeInTheDocument();
-    expect(postgresCard.getByText("stopped")).toBeInTheDocument();
+    expect(within(postgresRow).getByText("count unknown")).toBeInTheDocument();
+    expect(within(postgresRow).getByText("stopped")).toBeInTheDocument();
 
-    // Selecting the other card moves the detail onto it.
+    // Selecting the other row moves the detail onto it.
     await userEvent.click(
       screen.getByRole("button", { name: /select postgresql on 127\.0\.0\.1:5432/i }),
     );
-    expect(within(detail()).getByText("127.0.0.1:5432")).toBeInTheDocument();
+    expect(within(detail()).getByText("127.0.0.1 : 5432")).toBeInTheDocument();
     await waitFor(() =>
       expect(
         screen.getByRole("button", { name: /select postgresql on 127\.0\.0\.1:5432/i }),
@@ -128,19 +140,21 @@ describe("DatabasesPage", () => {
     );
   });
 
-  it("does not activate the card's active state until Open client is clicked", async () => {
+  it("does not activate the row's active state until Open client is clicked", async () => {
     const user = userEvent.setup();
     renderWithProviders(<DatabasesPage />);
 
-    const mariadbCard = await screen.findByRole("group", { name: "MariaDB engine" });
-    // Initially the card is not active
-    expect(mariadbCard.className).not.toContain("bg-primary-soft");
+    const mariadbRow = await engineRow("MariaDB");
+    // Initially the row is not active
+    expect(mariadbRow.className).not.toContain("bg-primary-soft");
 
-    // Clicking Open client activates the card
-    const openClientBtn = within(mariadbCard).getByRole("button", { name: /open client/i });
+    // Clicking Open client activates the row
+    const openClientBtn = within(mariadbRow).getAllByRole("button", {
+      name: /open client/i,
+    })[0]!;
     await user.click(openClientBtn);
 
-    expect(mariadbCard.className).toContain("bg-primary-soft");
+    expect((await engineRow("MariaDB")).className).toContain("bg-primary-soft");
   });
 
   it("offers tabs only for surfaces with data behind them (§26)", async () => {
@@ -150,9 +164,9 @@ describe("DatabasesPage", () => {
     expect(tabs.map((tab) => tab.textContent)).toEqual([
       "Overview",
       "Databases (2)",
-      "Query",
       "Backups",
       "Logs",
+      "Query",
     ]);
     // §26 lists Users and Connections; nothing in the IPC surface backs them.
     expect(screen.queryByRole("tab", { name: /users/i })).not.toBeInTheDocument();
@@ -316,14 +330,14 @@ describe("DatabasesPage", () => {
     );
   });
 
-  it("opens the same actions by right-clicking the engine card (§47)", async () => {
+  it("opens the same actions by right-clicking the engine row (§47)", async () => {
     const user = userEvent.setup();
     mocks.serviceStop.mockResolvedValue({ id: "mariadb", state: "stopped" });
 
     renderWithProviders(<DatabasesPage />);
 
-    const card = await screen.findByRole("group", { name: "MariaDB engine" });
-    fireEvent.contextMenu(card, { clientX: 30, clientY: 80 });
+    const row = await engineRow("MariaDB");
+    fireEvent.contextMenu(row, { clientX: 30, clientY: 80 });
 
     const menu = await screen.findByRole("menu", { name: "Actions for MariaDB" });
     expect(
@@ -332,7 +346,7 @@ describe("DatabasesPage", () => {
         .map((item) => item.textContent),
     ).toEqual(["Start MariaDB", "Stop MariaDB", "Browse data", "Backups", "Logs"]);
 
-    // It runs the card's real action, not a copy of it.
+    // It runs the row's real action, not a copy of it.
     await user.click(within(menu).getByRole("menuitem", { name: /stop mariadb/i }));
     await waitFor(() => expect(mocks.serviceStop).toHaveBeenCalledWith("mariadb"));
   });
@@ -388,9 +402,7 @@ describe("DatabasesPage", () => {
     await user.selectOptions(await screen.findByLabelText("Database"), "shop");
     await waitFor(() => expect(screen.getByLabelText("Database")).toHaveValue("shop"));
 
-    await user.click(
-      screen.getByRole("button", { name: /select postgresql on 127\.0\.0\.1:5432/i }),
-    );
+    await user.click(screen.getByRole("button", { name: /select postgresql on 127\.0\.0\.1:5432/i }));
 
     // `shop` belongs to MariaDB; the next engine starts with no schema picked
     // rather than querying a database that may not exist there.

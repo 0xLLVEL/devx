@@ -17,7 +17,7 @@ function command(overrides: Partial<Command> & Pick<Command, "id" | "title">): C
 }
 
 const commands: Command[] = [
-  command({ id: "nav:terminal", title: "Terminal", keywords: ["shell"] }),
+  command({ id: "nav:themes", title: "Themes", keywords: ["appearance"] }),
   command({ id: "nav:databases", title: "Databases", keywords: ["sql"] }),
   command({
     id: "services:start-all",
@@ -50,15 +50,15 @@ describe("CommandPalette", () => {
     const user = userEvent.setup();
     renderWithProviders(<CommandPalette open onClose={() => {}} commands={commands} />);
 
-    await user.type(searchBox(), "term");
-    expect(screen.getByText("Terminal")).toBeInTheDocument();
+    await user.type(searchBox(), "them");
+    expect(screen.getByText("Themes")).toBeInTheDocument();
     expect(screen.queryByText("Databases")).not.toBeInTheDocument();
 
     // Keyword matching reaches items whose name does not contain the query.
     await user.clear(searchBox());
     await user.type(searchBox(), "sql");
     expect(screen.getByText("Databases")).toBeInTheDocument();
-    expect(screen.queryByText("Terminal")).not.toBeInTheDocument();
+    expect(screen.queryByText("Themes")).not.toBeInTheDocument();
   });
 
   it("says so when nothing matches", async () => {

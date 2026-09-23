@@ -3,13 +3,23 @@ import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
 const VARIANTS = {
-  info: "border-primary/40 bg-primary/10 text-foreground",
-  success: "border-success/40 bg-success/10 text-success",
-  warning: "border-warning/40 bg-warning/10 text-foreground",
-  destructive: "border-destructive/40 bg-destructive/10 text-destructive",
+  info: "border-l-foreground",
+  success: "border-l-success",
+  warning: "border-l-warning",
+  destructive: "border-l-destructive",
 } as const;
 
-/** A bordered inline note (caveats, remedies, hints) in one consistent shape. */
+const DOT = {
+  info: "bg-ink-muted",
+  success: "bg-success",
+  warning: "bg-warning",
+  destructive: "bg-destructive",
+} as const;
+
+/**
+ * A bordered inline note (caveats, remedies, hints) in one consistent shape.
+ * The left edge carries the severity (preview `.callout`); the words stay ink.
+ */
 export function Callout({
   variant = "info",
   title,
@@ -24,10 +34,17 @@ export function Callout({
   return (
     <div
       role={variant === "destructive" ? "alert" : "note"}
-      className={cn("rounded-md border p-3 text-sm", VARIANTS[variant], className)}
+      className={cn(
+        "flex items-start gap-3 border border-line-strong border-l-2 bg-surface px-6 py-4 text-sm text-foreground",
+        VARIANTS[variant],
+        className,
+      )}
     >
-      {title ? <p className="font-medium">{title}</p> : null}
-      {children ? <div className={title ? "mt-1 opacity-90" : "opacity-90"}>{children}</div> : null}
+      <span aria-hidden className={cn("mt-1.5 size-2 shrink-0 rounded-full", DOT[variant])} />
+      <div className="min-w-0 flex-1">
+        {title ? <p className="font-medium">{title}</p> : null}
+        {children ? <div className={title ? "mt-1" : undefined}>{children}</div> : null}
+      </div>
     </div>
   );
 }

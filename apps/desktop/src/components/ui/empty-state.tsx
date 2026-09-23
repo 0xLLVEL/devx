@@ -16,17 +16,17 @@ export function EmptyState({
   action?: ReactNode;
 }) {
   return (
-    <div className="rounded-lg border border-dashed border-border p-8 text-center">
+    <div className="rounded-lg border border-dashed border-border p-10 text-center">
       {icon ? (
-        <div className="mb-2 flex justify-center text-muted-foreground [&_svg]:size-6">
+        <div className="mb-3 flex justify-center text-muted-foreground [&_svg]:size-7">
           {icon}
         </div>
       ) : null}
-      <p className="text-sm">{title}</p>
+      <p className="text-h3">{title}</p>
       {description ? (
-        <p className="mt-1 text-sm text-muted-foreground">{description}</p>
+        <p className="mt-2 text-sm text-muted-foreground">{description}</p>
       ) : null}
-      {action ? <div className="mt-4 flex justify-center">{action}</div> : null}
+      {action ? <div className="mt-5 flex justify-center">{action}</div> : null}
     </div>
   );
 }

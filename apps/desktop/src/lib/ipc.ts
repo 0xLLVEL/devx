@@ -58,7 +58,6 @@ export type {
   PhpPoolStatus,
   PhpXdebugInfo,
   ProfileEntry,
-  ProjectSummary,
   PortEntry,
   PortOwner,
   PrivilegedStatus,
@@ -76,8 +75,6 @@ export type {
   SiteStatus,
   TemplateCreateResult,
   TemplateInfo,
-  TerminalExit,
-  TerminalOutput,
   TunnelStatus,
   Theme,
   UpdateStatus,
@@ -134,17 +131,6 @@ export const ipc = {
   configExport: () => unwrap(commands.configExport()),
   configImport: (body: string) => unwrap(commands.configImport(body)),
   profileList: () => unwrap(commands.profileList()),
-  projectsList: () => unwrap(commands.projectsList()),
-  projectAdd: (path: string, label: string | null) =>
-    unwrap(commands.projectAdd(path, label)),
-  projectRemove: (path: string) => unwrap(commands.projectRemove(path)),
-  projectUpdate: (
-    path: string,
-    label: string | null,
-    defaultPhp: string | null,
-    defaultNode: string | null,
-    defaultPython: string | null,
-  ) => unwrap(commands.projectUpdate(path, label, defaultPhp, defaultNode, defaultPython)),
   profileSave: (name: string) => unwrap(commands.profileSave(name)),
   profileApply: (name: string) => unwrap(commands.profileApply(name)),
   profileDelete: (name: string) => unwrap(commands.profileDelete(name)),
@@ -227,13 +213,6 @@ export const ipc = {
     unwrap(commands.backupRestore(serviceId, fileName)),
   backupDelete: (serviceId: string, fileName: string) =>
     unwrap(commands.backupDelete(serviceId, fileName)),
-  terminalPath: () => unwrap(commands.terminalPath()),
-  terminalRun: (cwd: string, command: string) =>
-    unwrap(commands.terminalRun(cwd, command)),
-  terminalUseVersion: (componentId: string, version: string) =>
-    unwrap(commands.terminalUseVersion(componentId, version)),
-  terminalUnsetVersion: (componentId: string) =>
-    unwrap(commands.terminalUnsetVersion(componentId)),
   templateList: () => unwrap(commands.templateList()),
   templateCreate: (
     templateId: string,

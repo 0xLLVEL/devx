@@ -55,7 +55,9 @@ describe("ComponentsPage", () => {
   it("groups components by kind and selects the first by default", async () => {
     renderWithProviders(<ComponentsPage />);
 
-    expect(await screen.findByText("Runtimes")).toBeInTheDocument();
+    // "Runtimes" appears twice: once as the nav group header, once as the
+    // detail pane's eyebrow — both intentional, so match loosely.
+    expect((await screen.findAllByText("Runtimes")).length).toBeGreaterThan(0);
     expect(screen.getByText("Cache")).toBeInTheDocument();
     await waitFor(() =>
       expect(mocks.componentVersions).toHaveBeenCalledWith("php"),

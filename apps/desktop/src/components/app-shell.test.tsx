@@ -7,14 +7,12 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { AppShell } from "@/components/app-shell";
 import { ThemeProvider } from "@/components/theme-provider";
 import { ToastProvider } from "@/components/ui/toast";
-import { TerminalPage } from "@/routes/terminal";
 import { configFixture } from "@/test/fixtures";
 
 /**
  * The shell (§4, §5, §6) as an integration surface: the chrome, the keyboard
- * entry points, the layout state and the terminal's two homes are only
- * meaningful together, so they are tested here rather than one component at a
- * time.
+ * entry points and the layout state are only meaningful together, so they are
+ * tested here rather than one component at a time.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -31,12 +29,6 @@ const mocks = vi.hoisted(() => ({
   notificationsMarkAllRead: vi.fn(),
   notificationsClear: vi.fn(),
   servicesStartAll: vi.fn(),
-  terminalPath: vi.fn(),
-  terminalRun: vi.fn(),
-  terminalUseVersion: vi.fn(),
-  terminalUnsetVersion: vi.fn(),
-  /** Listeners registered on the terminal's output stream. */
-  terminalListeners: [] as ((event: { payload: unknown }) => void)[],
 }));
 
 vi.mock("@/lib/ipc", async () => {
@@ -44,14 +36,11 @@ vi.mock("@/lib/ipc", async () => {
   return {
     ...actual,
     ipc: mocks,
+    // No event bus outside the Tauri runtime; a listening stub is enough for
+    // the shell's subscription.
     ipcEvents: {
-      terminalOutput: {
-        listen: (listener: { payload: unknown } & ((event: unknown) => void)) => {
-          mocks.terminalListeners.push(
-            listener as unknown as (event: { payload: unknown }) => void,
-          );
-          return Promise.resolve(() => {});
-        },
+      serviceEventUpdate: {
+        listen: () => Promise.resolve(() => {}),
       },
     },
   };
@@ -76,14 +65,13 @@ function renderShell(route = "/") {
                   element={
                     <>
                       <p>dashboard page</p>
-                      {/* Stands in for the terminal's command field. */}
-                      <input aria-label="Terminal command" />
+                      {/* Stands in for a page text field. */}
+                      <input aria-label="Example field" />
                     </>
                   }
                 />
                 <Route path="/sites" element={<p>sites page</p>} />
                 <Route path="/services" element={<p>services page</p>} />
-                <Route path="/terminal" element={<TerminalPage />} />
               </Routes>
             </AppShell>
           </ToastProvider>
@@ -100,9 +88,7 @@ describe("AppShell", () => {
         mock.mockReset();
       }
     }
-    mocks.terminalListeners.length = 0;
-    mocks.configGet.mockResolvedValue(configFixture());
-    mocks.pathsGet.mockResolvedValue({
+    mocks.configGet.mockResolvedValue(configFixture());    mocks.pathsGet.mockResolvedValue({
       config_dir: "C:/config",
       data_dir: "C:/data",
     });
@@ -127,8 +113,6 @@ describe("AppShell", () => {
     // §98: the bell reads its own count. Nothing recorded yet means no badge.
     mocks.notificationsList.mockResolvedValue(EMPTY_NOTIFICATIONS);
     mocks.servicesStartAll.mockResolvedValue([]);
-    mocks.terminalPath.mockResolvedValue("C:\\devx\\bin");
-    mocks.terminalRun.mockResolvedValue({ run_id: 1, code: 0 });
   });
 
   it("shows the page context, the search trigger and every existing route", async () => {
@@ -145,14 +129,14 @@ describe("AppShell", () => {
       "Ctrl K",
     );
 
-    // §5: the sidebar only offers routes that exist.
+    // §5: the sidebar only offers routes that exist, as plain text rows.
     const sidebar = screen.getByRole("navigation");
+    expect(within(sidebar).getByText("Environment")).toBeInTheDocument();
     for (const label of [
       "Components",
       "Services",
       "Sites",
       "Databases",
-      "Terminal",
       "Logs",
       "Share",
       "Mail",
@@ -183,8 +167,8 @@ describe("AppShell", () => {
     const user = userEvent.setup();
     renderShell();
 
-    // §56: a shortcut must never fight a text field or the terminal.
-    const field = screen.getByLabelText("Terminal command");
+    // §56: a shortcut must never fight a text field.
+    const field = screen.getByLabelText("Example field");
     await user.click(field);
     await user.type(field, "php artisan");
     await user.keyboard("{Control>}k{/Control}{Alt>}3{/Alt}");
@@ -243,57 +227,33 @@ describe("AppShell", () => {
     expect(await screen.findByText("Nothing to start")).toBeInTheDocument();
   });
 
-  it("leaves Ctrl+Shift+S alone while the user is typing in the terminal", async () => {
+  it("leaves Ctrl+Shift+S alone while the user is typing", async () => {
     const user = userEvent.setup();
     mocks.serviceMetrics.mockResolvedValue([
       { id: "nginx", state: "stopped", cpu_percent: 0, memory_bytes: 0, processes: 0 },
     ]);
-    renderShell("/terminal");
-
-    // §56: the terminal's command field is a text target, so no global key may
-    // reach it. Ctrl+Shift+S is the newer binding, so it is checked here too.
-    const command = await screen.findByLabelText("Command");
-    await user.click(command);
-    await user.keyboard("{Control>}{Shift>}s{/Shift}{/Control}");
-
-    expect(command).toHaveFocus();
-    expect(mocks.servicesStartAll).not.toHaveBeenCalled();
-  });
-
-  it("leaves Ctrl+Shift+S alone while the working directory is focused", async () => {
-    const user = userEvent.setup();
-    mocks.serviceMetrics.mockResolvedValue([
-      { id: "nginx", state: "stopped", cpu_percent: 0, memory_bytes: 0, processes: 0 },
-    ]);
-    renderShell("/terminal");
-
-    const cwd = await screen.findByLabelText("Working directory");
-    await user.click(cwd);
-    await user.keyboard("{Control>}{Shift>}s{/Shift}{/Control}");
-
-    expect(cwd).toHaveFocus();
-    expect(mocks.servicesStartAll).not.toHaveBeenCalled();
-  });
-
-  it("collapses the sidebar to icon width and remembers it", async () => {
-    const user = userEvent.setup();
     renderShell();
 
-    expect(screen.getByRole("navigation")).toHaveStyle({ width: "200px" });
+    // §56: no global key may reach a text target.
+    const field = screen.getByLabelText("Example field");
+    await user.click(field);
+    await user.keyboard("{Control>}{Shift>}s{/Shift}{/Control}");
+
+    expect(field).toHaveFocus();
+    expect(mocks.servicesStartAll).not.toHaveBeenCalled();
+  });
+
+  it("keeps the sidebar expanded with section labels (no collapse in the mockup)", async () => {
+    renderShell();
+
+    expect(screen.getByRole("navigation")).toBeInTheDocument();
     expect(within(screen.getByRole("navigation")).getByText("Environment")).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: /collapse sidebar/i }));
-
-    expect(screen.getByRole("navigation")).toHaveStyle({ width: "56px" });
-    // §5: the collapsed rail keeps the routes, drops the section labels.
-    expect(
-      within(screen.getByRole("navigation")).queryByText("Environment"),
-    ).not.toBeInTheDocument();
     expect(
       within(screen.getByRole("navigation")).getByRole("link", { name: "Diagnostics" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /expand sidebar/i })).toBeInTheDocument();
-    expect(window.localStorage.getItem("devx.sidebar-collapsed")).toBe("1");
+    expect(
+      screen.queryByRole("button", { name: /collapse sidebar/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("reads the system status and the notification badge from live metrics", async () => {
@@ -303,8 +263,10 @@ describe("AppShell", () => {
     ]);
     renderShell();
 
+    // The topbar status voice splits label and failed count into separate
+    // spans so each is findable on its own.
     expect(await screen.findByText("System Error")).toBeInTheDocument();
-    expect(screen.getByText("1 service failed.")).toBeInTheDocument();
+    expect(screen.getByText("· 1 failed")).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /Notifications: 1 service failed/i }),
     ).toBeInTheDocument();
@@ -324,18 +286,15 @@ describe("AppShell", () => {
     mocks.serviceMetrics.mockRejectedValue(new Error("metrics pipe closed"));
     renderShell();
 
-    // A failed read must not look like a quiet machine: the footer stays, and
-    // it says what happened and where to look.
+    // A failed read must not look like a quiet machine: the topbar voice
+    // stays, and it says what happened. No link — the preview voice is plain.
     expect(await screen.findByText("Status unavailable")).toBeInTheDocument();
     expect(
       screen.getByText("The service metrics could not be read."),
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole("link", { name: /Status unavailable/i }),
-    ).toHaveAttribute("href", "/diagnostics");
   });
 
-  it("keeps the status footer absent while the first read is still in flight", async () => {
+  it("keeps the status voice absent while the first read is still in flight", async () => {
     mocks.serviceMetrics.mockReturnValue(new Promise(() => {}));
     renderShell();
 
@@ -343,90 +302,5 @@ describe("AppShell", () => {
     // Nothing to report yet is not the same as nothing could be read, and
     // neither one may be invented (§131 Rule 17).
     expect(screen.queryByText("Status unavailable")).not.toBeInTheDocument();
-  });
-
-  it("opens and closes the bottom terminal drawer from the topbar (§31)", async () => {
-    const user = userEvent.setup();
-    renderShell();
-
-    const toggle = screen.getByRole("button", { name: "Terminal drawer" });
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
-    expect(
-      screen.queryByRole("region", { name: "Terminal" }),
-    ).not.toBeInTheDocument();
-
-    await user.click(toggle);
-
-    const drawer = screen.getByRole("region", { name: "Terminal" });
-    expect(drawer).toHaveStyle({ height: "280px" });
-    expect(toggle).toHaveAttribute("aria-expanded", "true");
-
-    await user.click(screen.getByRole("button", { name: "Close the terminal" }));
-
-    expect(
-      screen.queryByRole("region", { name: "Terminal" }),
-    ).not.toBeInTheDocument();
-  });
-
-  it("toggles the drawer with §56's Ctrl+T", async () => {
-    const user = userEvent.setup();
-    renderShell();
-
-    await user.keyboard("{Control>}t{/Control}");
-    expect(screen.getByRole("region", { name: "Terminal" })).toBeInTheDocument();
-
-    await user.keyboard("{Control>}t{/Control}");
-    expect(
-      screen.queryByRole("region", { name: "Terminal" }),
-    ).not.toBeInTheDocument();
-  });
-
-  it("offers no drawer on the Terminal page, where the console already is", async () => {
-    const user = userEvent.setup();
-    renderShell("/terminal");
-
-    await screen.findByText("Run anything.");
-    // §56: the shortcut is not offered where it would do nothing.
-    expect(
-      screen.queryByRole("button", { name: "Terminal drawer" }),
-    ).not.toBeInTheDocument();
-
-    await user.keyboard("{Control>}t{/Control}");
-
-    expect(
-      screen.queryByRole("region", { name: "Terminal" }),
-    ).not.toBeInTheDocument();
-  });
-
-  it("keeps one terminal session across the drawer and the Terminal page (§31)", async () => {
-    const user = userEvent.setup();
-    renderShell();
-
-    await user.keyboard("{Control>}t{/Control}");
-
-    await user.type(screen.getByLabelText("Command"), "php -v");
-    await user.click(screen.getByRole("button", { name: /^run$/i }));
-    expect(await screen.findByText("> php -v")).toBeInTheDocument();
-
-    // Walk to the Terminal page: the drawer stands down, the page takes over
-    // the transcript, and there is still exactly one console on screen.
-    await user.click(
-      within(screen.getByRole("navigation")).getByRole("link", { name: /terminal/i }),
-    );
-
-    expect(await screen.findByText("Run anything.")).toBeInTheDocument();
-    expect(
-      screen.queryByRole("region", { name: "Terminal" }),
-    ).not.toBeInTheDocument();
-    expect(screen.getAllByLabelText("Command")).toHaveLength(1);
-    expect(screen.getByText("> php -v")).toBeInTheDocument();
-
-    // And back: the drawer returns to the same session, not a fresh one.
-    await user.click(
-      within(screen.getByRole("navigation")).getByRole("link", { name: /dashboard/i }),
-    );
-
-    expect(await screen.findByText("dashboard page")).toBeInTheDocument();
-    expect(screen.getByText("> php -v")).toBeInTheDocument();
   });
 });

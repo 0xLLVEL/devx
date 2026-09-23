@@ -71,7 +71,7 @@ export function SharePage() {
   return (
     <>
 
-      <div className="mx-auto w-full max-w-3xl space-y-4 p-6">
+      <div className="mx-auto w-full max-w-3xl space-y-6 p-8">
         {allSites.length > 0 ? (
           <PageHeader
             title={
@@ -125,7 +125,7 @@ export function SharePage() {
               <span
                 key={row}
                 aria-hidden
-                className="block h-20 animate-pulse rounded-lg bg-secondary"
+                className="block h-20 shimmer-skeleton rounded-lg"
               />
             ))}
           </div>
@@ -218,9 +218,7 @@ function ShareRow({
     <li>
       <Card
         className={
-          shared
-            ? "animate-in fade-in slide-in-from-bottom-2 border-primary/40 duration-200"
-            : undefined
+          shared ? "border-line-strong" : undefined
         }
       >
         <CardContent className="flex items-center justify-between gap-4 p-4">
@@ -240,7 +238,7 @@ function ShareRow({
                 {site.hostname}
               </span>
               {shared ? (
-                <Badge variant="secondary" className="shrink-0">
+                <Badge variant="default" className="shrink-0">
                   <Share2 className="size-3" aria-hidden /> shared
                 </Badge>
               ) : (
@@ -251,7 +249,7 @@ function ShareRow({
             </div>
             {tunnel?.running ? (
               tunnel.url ? (
-                <p className="mt-1 flex min-w-0 items-center gap-1 pl-4 text-xs font-medium text-primary">
+                <p className="mt-1 flex min-w-0 items-center gap-1 pl-4 text-xs font-medium text-foreground">
                   <span
                     className="min-w-0 break-all font-mono"
                     title={tunnel.url}

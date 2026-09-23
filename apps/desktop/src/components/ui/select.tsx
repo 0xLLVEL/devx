@@ -15,7 +15,7 @@ export function Select({ className, children, ...props }: ComponentProps<"select
     <div className="relative">
       <select
         className={cn(
-          "h-9 w-full appearance-none rounded-md border border-input bg-transparent pl-3 pr-8 text-sm shadow-sm transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:cursor-not-allowed disabled:opacity-50",
+          "h-9 w-full appearance-none rounded-md border border-input bg-transparent pl-3 pr-8 text-sm transition-[color,border-color] duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:cursor-not-allowed disabled:opacity-50",
           className,
         )}
         {...props}

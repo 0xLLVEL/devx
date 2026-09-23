@@ -13,10 +13,6 @@ const mocks = vi.hoisted(() => ({
   appInfo: vi.fn(),
   pathsGet: vi.fn(),
   revealManagedDir: vi.fn(),
-  // §109 forbids environment values in the diagnostics payload. The page never
-  // asks for the terminal PATH; if one ever wires it in, this sentinel shows up
-  // in the copy and the test below fails.
-  terminalPath: vi.fn(),
 }));
 
 vi.mock("@/lib/ipc", async () => {
@@ -57,7 +53,6 @@ describe("DiagnosticsPage", () => {
     mocks.appInfo.mockResolvedValue(APP_INFO);
     mocks.pathsGet.mockResolvedValue(PATHS);
     mocks.revealManagedDir.mockResolvedValue(undefined);
-    mocks.terminalPath.mockResolvedValue("SECRET-PATH-VALUE");
   });
 
   it("lists every check with its status", async () => {
@@ -240,11 +235,9 @@ describe("DiagnosticsPage", () => {
     expect(payload).toContain("[pass] WebView2 runtime: version 152.0.4191.66");
     expect(payload).toContain("2 passed, 0 warnings, 0 failing");
 
-    // The hard §109 rule: nothing that came out of the environment, and the
-    // PATH is never even requested.
+    // The hard §109 rule: nothing that came out of the environment.
     expect(payload).not.toContain("SECRET-PATH-VALUE");
     expect(payload).not.toMatch(/\bPATH=/);
-    expect(mocks.terminalPath).not.toHaveBeenCalled();
   });
 
   it("opens the Logs page from the diagnostics actions", async () => {

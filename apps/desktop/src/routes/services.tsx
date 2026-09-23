@@ -214,7 +214,7 @@ export function ServicesPage() {
   const bulkBusy = startAll.isPending || stopAll.isPending;
 
   return (
-    <div className="space-y-4 p-5">
+    <div className="space-y-6 p-8">
       <PageHeader
         title={
           servers.length === 0
@@ -333,26 +333,26 @@ export function ServicesPage() {
                 } exist and none of them match the current filters.`}
               />
             ) : (
-              <div className="overflow-x-auto rounded-md border border-border">
+              <div className="overflow-x-auto border border-border">
                 <table className="w-full min-w-[46rem] text-left text-sm">
-                  <thead className="bg-surface-2 text-xs text-muted-foreground">
+                  <thead className="text-xs text-ink-muted">
                     <tr>
-                      <th scope="col" className="px-3 py-2 font-medium">
+                      <th scope="col" className="px-3 py-2 font-normal">
                         Server
                       </th>
-                      <th scope="col" className="px-3 py-2 font-medium">
+                      <th scope="col" className="px-3 py-2 font-normal">
                         State
                       </th>
-                      <th scope="col" className="px-3 py-2 font-medium">
+                      <th scope="col" className="px-3 py-2 font-normal">
                         Port
                       </th>
                       <th
                         scope="col"
-                        className="hidden px-3 py-2 font-medium xl:table-cell"
+                        className="hidden px-3 py-2 font-normal xl:table-cell"
                       >
                         Configuration
                       </th>
-                      <th scope="col" className="px-3 py-2 text-right font-medium">
+                      <th scope="col" className="px-3 py-2 text-right font-normal">
                         Actions
                       </th>
                     </tr>
@@ -401,7 +401,7 @@ export function ServicesPage() {
   );
 }
 
-/** Border-bottom tab row; the active tab carries the amber marker. */
+/** Border-bottom tab row; the active tab carries the ink marker (preview `.tabs`). */
 export function TabBar<T extends string>({
   tabs,
   active,
@@ -424,10 +424,10 @@ export function TabBar<T extends string>({
           aria-selected={active === item.id}
           onClick={() => onSelect(item.id)}
           className={cn(
-            "relative cursor-pointer px-3 py-2 text-sm transition-colors duration-150",
+            "cursor-pointer px-3 py-2 text-[14px] transition-colors duration-150",
             active === item.id
-              ? "font-medium text-foreground after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full after:bg-primary"
-              : "text-muted-foreground hover:text-foreground",
+              ? "border-b-2 border-foreground -mb-px font-semibold text-foreground"
+              : "text-ink-muted hover:text-foreground",
           )}
         >
           {item.label}
@@ -931,7 +931,7 @@ function ServerRow({
                 <div className="flex items-center gap-1.5 font-mono text-xs">
                   {active ? (
                     <span
-                      className="size-1.5 rounded-full bg-emerald-500 shrink-0"
+                      className="size-1.5 rounded-full bg-success shrink-0"
                       title="Listening"
                     />
                   ) : (
@@ -1304,7 +1304,7 @@ function ServerPorts({
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-muted/20 p-3 text-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3 border border-border bg-muted/20 p-3 text-sm">
         <div className="space-y-0.5">
           <span className="font-medium text-foreground">
             {server.pool ? "PHP FastCGI Socket:" : "Configured Port:"}
@@ -1398,13 +1398,13 @@ function ServerPorts({
           <caption className="sr-only">Ports the port map attributes to this service</caption>
           <thead className="text-xs text-muted-foreground">
             <tr>
-              <th scope="col" className="py-1.5 pr-3 font-medium">
+              <th scope="col" className="py-1.5 pr-3 font-normal">
                 Port
               </th>
-              <th scope="col" className="py-1.5 pr-3 font-medium">
+              <th scope="col" className="py-1.5 pr-3 font-normal">
                 Claimed by
               </th>
-              <th scope="col" className="py-1.5 font-medium">
+              <th scope="col" className="py-1.5 font-normal">
                 State
               </th>
             </tr>
@@ -1484,8 +1484,8 @@ function ServerSites({ server }: { server: ServerEntry }) {
       <div className="space-y-2" role="status">
         <span className="sr-only">Loading sites…</span>
         <div aria-hidden className="space-y-2">
-          <span className="block h-4 w-64 animate-pulse rounded-sm bg-secondary" />
-          <span className="block h-4 w-40 animate-pulse rounded-sm bg-secondary" />
+          <span className="block h-4 w-64 shimmer-skeleton rounded-sm" />
+          <span className="block h-4 w-40 shimmer-skeleton rounded-sm" />
         </div>
       </div>
     );
@@ -1525,7 +1525,7 @@ function ServerSites({ server }: { server: ServerEntry }) {
         action={
           <Link
             to="/sites"
-            className="text-sm text-primary hover:underline"
+            className="text-sm text-ink-muted hover:text-foreground"
           >
             Open Sites
           </Link>
@@ -1738,8 +1738,8 @@ function XdebugPanel({ version }: { version: string }) {
       <div className="space-y-2" role="status">
         <span className="sr-only">Loading Xdebug settings…</span>
         <div aria-hidden className="space-y-2">
-          <span className="block h-4 w-48 animate-pulse rounded-sm bg-secondary" />
-          <span className="block h-4 w-32 animate-pulse rounded-sm bg-secondary" />
+          <span className="block h-4 w-48 shimmer-skeleton rounded-sm" />
+          <span className="block h-4 w-32 shimmer-skeleton rounded-sm" />
         </div>
       </div>
     );
@@ -1906,8 +1906,8 @@ function LimitsPanel({ version }: { version: string }) {
       <div className="space-y-2" role="status">
         <span className="sr-only">Loading limits…</span>
         <div aria-hidden className="space-y-2">
-          <span className="block h-4 w-56 animate-pulse rounded-sm bg-secondary" />
-          <span className="block h-4 w-36 animate-pulse rounded-sm bg-secondary" />
+          <span className="block h-4 w-56 shimmer-skeleton rounded-sm" />
+          <span className="block h-4 w-36 shimmer-skeleton rounded-sm" />
         </div>
       </div>
     );
@@ -2087,8 +2087,8 @@ function ExtensionsPanel({ version }: { version: string }) {
       <div className="space-y-2" role="status">
         <span className="sr-only">Loading extensions…</span>
         <div aria-hidden className="grid gap-1.5 sm:grid-cols-2">
-          <span className="block h-8 animate-pulse rounded-sm bg-secondary" />
-          <span className="block h-8 animate-pulse rounded-sm bg-secondary" />
+          <span className="block h-8 shimmer-skeleton rounded-sm" />
+          <span className="block h-8 shimmer-skeleton rounded-sm" />
         </div>
       </div>
     );
@@ -2141,7 +2141,7 @@ function ExtensionsPanel({ version }: { version: string }) {
               {!entry.has_dll ? (
                 <Badge variant="warning">no DLL</Badge>
               ) : !entry.from_ini ? (
-                <Badge variant="secondary">dll only</Badge>
+                <Badge variant="default">dll only</Badge>
               ) : null}
             </span>
             <Switch
@@ -2200,7 +2200,7 @@ function WorkersSection({ phpVersions }: { phpVersions: string[] }) {
       <CardHeader className="pb-2">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <CardTitle className="text-sm font-medium">Queue workers</CardTitle>
+            <CardTitle>Queue workers</CardTitle>
             <CardDescription>
               Long-running commands supervised like any other service: each
               instance restarts with backoff when it exits.
@@ -2224,8 +2224,8 @@ function WorkersSection({ phpVersions }: { phpVersions: string[] }) {
           <div className="space-y-2" role="status">
             <span className="sr-only">Loading workers…</span>
             <div aria-hidden className="space-y-2">
-              <span className="block h-10 animate-pulse rounded-sm bg-secondary" />
-              <span className="block h-10 animate-pulse rounded-sm bg-secondary" />
+              <span className="block h-10 shimmer-skeleton rounded-sm" />
+              <span className="block h-10 shimmer-skeleton rounded-sm" />
             </div>
           </div>
         ) : workers.isError ? (
@@ -2560,7 +2560,7 @@ function SchedulerSection({ phpVersions }: { phpVersions: string[] }) {
       <CardHeader className="pb-2">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <CardTitle className="text-sm font-medium">Scheduled tasks</CardTitle>
+            <CardTitle>Scheduled tasks</CardTitle>
             <CardDescription>
               Windows scheduled tasks DevX creates for you, e.g.{""}
               <code> php artisan schedule:run </code> every minute for a site.
@@ -2581,8 +2581,8 @@ function SchedulerSection({ phpVersions }: { phpVersions: string[] }) {
           <div className="space-y-2" role="status">
             <span className="sr-only">Loading scheduled tasks…</span>
             <div aria-hidden className="space-y-2">
-              <span className="block h-10 animate-pulse rounded-sm bg-secondary" />
-              <span className="block h-10 animate-pulse rounded-sm bg-secondary" />
+              <span className="block h-10 shimmer-skeleton rounded-sm" />
+              <span className="block h-10 shimmer-skeleton rounded-sm" />
             </div>
           </div>
         ) : cron.isError ? (

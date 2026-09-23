@@ -1,16 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  CircleAlert,
-  CircleCheck,
-  Copy,
-  FileText,
-  FolderOpen,
-  Loader2,
-  RefreshCw,
-  Stethoscope,
-  TriangleAlert,
-  Wrench,
-} from "lucide-react";
+import { Copy, FileText, FolderOpen, Loader2, RefreshCw, Stethoscope, Wrench } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -32,11 +21,11 @@ import {
 
 const STATUS_META: Record<
   CheckStatus,
-  { label: string; badge: "success" | "warning" | "destructive"; icon: typeof CircleCheck }
+  { label: string; badge: "success" | "warning" | "destructive" }
 > = {
-  pass: { label: "Pass", badge: "success", icon: CircleCheck },
-  warn: { label: "Warning", badge: "warning", icon: TriangleAlert },
-  fail: { label: "Failed", badge: "destructive", icon: CircleAlert },
+  pass: { label: "Pass", badge: "success" },
+  warn: { label: "Warning", badge: "warning" },
+  fail: { label: "Failed", badge: "destructive" },
 };
 
 /** Diagnostics page: environment checks with actionable remedies. */
@@ -78,7 +67,7 @@ export function DiagnosticsPage() {
   };
 
   return (
-    <div className="space-y-4 p-5">
+    <div className="space-y-6 p-8">
       <SystemCard report={data ?? null} />
       {doctor.isPending ? (
         <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
@@ -138,23 +127,22 @@ export function DiagnosticsPage() {
               <ul className="divide-y divide-border">
                 {data.checks.map((check) => {
                   const meta = STATUS_META[check.status];
-                  const Icon = meta.icon;
 
                   return (
-                    <li key={check.id} className="flex items-start gap-3 p-3">
-                      <Icon
+                    <li key={check.id} className="flex items-start gap-3 px-4 py-2.5">
+                      <span
                         aria-hidden
-                        className={
+                        className={`mt-1.5 size-2 shrink-0 rounded-full ${
                           check.status === "pass"
-                            ? "mt-0.5 size-4 shrink-0 text-success"
+                            ? "bg-success"
                             : check.status === "warn"
-                              ? "mt-0.5 size-4 shrink-0 text-warning"
-                              : "mt-0.5 size-4 shrink-0 text-destructive"
-                        }
+                              ? "bg-warning"
+                              : "bg-destructive"
+                        }`}
                       />
-                      <div className="min-w-0 flex-1 space-y-1">
+                      <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
-                          <h2 className="text-sm font-medium">{check.title}</h2>
+                          <h2 className="text-sm">{check.title}</h2>
                           <Badge variant={meta.badge}>{meta.label}</Badge>
                         </div>
                         <p

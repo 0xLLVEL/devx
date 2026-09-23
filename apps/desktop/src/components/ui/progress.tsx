@@ -22,14 +22,12 @@ export function Progress({
       aria-valuemin={0}
       aria-valuemax={100}
       {...(pct !== undefined ? { "aria-valuenow": Math.round(pct) } : {})}
-      className={cn("h-1 overflow-hidden rounded-full bg-secondary", className)}
+      className={cn("h-1.5 overflow-hidden bg-secondary", className)}
     >
       <div
         className={cn(
-          "h-full rounded-full transition-[width] duration-200",
-          pct === undefined
-            ? "shimmer-skeleton"
-            : "bg-gradient-to-r from-primary to-primary-hover",
+          "h-full transition-[width] duration-200",
+          pct === undefined ? "shimmer-skeleton" : "bg-primary",
         )}
         style={{ width: `${pct ?? 100}%` }}
       />

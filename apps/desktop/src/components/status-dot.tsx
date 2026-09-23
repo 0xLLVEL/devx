@@ -6,10 +6,10 @@ import { cn } from "@/lib/utils";
 export type ServiceUiState = "running" | "failed" | "starting" | "stopping" | "stopped";
 
 const DOT_CLASS: Record<ServiceUiState, string> = {
-  running: "bg-success ring-2 ring-success/20 animate-[status-pulse_3s_ease-in-out_infinite]",
-  failed: "bg-destructive ring-2 ring-destructive/30",
-  starting: "animate-pulse bg-warning ring-2 ring-warning/25",
-  stopping: "animate-pulse bg-warning ring-2 ring-warning/25",
+  running: "bg-success",
+  failed: "bg-destructive",
+  starting: "bg-warning",
+  stopping: "bg-warning",
   stopped: "bg-muted-foreground/40",
 };
 
@@ -29,8 +29,8 @@ export function stateTone(state: string): string {
 
 /**
  * Status = dot + label, with an alert icon added for the failed state —
- * never color alone (MASTER.md accessibility rule). The pulse on
- * starting/stopping is a real state, the one loop MOTION=1 allows.
+ * never color alone. Dots are static: running state is a solid dot, not a
+ * pulse.
  */
 export function StatusBadge({
   state,

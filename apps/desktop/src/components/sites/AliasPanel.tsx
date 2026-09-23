@@ -12,7 +12,7 @@ export function AliasPanel({ site, busy, onAdd, onDelete }: { site: SiteStatus; 
   const entries = [...site.aliases].sort((a, b) => a.localeCompare(b));
   return (
     <div className="space-y-4">
-      <div className="rounded-lg border border-border bg-surface-1/80 p-4 space-y-3">
+      <div className="rounded-lg border border-border bg-surface-2/80 p-4 space-y-3">
         <h3 className="text-xs font-semibold text-foreground">Configured Aliases</h3>
         {entries.length > 0 ? (
           <ul className="space-y-1.5">

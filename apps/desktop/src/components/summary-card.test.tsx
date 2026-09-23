@@ -1,12 +1,11 @@
 import { screen } from "@testing-library/react";
-import { Gauge } from "lucide-react";
 import { describe, expect, it } from "vitest";
 
 import { SummaryCard } from "@/components/summary-card";
 import { renderWithProviders } from "@/test/render";
 
 /**
- * §18 summary card: icon, label, value, status and one click target. The
+ * Summary card: label, value, status and one click target — no icon. The
  * states that matter are the ones a live backend produces — a real number, a
  * number that has not arrived, and a number that will not arrive.
  */
@@ -16,7 +15,6 @@ describe("SummaryCard", () => {
     renderWithProviders(
       <SummaryCard
         to="/services"
-        icon={Gauge}
         label="Servers"
         value="3/4"
         status="1 failed"
@@ -34,7 +32,6 @@ describe("SummaryCard", () => {
     renderWithProviders(
       <SummaryCard
         to="/sites"
-        icon={Gauge}
         label="Sites"
         value={null}
         status="Counting…"
@@ -51,7 +48,6 @@ describe("SummaryCard", () => {
     renderWithProviders(
       <SummaryCard
         to="/components"
-        icon={Gauge}
         label="Runtimes"
         value={null}
         status="Catalog unavailable"

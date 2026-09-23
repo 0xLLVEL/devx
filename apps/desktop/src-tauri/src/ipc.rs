@@ -28,10 +28,6 @@ pub fn builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::config_reset,
             commands::config_export,
             commands::profile_list,
-            commands::projects_list,
-            commands::project_add,
-            commands::project_remove,
-            commands::project_update,
             commands::profile_save,
             commands::profile_apply,
             commands::profile_delete,
@@ -118,10 +114,6 @@ pub fn builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::settings_sync_autostart,
             commands::update_check,
             commands::update_download_install,
-            commands::terminal_run,
-            commands::terminal_path,
-            commands::terminal_use_version,
-            commands::terminal_unset_version,
             commands::template_list,
             commands::template_create,
             commands::site_alias_add,
@@ -140,8 +132,7 @@ pub fn builder() -> tauri_specta::Builder<tauri::Wry> {
         ])
         .events(collect_events![
             events::InstallProgress,
-            events::ServiceEventUpdate,
-            events::TerminalOutput
+            events::ServiceEventUpdate
         ])
 }
 

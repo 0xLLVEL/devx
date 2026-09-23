@@ -86,7 +86,7 @@ pub struct TemplateCreateResult {
 ///
 /// Local templates write their files into the (created) docroot and never
 /// overwrite existing content; download-based templates only create the
-/// folder and return their suggested command, to be run in the Terminal.
+/// folder and return their suggested command, to be run in a terminal.
 /// The `git` template clones `git_url` with the system git before the site
 /// is registered, so the docroot already holds real content.
 #[tauri::command]

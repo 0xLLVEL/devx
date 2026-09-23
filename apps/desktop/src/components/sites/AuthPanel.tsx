@@ -20,11 +20,11 @@ export function AuthPanel({ site }: { site: SiteStatus }) {
   });
   const err = m.error instanceof Error ? m.error : null;
   return (
-    <div className="rounded-lg border border-border bg-surface-1/80 p-4 space-y-3">
+    <div className="rounded-lg border border-border bg-surface-2/80 p-4 space-y-3">
       <h3 className="text-xs font-semibold text-foreground">HTTP Basic Auth</h3>
       {site.auth ? (
         <div className="flex items-center gap-2 text-sm p-3 rounded-md bg-surface-2/40 border border-border/60">
-          <Lock className="size-4 text-primary" aria-hidden /><span>Protected with user <span className="font-mono font-semibold text-foreground" data-selectable>{site.auth.username}</span></span>
+          <Lock className="size-4 text-ink-muted" aria-hidden /><span>Protected with user <span className="font-mono font-semibold text-foreground" data-selectable>{site.auth.username}</span></span>
           <Button type="button" variant="ghost" size="sm" className="ml-auto text-destructive" disabled={m.isPending} onClick={() => m.mutate({ user: null, pass: null })}>Remove protection</Button>
         </div>
       ) : <p className="text-sm text-muted-foreground">Public site. Add credentials to password-protect all requests.</p>}

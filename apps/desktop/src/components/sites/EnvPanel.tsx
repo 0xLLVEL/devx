@@ -28,7 +28,7 @@ export function EnvPanel({ site }: { site: SiteStatus }) {
   const entries = Object.entries(site.env).sort(([a], [b]) => a.localeCompare(b));
   return (
     <div className="space-y-4">
-      <div className="rounded-lg border border-border bg-surface-1/80 p-4 space-y-3">
+      <div className="rounded-lg border border-border bg-surface-2/80 p-4 space-y-3">
         <h3 className="text-xs font-semibold text-foreground">Environment Variables</h3>
         {site.php_version ? null : <p className="text-xs text-muted-foreground">This site is static; environment variables only reach PHP sites.</p>}
         {entries.length > 0 ? (

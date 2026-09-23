@@ -156,7 +156,7 @@ export function MailPage() {
 
   return (
     <>
-      <div className="mx-auto w-full max-w-5xl space-y-4 p-5">
+      <div className="mx-auto w-full max-w-5xl space-y-6 p-8">
         {statusFailed ? (
           <Callout variant="destructive" title="Could not read the mail catcher status.">
             <p>{errorText(status.error)}</p>
@@ -186,7 +186,7 @@ export function MailPage() {
         ) : null}
 
         {status.data?.running ? (
-          <div className="grid gap-4 lg:grid-cols-[1fr_1.4fr]">
+          <div className="grid gap-6 lg:grid-cols-[1fr_1.4fr]">
             <MessageList
               messages={visibleMessages}
               pending={messages.isPending}
@@ -297,48 +297,85 @@ function StatusCard({
     return (
       <div className="space-y-2" role="status">
         <span className="sr-only">Loading the mail catcher status…</span>
-        <span aria-hidden className="block h-7 w-64 animate-pulse rounded-sm bg-secondary" />
-        <span aria-hidden className="block h-4 w-full max-w-2xl animate-pulse rounded-sm bg-secondary" />
+        <span aria-hidden className="block h-7 w-64 shimmer-skeleton rounded-sm" />
+        <span aria-hidden className="block h-4 w-full max-w-2xl shimmer-skeleton rounded-sm" />
       </div>
     );
   }
   return (
-    <PageHeader
-      title={status.running ? "Mail catcher is capturing." : "Mail catcher is off."}
-      description={
-        status.running
-          ? `Point your app's SMTP client at 127.0.0.1:${status.smtp_port}; read mail here or in Mailpit's own UI on port ${status.port}.`
-          : "Start the mailpit service from the Services page to begin capturing mail."
-      }
-      right={
-        <div className="flex flex-col items-end gap-2">
-          {status.running ? (
-            <Badge variant="secondary" className="data-value">
-              {status.unread ?? "?"} unread · {status.total ?? "?"} captured
-            </Badge>
-          ) : (
-            <Badge variant="outline">stopped</Badge>
-          )}
-          {status.running ? (
-            <div className="flex items-center gap-2">
-              <Button size="sm" variant="outline" disabled={busy} onClick={onSendTest}>
-                {busy ? <Loader2 className="animate-spin" /> : <Send />}
-                Send test email
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={busy || unreadCount === 0}
-                onClick={onMarkAllRead}
-              >
-                <MailCheck />
-                Mark all read
-              </Button>
+    <>
+      <PageHeader
+        title={status.running ? "Mail catcher is capturing." : "Mail catcher is off."}
+        description={
+          status.running
+            ? "Mail your sites send lands here — nothing leaves the machine."
+            : "Start the mailpit service from the Services page to begin capturing mail."
+        }
+        right={
+          <div className="flex flex-col items-end gap-2">
+            {status.running ? (
+              <Badge variant="default" className="data-value">
+                {status.unread ?? "?"} unread · {status.total ?? "?"} captured
+              </Badge>
+            ) : (
+              <Badge variant="outline">stopped</Badge>
+            )}
+            {status.running ? (
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="outline" disabled={busy} onClick={onSendTest}>
+                  {busy ? <Loader2 className="animate-spin" /> : <Send />}
+                  Send test email
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={busy || unreadCount === 0}
+                  onClick={onMarkAllRead}
+                >
+                  <MailCheck />
+                  Mark all read
+                </Button>
+              </div>
+            ) : null}
+          </div>
+        }
+      />
+      {status.running ? (
+        <Card>
+          <CardContent className="grid gap-6 sm:grid-cols-2 p-4">
+            <div className="space-y-1.5">
+              <p className="text-caption text-ink-muted">SMTP — point your app here</p>
+              <div className="flex items-center gap-2">
+                <span
+                  className="border border-line-strong bg-surface px-3.5 py-2 font-mono text-[13px]"
+                  data-selectable
+                >
+                  127.0.0.1:{status.smtp_port}
+                </span>
+              </div>
             </div>
-          ) : null}
-        </div>
-      }
-    />
+            <div className="space-y-1.5">
+              <p className="text-caption text-ink-muted">Mailpit&apos;s own UI</p>
+              <div className="flex items-center gap-2">
+                <span
+                  className="border border-line-strong bg-surface px-3.5 py-2 font-mono text-[13px]"
+                  data-selectable
+                >
+                  127.0.0.1:{status.port}
+                </span>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => window.open(`http://127.0.0.1:${status.port}`, "_blank")}
+                >
+                  Open
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+    </>
   );
 }
 
@@ -369,7 +406,7 @@ function MessageList({
   return (
     <Card className="self-start">
       <CardHeader className="pb-3">
-        <CardTitle className="text-base">Inbox</CardTitle>
+        <CardTitle data-selectable>Inbox</CardTitle>
         <div className="relative mt-2">
           <Search
             className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
@@ -399,7 +436,7 @@ function MessageList({
               <span
                 key={row}
                 aria-hidden
-                className="block h-9 animate-pulse rounded-sm bg-secondary"
+                className="block h-9 shimmer-skeleton rounded-sm"
               />
             ))}
           </div>
@@ -576,7 +613,7 @@ function MessageViewer({
   return (
     <Card className="self-start">
       <CardHeader className="pb-3">
-        <CardTitle className="text-base" data-selectable>
+        <CardTitle data-selectable>
           {message.subject === "" ? "(no subject)" : message.subject}
         </CardTitle>
         <CardDescription data-selectable>

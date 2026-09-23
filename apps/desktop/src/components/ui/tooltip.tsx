@@ -138,7 +138,7 @@ export function Tooltip({
           id={id}
           style={{ left: position.x, top: position.y }}
           className={cn(
-            "pointer-events-none fixed z-50 -translate-x-1/2 rounded-sm border border-line-strong bg-elevated px-2 py-1 text-xs text-foreground shadow-md",
+            "pointer-events-none fixed z-50 -translate-x-1/2 rounded-sm border border-line-strong bg-elevated px-2 py-1 text-xs text-foreground",
             side === "top" ? "-translate-y-[calc(100%+6px)]" : "translate-y-1.5",
             className,
           )}

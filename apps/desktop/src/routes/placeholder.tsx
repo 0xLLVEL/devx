@@ -16,7 +16,7 @@ export function PlaceholderPage({
   plannedIn: string;
 }) {
   return (
-    <div className="p-6">
+    <div className="p-8">
       <EmptyState
         title={title}
         description={`${description} Not implemented yet — arrives in ${plannedIn}.`}

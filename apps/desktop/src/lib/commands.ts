@@ -42,7 +42,6 @@ export type Command = {
 
 /** §56's navigation shortcuts, mapped onto the routes that exist. */
 const NAV_HINTS: Record<string, string> = {
-  "/projects": "Alt 0",
   "/": "Alt 1",
   "/components": "Alt 2",
   "/services": "Alt 3",

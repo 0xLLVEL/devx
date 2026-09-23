@@ -2,7 +2,6 @@ import {
   Boxes,
   Database,
   FileText,
-  FolderKanban,
   Globe,
   LayoutDashboard,
   Mail,
@@ -10,7 +9,6 @@ import {
   Settings,
   Share2,
   Stethoscope,
-  TerminalSquare,
   type LucideIcon,
 } from "lucide-react";
 
@@ -93,19 +91,6 @@ export const NAV_SECTIONS: readonly NavSection[] = [
     id: "workspace",
     label: "Workspace",
     items: [
-      {
-        to: "/projects",
-        label: "Projects",
-        icon: FolderKanban,
-        keywords: ["project", "folder", "workspace", "app", "group"],
-        shortcut: "0",
-      },
-      {
-        to: "/terminal",
-        label: "Terminal",
-        icon: TerminalSquare,
-        keywords: ["command", "shell", "path", "run"],
-      },
       {
         to: "/logs",
         label: "Logs",
@@ -192,4 +177,14 @@ export function findNavSection(pathname: string): NavSection | undefined {
   return NAV_SECTIONS.find((section) =>
     section.items.some((candidate) => candidate.to === item.to),
   );
+}
+
+/**
+ * Topbar crumbs for a pathname: `Environment / Dashboard`. Unknown paths fall
+ * back to the raw pathname so the chrome never invents a route name.
+ */
+export function navCrumb(pathname: string): { section?: string; page: string } {
+  const item = findNavItem(pathname);
+  const section = item ? findNavSection(pathname) : undefined;
+  return { section: section?.label, page: item?.label ?? pathname };
 }

@@ -81,7 +81,7 @@ export function ComponentsPage() {
             <span
               key={row}
               aria-hidden
-              className="block h-4 animate-pulse rounded-sm bg-secondary"
+              className="block h-4 shimmer-skeleton rounded-sm"
             />
           ))}
         </div>
@@ -117,7 +117,7 @@ export function ComponentsPage() {
   const installedVersions = installedCount ?? 0;
 
   return (
-    <div className="space-y-4 p-5">
+    <div className="space-y-6 p-8">
       <PageHeader
         title="Component catalog"
         description={
@@ -126,9 +126,11 @@ export function ComponentsPage() {
             : `${catalog.data.length} components · ${installedVersions} version${installedVersions === 1 ? "" : "s"} installed on this machine.`
         }
         right={
-          <span className="text-xs text-muted-foreground">
-            Every download is checksum-verified before it lands.
-          </span>
+          <div className="border border-border bg-surface px-4 py-3 text-right text-[13px]">
+            <span className="whitespace-nowrap text-success">
+              ✓ Every download is checksum-verified before it lands.
+            </span>
+          </div>
         }
       />
 
@@ -160,21 +162,25 @@ export function ComponentsPage() {
           }
         />
       ) : (
-        <div className="grid gap-6 lg:grid-cols-[18rem_1fr]">
-          <nav aria-label="Components" className="space-y-4">
+        <div className="grid gap-6 lg:grid-cols-[16.25rem_minmax(0,1fr)]">
+          <nav
+            aria-label="Components"
+            className="border border-border bg-surface p-3"
+          >
             {KIND_ORDER.filter((kind) =>
               catalog.data.some((component) => component.kind === kind),
             ).map((kind) => (
-              <div key={kind} className="space-y-1">
-                <h2 className="px-1 text-xs font-semibold text-muted-foreground">
+              <div key={kind}>
+                <h2 className="px-2.5 pt-3 pb-1.5 text-xs font-normal uppercase tracking-[0.08em] text-ink-muted first:pt-1">
                   {KIND_LABELS[kind]}
                 </h2>
                 {catalog.data
                   .filter((component) => component.kind === kind)
                   .map((component) => {
-                    const kindInstalled = install.installed.data?.filter(
-                      (entry) => entry.component_id === component.id,
-                    ).length ?? 0;
+                    const installedForComponent =
+                      install.installed.data?.filter(
+                        (entry) => entry.component_id === component.id,
+                      ).length ?? 0;
                     return (
                       <button
                         key={component.id}
@@ -182,31 +188,35 @@ export function ComponentsPage() {
                         onClick={() => setSelectedId(component.id)}
                         aria-current={selected?.id === component.id}
                         className={cn(
-                          "flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-2 text-left text-sm transition-colors duration-150",
+                          "flex w-full items-center gap-2 border-l-2 px-2.5 py-2 text-left text-sm transition-colors duration-150",
                           selected?.id === component.id
-                            ? "bg-accent text-accent-foreground"
-                            : "hover:bg-accent/50",
+                            ? "border-foreground bg-surface-2 font-semibold text-foreground"
+                            : "border-transparent hover:bg-hover",
                         )}
                       >
                         {/* §95: the name is the only label the row has. */}
                         <span className="min-w-0 truncate" title={component.name}>
                           {component.name}
                         </span>
-                        <span className="flex shrink-0 items-center gap-1.5">
-                          {kindInstalled > 0 ? (
-                            <Badge variant="success">{kindInstalled}</Badge>
-                          ) : null}
-                          {component.caveat ? (
-                            /* §94: the caveat is only spelled out in the detail
-                               pane, so the icon carries it here. */
-                            <Tooltip label={component.caveat} side="top">
-                              <TriangleAlert
-                                aria-label="Has a caveat"
-                                className="size-3.5 shrink-0 text-warning"
-                              />
-                            </Tooltip>
-                          ) : null}
+                        <span className="ml-auto shrink-0 font-mono text-xs text-ink-muted">
+                          {installedForComponent > 0 ? (
+                            <span className="font-semibold text-success">
+                              {installedForComponent}
+                            </span>
+                          ) : (
+                            "—"
+                          )}
                         </span>
+                        {component.caveat ? (
+                          /* §94: the caveat is only spelled out in the detail
+                             pane, so the icon carries it here. */
+                          <Tooltip label={component.caveat} side="top">
+                            <TriangleAlert
+                              aria-label="Has a caveat"
+                              className="size-3.5 shrink-0 text-warning"
+                            />
+                          </Tooltip>
+                        ) : null}
                       </button>
                     );
                   })}
@@ -239,15 +249,18 @@ function ComponentDetail({
 
   return (
     <section
-      className="animate-in fade-in slide-in-from-bottom-2 flex flex-col space-y-4 duration-200 lg:h-0 lg:min-h-full"
+      className="flex min-h-0 flex-col space-y-4 border border-border bg-surface p-6 lg:h-0 lg:min-h-full"
       aria-label={component.name}
     >
-      <div className="space-y-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <h2 className="text-base font-semibold">{component.name}</h2>
+      <div>
+        <p className="text-[13px] uppercase tracking-[0.08em] text-ink-muted">
+          {KIND_LABELS[component.kind]}
+        </p>
+        <h2 className="text-h1 tracking-tight">{component.name}</h2>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
           <Badge variant="outline">{component.license}</Badge>
           {component.multi_version ? (
-            <Badge variant="secondary">multi-version</Badge>
+            <Badge variant="default">multi-version</Badge>
           ) : null}
           {component.pinned ? (
             <Badge variant="outline">
@@ -255,19 +268,6 @@ function ComponentDetail({
               pinned
             </Badge>
           ) : null}
-        </div>
-        <p className="text-sm text-muted-foreground">{component.summary}</p>
-      </div>
-
-      {component.caveat ? (
-        <Callout variant="warning" title="Heads up">
-          {component.caveat}
-        </Callout>
-      ) : null}
-
-      <div className="flex min-h-0 flex-1 flex-col gap-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <h3 className="text-sm font-medium">Available versions</h3>
           {versions.data ? (
             <Badge variant="outline">
               {installable} installable
@@ -290,7 +290,16 @@ function ComponentDetail({
             </Badge>
           ) : null}
         </div>
+        <p className="mt-3 text-sm text-muted-foreground">{component.summary}</p>
+      </div>
 
+      {component.caveat ? (
+        <Callout variant="warning" title="Heads up">
+          {component.caveat}
+        </Callout>
+      ) : null}
+
+      <div className="flex min-h-0 flex-1 flex-col gap-2">
         {versions.isPending ? (
           /* §37: rows resolving, in the shape of the list they become. */
           <div className="space-y-2" role="status">
@@ -299,7 +308,7 @@ function ComponentDetail({
               <span
                 key={row}
                 aria-hidden
-                className="block h-8 animate-pulse rounded-sm bg-secondary"
+                className="block h-8 shimmer-skeleton rounded-sm"
               />
             ))}
           </div>
@@ -340,16 +349,43 @@ function ComponentDetail({
           />
         ) : (
           <>
-            <ul className="max-h-96 divide-y divide-border overflow-y-auto rounded-md border border-border lg:max-h-none lg:min-h-0 lg:flex-1">
-              {versions.data.versions.map((version) => (
-                <VersionRow
-                  key={version.version}
-                  componentId={component.id}
-                  version={version}
-                  install={install}
-                />
-              ))}
-            </ul>
+            {/* Fill the panel beside the nav; thead sticks to this box's top. */}
+            <div className="min-h-0 flex-1 overflow-y-auto">
+            <table className="w-full border-collapse text-sm">
+              <thead className="sticky top-0 z-10 bg-surface">
+                <tr className="border-b border-border text-xs font-normal text-ink-muted">
+                  <th scope="col" className="px-3 py-2 text-left font-normal">
+                    Version
+                  </th>
+                  <th scope="col" className="px-3 py-2 text-left font-normal">
+                    Channel
+                  </th>
+                  <th scope="col" className="px-3 py-2 text-left font-normal">
+                    Released
+                  </th>
+                  <th scope="col" className="px-3 py-2 text-left font-normal">
+                    Size
+                  </th>
+                  <th scope="col" className="px-3 py-2 text-left font-normal">
+                    Checksum
+                  </th>
+                  <th scope="col" className="px-3 py-2 text-right font-normal">
+                    Action
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {versions.data.versions.map((version) => (
+                  <VersionRow
+                    key={version.version}
+                    componentId={component.id}
+                    version={version}
+                    install={install}
+                  />
+                ))}
+              </tbody>
+            </table>
+            </div>
 
             {hidden > 0 ? (
               <Callout variant="warning">
@@ -406,111 +442,130 @@ function VersionRow({
       ? installError
       : null;
   const shownError = cancelled ? null : installError;
+  const downloading = busy && phase?.stage === "downloading";
+  const phaseLabel =
+    busy && phase && fraction === null && phase.stage !== "downloading"
+      ? describePhase(phase)
+      : null;
 
   return (
-    <li className="px-3 py-2 text-sm">
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="font-mono" data-selectable>
-            {version.version}
-          </span>
+    <>
+      <tr className="border-b border-border last:border-b-0">
+        <td className="px-3 py-2.5 font-mono text-[13px] font-semibold" data-selectable>
+          {displayVersion(componentId, version.version)}
+        </td>
+        <td className="px-3 py-2.5">
           {version.channel === "lts" ? (
             <Badge variant="success">LTS</Badge>
           ) : version.channel === "prerelease" ? (
             <Badge variant="warning">pre-release</Badge>
-          ) : null}
-          {installed ? <Badge variant="secondary">installed</Badge> : null}
-        </div>
-
-        <div className="flex shrink-0 items-center gap-3 text-xs text-muted-foreground">
-          {version.released_at ? <span>{version.released_at}</span> : null}
-          {version.artifact.size_bytes ? (
-            <span>{formatBytes(version.artifact.size_bytes)}</span>
-          ) : null}
-          <span
-            className="flex items-center gap-1 text-success"
-            title={
-              version.artifact.checksum.kind === "sha256"
-                ? "SHA-256 published by the upstream"
-                : "SHA-256 resolved from the upstream checksum file at download time"
-            }
-          >
-            <ShieldCheck className="size-3.5" />
-            verifiable
-          </span>
-
-          {installed ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={install.uninstall.isPending}
-              onClick={() => setConfirmRemove(true)}
-            >
-              {install.uninstall.isPending ? <Loader2 className="animate-spin" /> : <Trash2 />}
-              Remove
-            </Button>
-          ) : busy ? (
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={install.cancelInstall.isPending}
-              onClick={() =>
-                install.cancelInstall.mutate({ componentId, version: version.version })
-              }
-            >
-              <CircleSlash />
-              Cancel
-            </Button>
           ) : (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() =>
-                install.install.mutate({ componentId, version: version.version })
-              }
-            >
-              <Download />
-              Install
-            </Button>
+            <span className="text-ink-muted">—</span>
           )}
-        </div>
-      </div>
-
-      {/* The phase label and progress stay visible while the cancel request
-          is in flight; only the button itself swaps to Cancel. */}
-      {busy && phase && fraction === null && phase.stage !== "downloading" ? (
-        <p className="mt-1 text-xs text-muted-foreground">{describePhase(phase)}</p>
-      ) : null}
-
-      {busy && phase?.stage === "downloading" ? (
-        <div className="mt-2 space-y-1">
-          {/* Indeterminate when the server reported no total length. */}
-          <Progress
-            value={fraction ?? undefined}
-            label={`Downloading ${componentId} ${version.version}`}
-          />
-          <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-            {/* Byte counts when the server reported a length, the running
-                count alone when it did not. */}
-            <span>
-              {downloadInfo}
-              {downloadSpeed !== undefined
-                ? ` · ${formatSpeed(downloadSpeed)}`
-                : ""}
-            </span>
-            {fraction !== null ? <span>{Math.round(fraction * 100)}%</span> : null}
-          </div>
-        </div>
-      ) : null}
-
-      {shownError ? (
-        <Callout
-          variant="destructive"
-          title={`Could not install ${version.version}.`}
-          className="mt-2"
+        </td>
+        <td className="px-3 py-2.5 font-mono text-[13px] text-ink-muted">
+          {formatReleased(version.released_at)}
+        </td>
+        <td className="px-3 py-2.5 font-mono text-[13px]">
+          {version.artifact.size_bytes != null
+            ? formatBytes(version.artifact.size_bytes)
+            : "—"}
+        </td>
+        <td
+          className="px-3 py-2.5 text-xs whitespace-nowrap text-success"
+          title={
+            version.artifact.checksum.kind === "sha256"
+              ? "SHA-256 published by the upstream"
+              : "SHA-256 resolved from the upstream checksum file at download time"
+          }
         >
-          <p>{shownError.message}</p>
-        </Callout>
+          <ShieldCheck aria-hidden className="mr-1 inline size-3.5" />
+          verifiable
+        </td>
+        <td className="px-3 py-2.5 text-right">
+          <div className="flex items-center justify-end gap-3">
+            {installed ? <Badge variant="default">installed</Badge> : null}
+            {installed ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={install.uninstall.isPending}
+                onClick={() => setConfirmRemove(true)}
+              >
+                {install.uninstall.isPending ? (
+                  <Loader2 className="animate-spin" />
+                ) : (
+                  <Trash2 />
+                )}
+                Remove
+              </Button>
+            ) : busy ? (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={install.cancelInstall.isPending}
+                onClick={() =>
+                  install.cancelInstall.mutate({
+                    componentId,
+                    version: version.version,
+                  })
+                }
+              >
+                <CircleSlash />
+                Cancel
+              </Button>
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  install.install.mutate({
+                    componentId,
+                    version: version.version,
+                  })
+                }
+              >
+                <Download />
+                Install
+              </Button>
+            )}
+          </div>
+          {/* The phase label and progress stay visible while the cancel request
+              is in flight; only the button itself swaps to Cancel. */}
+          {phaseLabel ? (
+            <p className="mt-1 text-xs text-ink-muted">{phaseLabel}</p>
+          ) : null}
+          {shownError ? (
+            <Callout
+              variant="destructive"
+              title={`Could not install ${version.version}.`}
+              className="mt-2 text-left"
+            >
+              <p>{shownError.message}</p>
+            </Callout>
+          ) : null}
+        </td>
+      </tr>
+
+      {downloading && phase ? (
+        <tr className="border-b border-border last:border-b-0">
+          <td colSpan={6} className="border-t-0 px-3 pt-0 pb-3">
+            {/* Indeterminate when the server reported no total length. */}
+            <Progress
+              value={fraction ?? undefined}
+              label={`Downloading ${componentId} ${version.version}`}
+            />
+            <div className="mt-1 flex items-center justify-between gap-2 font-mono text-xs text-ink-muted">
+              <span>
+                {downloadInfo}
+                {downloadSpeed !== undefined
+                  ? ` · ${formatSpeed(downloadSpeed)}`
+                  : ""}
+              </span>
+              {fraction !== null ? <span>{Math.round(fraction * 100)}%</span> : null}
+            </div>
+          </td>
+        </tr>
       ) : null}
 
       {/* §35: removing deletes the files on disk, so the version is named before
@@ -542,8 +597,26 @@ function VersionRow({
         destructive
         pending={install.uninstall.isPending}
       />
-    </li>
+    </>
   );
+}
+
+/** Display-only: `bun-v1.3.14` → `v1.3.14`; install still uses the raw id. */
+function displayVersion(componentId: string, version: string): string {
+  const prefix = `${componentId}-`;
+  return version.startsWith(prefix) ? version.slice(prefix.length) : version;
+}
+
+/** Mockup style: `2026-05-13` → `May 2026`. Bad input passes through. */
+function formatReleased(iso: string | null): string {
+  if (!iso) return "—";
+  const match = /^(\d{4})-(\d{2})/.exec(iso);
+  if (!match) return iso;
+  const month = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+  ][Number(match[2]) - 1];
+  return month ? `${month} ${match[1]}` : iso;
 }
 
 /** Formats a byte count using binary units. */

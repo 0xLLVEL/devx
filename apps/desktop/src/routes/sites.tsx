@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Copy, FolderOpen, Globe, Plus, Search, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { useSearchParams } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
@@ -22,8 +23,8 @@ import { AliasPanel } from "@/components/sites/AliasPanel";
 import { EnvPanel } from "@/components/sites/EnvPanel";
 import { RequestsPanel } from "@/components/sites/RequestsPanel";
 import { AuthPanel } from "@/components/sites/AuthPanel";
-import { PingButton } from "@/components/sites/PingButton";
 import { NetworkStrip } from "@/components/sites/NetworkStrip";
+import { RequestsSummary } from "@/components/sites/RequestsSummary";
 import { CreateSiteDialog } from "@/components/sites/CreateSiteDialog";
 import { serverLabel, siteUrl, STATIC, type WebServerChoice } from "@/components/sites/site-helpers";
 
@@ -126,8 +127,10 @@ export function SitesPage() {
 
   useEffect(() => { if (!isTest && selected === null && allSites.length > 0) { const f = allSites[0]; if (f) setSelected(f.hostname); } }, [isTest, selected, allSites]);
 
-  const attentionSites = useMemo(() => visibleSites.filter((s) => Boolean(s.php_version && !s.php_endpoint)), [visibleSites]);
-  const normalSites = useMemo(() => visibleSites.filter((s) => !Boolean(s.php_version && !s.php_endpoint)), [visibleSites]);
+  // Sites list portals into the shell rail column (Frame 3); fall back to the
+  // inline aside when the rail element is absent (isolated tests / no shell).
+  const [railEl, setRailEl] = useState<HTMLElement | null>(null);
+  useLayoutEffect(() => { setRailEl(document.getElementById("shell-rail")); });
 
   const buildActions = (site: SiteStatus): MenuItem[] => [
     { id: "folder", label: "Open folder", icon: FolderOpen, onSelect: () => void openFolderFor(site) },
@@ -135,51 +138,88 @@ export function SitesPage() {
     { id: "remove", label: "Remove site", icon: Trash2, destructive: true, disabled: remove.isPending && remove.variables === site.hostname, onSelect: () => setRemoveTarget(site) },
   ];
 
-  return (
-    <div className="flex h-[calc(100vh-4rem)] min-h-0 flex-1 overflow-hidden bg-background">
-      <aside className="flex w-80 shrink-0 flex-col border-r border-border/70 bg-surface-1/40">
-        <div className="space-y-3 border-b border-border/60 p-4 pb-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-baseline gap-2"><h1 className="text-sm font-semibold tracking-tight text-foreground">Sites</h1><span className="font-mono text-xs text-muted-foreground">{allSites.length} site{allSites.length === 1 ? "" : "s"}</span></div>
-            <Button size="sm" className="h-7 gap-1 rounded-md px-2.5 text-xs font-medium shadow-xs" onClick={() => setCreating(true)}><Plus className="size-3.5" />Add site</Button>
+  const listPane = (
+    <aside className="flex w-[300px] shrink-0 flex-col border-r border-border bg-surface min-h-0">
+      <div className="space-y-3 border-b border-border p-4">
+        <div className="flex items-baseline justify-between gap-2">
+          <div className="flex items-baseline gap-2">
+            <h1 className="text-[15px] font-semibold text-foreground">Sites</h1>
+            <span className="font-mono text-[13px] text-ink-muted">{allSites.length} site{allSites.length === 1 ? "" : "s"}</span>
           </div>
-          <div className="relative"><Search aria-hidden className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" /><Input className="h-8 border-border/80 bg-surface-2/40 pl-8 text-xs placeholder:text-muted-foreground/70 focus-visible:ring-1" aria-label="Search sites" placeholder="Filter by domain, runtime or service..." value={query} onChange={(e) => setQuery(e.target.value)} autoComplete="off" spellCheck={false} /></div>
-          {allSites.length > 1 && (serverKinds.length > 1 || runtimes.length > 1) ? (
-            <div className="flex items-center gap-2 pt-0.5">
-              {serverKinds.length > 1 ? <Select aria-label="Server" className="h-7 flex-1 text-xs" value={serverFilter} onChange={(e) => setServerFilter(e.target.value)}><option value="all">All servers</option>{serverKinds.map((k) => <option key={k} value={k}>{serverLabel(k)}</option>)}</Select> : null}
-              {runtimes.length > 1 ? <Select aria-label="Runtime" className="h-7 flex-1 text-xs" value={runtimeFilter} onChange={(e) => setRuntimeFilter(e.target.value)}><option value="all">All runtimes</option>{runtimes.map((v) => <option key={v || STATIC} value={v || STATIC}>{v || "Static"}</option>)}</Select> : null}
-            </div>
-          ) : null}
-          {activeCount > 0 ? <div className="flex items-center justify-between pt-0.5"><span className="text-caption text-muted-foreground">{visibleSites.length} matching</span><Button variant="ghost" size="sm" className="h-6 px-2 text-caption text-primary" onClick={clearFilters}>Clear filters</Button></div> : null}
+          <Button size="sm" className="h-8 gap-1 px-3 text-[13px]" onClick={() => setCreating(true)}><Plus className="size-3.5" />Add site</Button>
         </div>
-
-        <div className="flex-1 overflow-y-auto p-2">
-          {sites.isPending ? <div className="space-y-2 p-2" role="status"><span className="sr-only">Loading sites…</span>{[0,1,2].map((r) => <span key={r} aria-hidden className="block h-12 animate-pulse rounded-md bg-secondary" />)}</div>
-            : sites.isError ? <div className="p-2"><Callout variant="destructive" title="Could not read the site list."><p>{sites.error.message}</p><Button size="sm" variant="outline" className="mt-2" onClick={() => void sites.refetch()}>Try again</Button></Callout></div>
-            : allSites.length === 0 ? <div className="p-4 text-center"><EmptyState icon={<Globe />} title="No sites yet." description="Add one and DevX will route its .test host name to your project folder." action={<Button size="sm" onClick={() => setCreating(true)}><Plus />Create your first site</Button>} /></div>
-            : visibleSites.length === 0 ? <div className="p-4 text-center"><EmptyState icon={<Search />} title="No site matches these filters." description={`${allSites.length} site${allSites.length === 1 ? "" : "s"} exist and none of them match the current filters.`} /></div>
-            : <SiteList attentionSites={attentionSites} normalSites={normalSites} selectedHostname={selectedSite?.hostname ?? null} onSelect={setSelected} buildActions={buildActions} onOpenInBrowser={(s) => void openInBrowser(siteUrl(s))} />}
+        <div className="relative">
+          <Search aria-hidden className="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-ink-muted" />
+          <Input className="h-9 border-line-strong bg-transparent pl-9 text-[13px] focus-visible:ring-1" aria-label="Search sites" placeholder="Filter by domain, runtime or service…" value={query} onChange={(e) => setQuery(e.target.value)} autoComplete="off" spellCheck={false} />
         </div>
+        {allSites.length > 1 && (serverKinds.length > 1 || runtimes.length > 1) ? (
+          <div className="flex items-center gap-2">
+            {serverKinds.length > 1 ? <Select aria-label="Server" className="h-8 flex-1 text-[13px]" value={serverFilter} onChange={(e) => setServerFilter(e.target.value)}><option value="all">All servers</option>{serverKinds.map((k) => <option key={k} value={k}>{serverLabel(k)}</option>)}</Select> : null}
+            {runtimes.length > 1 ? <Select aria-label="Runtime" className="h-8 flex-1 text-[13px]" value={runtimeFilter} onChange={(e) => setRuntimeFilter(e.target.value)}><option value="all">All runtimes</option>{runtimes.map((v) => <option key={v || STATIC} value={v || STATIC}>{v || "Static"}</option>)}</Select> : null}
+          </div>
+        ) : null}
+        {activeCount > 0 ? <div className="flex items-center justify-between"><span className="text-[13px] text-ink-muted">{visibleSites.length} matching</span><Button variant="ghost" size="sm" className="h-6 px-2 text-[13px]" onClick={clearFilters}>Clear filters</Button></div> : null}
+      </div>
 
-        <NetworkStrip dns={dns.data} mode={config.data?.network.dns_mode} ca={ca.data} pending={networkPending} error={networkError} onRetry={() => { void dns.refetch(); void ca.refetch(); void config.refetch(); }} dnsBusy={dnsStart.isPending || dnsStop.isPending} caInstalling={caInstall.isPending} onDnsStart={() => dnsStart.mutate()} onDnsStop={() => dnsStop.mutate()} onCaInstall={() => caInstall.mutate()} />
-      </aside>
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {sites.isPending ? <div className="space-y-2 p-4" role="status"><span className="sr-only">Loading sites…</span>{[0,1,2].map((r) => <span key={r} aria-hidden className="block h-14 shimmer-skeleton" />)}</div>
+          : sites.isError ? <div className="p-4"><Callout variant="destructive" title="Could not read the site list."><p>{sites.error.message}</p><Button size="sm" variant="outline" className="mt-2" onClick={() => void sites.refetch()}>Try again</Button></Callout></div>
+          : allSites.length === 0 ? <div className="p-4 text-center"><EmptyState icon={<Globe />} title="No sites yet." description="Add one and DevX will route its .test host name to your project folder." action={<Button size="sm" onClick={() => setCreating(true)}><Plus />Create your first site</Button>} /></div>
+          : visibleSites.length === 0 ? <div className="p-4 text-center"><EmptyState icon={<Search />} title="No site matches these filters." description={`${allSites.length} site${allSites.length === 1 ? "" : "s"} exist and none of them match the current filters.`} /></div>
+          : <SiteList sites={visibleSites} selectedHostname={selectedSite?.hostname ?? null} onSelect={setSelected} buildActions={buildActions} onOpenInBrowser={(s) => void openInBrowser(siteUrl(s))} />}
+      </div>
+    </aside>
+  );
 
-      <main className="flex flex-1 min-w-0 flex-col overflow-y-auto bg-background">
+  return (
+    <div className="flex h-full min-h-0 flex-1 overflow-hidden bg-background">
+      {railEl
+        ? createPortal(
+            <div className="flex h-full min-h-0 flex-col">{listPane}</div>,
+            railEl,
+          )
+        : listPane}
+
+      <main className="flex flex-1 min-w-0 flex-col overflow-y-auto bg-background p-6">
         <SiteDetail
           site={selectedSite}
           tab={tab}
           onTabChange={setTab}
-          phpChoices={phpChoices}
           dns={dns.data}
           ca={ca.data}
-          configDnsMode={config.data?.network.dns_mode}
-          dnsSuffix={dns.data?.suffix}
+          mode={config.data?.network.dns_mode}
+          pool={
+            selectedSite?.php_version
+              ? (phpPools.data ?? []).find((p) => p.version === selectedSite.php_version) ?? null
+              : null
+          }
           onOpenInBrowser={(s) => void openInBrowser(siteUrl(s))}
           onOpenFolder={openFolderFor}
           onRemove={setRemoveTarget}
           onCopyUrl={copyUrl}
-          pingSlot={selectedSite ? <PingButton hostname={selectedSite.hostname} /> : null}
-          overviewSlot={selectedSite ? <SiteBehaviorEditor site={selectedSite} phpChoices={phpChoices} /> : null}
+          networkStrip={
+            <NetworkStrip
+              dns={dns.data}
+              mode={config.data?.network.dns_mode}
+              ca={ca.data}
+              pending={networkPending}
+              error={networkError}
+              onRetry={() => { void dns.refetch(); void ca.refetch(); void config.refetch(); }}
+              dnsBusy={dnsStart.isPending || dnsStop.isPending}
+              caInstalling={caInstall.isPending}
+              onDnsStart={() => dnsStart.mutate()}
+              onDnsStop={() => dnsStop.mutate()}
+              onCaInstall={() => caInstall.mutate()}
+            />
+          }
+          overviewSlot={
+            selectedSite ? (
+              <div className="space-y-6">
+                <RequestsSummary hostname={selectedSite.hostname} />
+                <SiteBehaviorEditor site={selectedSite} phpChoices={phpChoices} />
+              </div>
+            ) : null
+          }
           aliasesSlot={selectedSite ? <AliasPanel site={selectedSite} busy={aliasAdd.isPending || aliasDelete.isPending} onAdd={(a) => aliasAdd.mutateAsync({ hostname: selectedSite.hostname, alias: a })} onDelete={(a) => aliasDelete.mutate({ hostname: selectedSite.hostname, alias: a })} /> : null}
           envSlot={selectedSite ? <EnvPanel site={selectedSite} /> : null}
           requestsSlot={selectedSite ? <RequestsPanel hostname={selectedSite.hostname} /> : null}

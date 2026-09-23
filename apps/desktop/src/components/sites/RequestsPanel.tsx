@@ -16,7 +16,7 @@ export function RequestsPanel({ hostname }: { hostname: string }) {
   const q = useQuery({ queryKey: ["site-requests", hostname], queryFn: () => ipc.siteRequests(hostname, 50), refetchInterval: live ? 3000 : false });
   const entries = q.data ?? [];
   return (
-    <div className="rounded-lg border border-border bg-surface-1/80 p-4 space-y-3">
+    <div className="rounded-lg border border-border bg-surface-2/80 p-4 space-y-3">
       <div className="flex items-center justify-between gap-3">
         <h3 className="text-xs font-semibold text-foreground">Access Log {entries.length > 0 ? `(${entries.length} requests)` : ""}</h3>
         <label className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">Live<Switch checked={live} onCheckedChange={setLive} aria-label={`Toggle live polling for ${hostname}`} /></label>

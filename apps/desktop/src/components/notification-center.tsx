@@ -109,7 +109,7 @@ export function NotificationSlot() {
           {unread > 0 ? (
             <span
               aria-hidden
-              className="absolute -top-0.5 -right-0.5 flex size-4 items-center justify-center rounded-full bg-destructive font-mono text-[10px] text-destructive-foreground"
+              className="absolute -top-0.5 -right-0.5 flex size-3.5 min-w-3.5 items-center justify-center rounded-full bg-destructive px-0.5 text-[9px] text-destructive-foreground"
             >
               {unread > 9 ? "9+" : unread}
             </span>
@@ -210,7 +210,7 @@ function NotificationPanel({
   );
 
   return (
-    <div className="glass-surface absolute right-0 z-50 mt-2 w-[360px] rounded-lg p-1 shadow-lg">
+    <div className="absolute right-0 z-50 mt-2 w-[360px] rounded-lg border border-line-strong bg-elevated p-1">
       <div className="flex items-center justify-between gap-2 px-3 py-2">
         <p className="text-caption tracking-wide text-ink-muted uppercase">
           Notifications
@@ -309,7 +309,7 @@ function NotificationPanel({
         <Link
           to="/services"
           onClick={onClose}
-          className="text-xs text-primary hover:underline"
+          className="text-xs text-ink-muted hover:text-foreground"
         >
           Open Services
         </Link>

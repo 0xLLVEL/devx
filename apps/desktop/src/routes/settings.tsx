@@ -294,7 +294,7 @@ export function SettingsPage() {
 
   if (configQuery.isPending || !draft) {
     return (
-      <div className="p-6">
+      <div className="p-8">
         <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
           <Loader2 className="size-4 animate-spin" />
           Loading configuration…
@@ -305,7 +305,7 @@ export function SettingsPage() {
 
   if (configQuery.isError) {
     return (
-      <div className="p-6">
+      <div className="p-8">
         <Callout variant="destructive" title="Could not read the saved configuration.">
           <p>{configQuery.error.message}</p>
           <Button
@@ -372,7 +372,7 @@ export function SettingsPage() {
         {save.isSuccess && !dirty ? (
           <div
             role="status"
-            className="flex items-center gap-2 rounded-md border border-success/40 bg-success/10 p-3 text-sm text-success"
+            className="flex items-center gap-2 border border-success/40 bg-success/10 p-3 text-sm text-success"
           >
             <CircleCheck className="size-4" />
             Configuration saved.
@@ -867,7 +867,7 @@ function TransferCard() {
         {importConfig.isSuccess ? (
           <div
             role="status"
-            className="flex items-center gap-2 rounded-md border border-success/40 bg-success/10 p-3 text-sm text-success"
+            className="flex items-center gap-2 border border-success/40 bg-success/10 p-3 text-sm text-success"
           >
             <CircleCheck className="size-4" />
             Configuration imported.
@@ -950,7 +950,7 @@ function UpdatesCard({ info }: { info: UseQueryResult<AppInfo> }) {
             </Button>
           </Callout>
         ) : install.data ? (
-          <div className="flex items-start justify-between gap-4 rounded-md border border-success/40 bg-success/10 p-3">
+          <div className="flex items-start justify-between gap-4 border border-success/40 bg-success/10 p-3">
             <div className="space-y-0.5">
               <p className="text-sm font-medium">
                 DevX {install.data.version} installer launched
@@ -962,7 +962,7 @@ function UpdatesCard({ info }: { info: UseQueryResult<AppInfo> }) {
             </div>
           </div>
         ) : updates.data.update_available ? (
-          <div className="flex items-start justify-between gap-4 rounded-md border border-warning/40 bg-warning/10 p-3">
+          <div className="flex items-start justify-between gap-4 border border-warning/40 bg-warning/10 p-3">
             <div className="space-y-0.5">
               <p className="text-sm font-medium">
                 DevX {updates.data.latest} is available
@@ -992,7 +992,7 @@ function UpdatesCard({ info }: { info: UseQueryResult<AppInfo> }) {
               </Button>
               {updates.data.url ? (
                 <a
-                  className="inline-flex h-8 items-center justify-center gap-2 rounded-md px-3 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
+                  className="inline-flex h-8 items-center justify-center gap-2 border border-line-strong px-3 text-xs font-medium text-ink-muted hover:bg-hover hover:text-foreground"
                   href={updates.data.url}
                   target="_blank"
                   rel="noreferrer"
@@ -1003,7 +1003,7 @@ function UpdatesCard({ info }: { info: UseQueryResult<AppInfo> }) {
             </div>
           </div>
         ) : (
-          <div className="flex items-start justify-between gap-4 rounded-md border border-success/40 bg-success/10 p-3">
+          <div className="flex items-start justify-between gap-4 border border-success/40 bg-success/10 p-3">
             <div className="space-y-0.5">
               <p className="text-sm font-medium">DevX is up to date</p>
               <p className="text-xs text-muted-foreground" data-selectable>
@@ -1029,7 +1029,7 @@ function UpdatesCard({ info }: { info: UseQueryResult<AppInfo> }) {
         <p className="text-xs text-muted-foreground">
           This is the DevX build only. Runtime versions — PHP, Node, databases —
           are installed and removed on the{" "}
-          <Link to="/components" className="text-primary hover:underline">
+          <Link to="/components" className="text-ink-muted hover:text-foreground">
             Components
           </Link>{" "}
           page.
@@ -1087,7 +1087,7 @@ function PathRow({
   onReveal: () => void;
 }) {
   return (
-    <div className="flex items-center justify-between gap-4 rounded-md border border-border p-3">
+    <div className="flex items-center justify-between gap-4 border border-border p-3">
       <div className="min-w-0 space-y-0.5">
         <p className="text-sm">{label}</p>
         {/* §95: the row truncates a long path, so the full one stays reachable. */}

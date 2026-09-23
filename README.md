@@ -21,7 +21,6 @@ Comparable to ServBay or Laravel Herd, built with Rust and Tauri 2.
   - [Backups](#backups)
   - [Log viewer and configuration transfer](#log-viewer-and-configuration-transfer)
   - [Site aliases](#site-aliases)
-  - [Terminal](#terminal)
   - [Scheduled tasks](#scheduled-tasks)
   - [Site templates](#site-templates)
   - [Failure notifications and resource metrics](#failure-notifications-and-resource-metrics)
@@ -65,7 +64,7 @@ Comparable to ServBay or Laravel Herd, built with Rust and Tauri 2.
   backups and restore.
 - **Mail catcher** — Mailpit captures outbound mail; nothing leaves the machine.
 - **Public sharing** — expose any site through an ephemeral Cloudflare quick tunnel.
-- **In-app terminal, site templates, site aliases and per-site environment variables.**
+- **Site templates, site aliases and per-site environment variables.**
 - **System integration** — tray popup with quick actions, autostart, single
   instance, session restore, update checks, and a scriptable `devx` CLI
   companion sharing the same on-disk state.
@@ -277,16 +276,6 @@ every site and alias. Certificates cover aliases in their SANs and are
 reissued when the alias set changes; the bundled resolver answers alias
 lookups like any other `.test` name. Aliases are edited per site on the
 Sites page, and saving restarts the owning server when it is running.
-
-### Terminal
-
-The Terminal page runs one command at a time through `cmd /c` with the
-DevX runtimes prepended to `PATH` — every installed runtime directory
-(plus its `bin`), then the system `PATH` untouched — so `php`, `composer`,
-`node` and `psql` resolve without touching the user's environment. Output
-streams to the frontend as typed events, with per-run exit codes and a
-command history. It is a command runner rather than a pty: interactive
-prompts are not supported, by design.
 
 ### Scheduled tasks
 

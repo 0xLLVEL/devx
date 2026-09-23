@@ -1,82 +1,66 @@
 @import "tailwindcss";
-@import "tw-animate-css";
 
 @custom-variant dark (&:is(.dark *));
 
 /*
- * Design tokens.
+ * Design tokens — Ultra Minimal monochrome.
  *
- * Authority: DESIGN.md at the repository root. Section numbers below refer
- * to that document and to nothing else.
+ * Authority: DESIGN.md + plan.md (redesign). Border-driven, flat surfaces,
+ * no shadows, no glass, no gradients. Status colors keep a real hue because
+ * they only ever mean operational state (success/warning/danger), never
+ * decoration. The shadcn/ui contract names (`--background`, `--primary`, …)
+ * stay as the only path for colour: values changed, architecture did not.
+ * `@theme inline` maps each token onto Tailwind v4 utilities.
  *
- * §73 keeps every token centralised here and §74 requires semantic variables,
- * so no component hard-codes a colour. The shadcn/ui contract names
- * (`--background`, `--primary`, …) stay as the only path for colour: the
- * values change, the architecture does not. `@theme inline` maps each token
- * onto Tailwind v4 utilities so generated components keep working unchanged.
- *
- * Light is the :root default (§9) and `.dark` overrides it (§8); the class is
- * applied by the theme runtime in src/lib/theme.ts, never hard-coded.
+ * Light is the :root default and `.dark` overrides it; the class is applied
+ * by the theme runtime in src/lib/theme.ts, never hard-coded.
  */
 :root {
-  /* ---- §9 Light theme -------------------------------------------------
-     A soft developer light theme, not pure white. */
-  --bg-app: #f4f6fa;
-  --bg-sidebar: #f8f9fc;
+  /* ---- Light theme: paper white shell over a soft gray canvas ---------- */
+  --bg-app: #fafafa;
+  --bg-sidebar: #ffffff;
   --bg-topbar: #ffffff;
   --bg-surface: #ffffff;
-  --bg-surface-2: #f8fafd;
+  --bg-surface-2: #f5f5f5;
   --bg-elevated: #ffffff;
-  /* §9 omits a hover surface; derived one step below bg-app so hover reads
-     as a state change without shifting the palette family. */
-  --bg-hover: #edf1f8;
+  --bg-hover: #f0f0f0;
 
-  --border-subtle: #e7eaf0;
-  --border-default: #d9dee8;
-  --border-strong: #c5cbd7;
+  --border-subtle: #e5e5e5;
+  --border-default: #d4d4d4;
+  --border-strong: #a3a3a3;
 
-  --text-primary: #172033;
-  --text-secondary: #566176;
-  --text-muted: #7b879b;
-  --text-disabled: #aab2c1;
+  --text-primary: #0a0a0a;
+  --text-secondary: #525252;
+  --text-muted: #737373;
+  --text-disabled: #a3a3a3;
 
-  /* Coral reads as ink on the light surfaces, so the light accent is the
-     darkened burnt-orange step rather than §8's coral. */
-  --accent: #c2410c;
-  --accent-hover: #a6350a;
-  /* §9: the channel triplet keeps the derived accent values (soft fill, the
-     §15 particle dots) in one place, so the next accent swap edits one line
-     per theme. */
-  --accent-rgb: 194, 65, 12;
+  /* Single neutral accent: the darkest ink, not a hue. */
+  --accent: #0a0a0a;
+  --accent-hover: #262626;
+  --accent-rgb: 10, 10, 10;
   --accent-soft: rgba(var(--accent-rgb), 0.14);
 
-  /* §9 lists no status or cyan inks. These keep §8's hues and darken them to
-     hold ~4.5:1 as text on the light surfaces (§55). */
-  --cyan: #0e7eb8;
-  --cyan-soft: rgba(14, 126, 184, 0.12);
-  --success: #15804f;
-  --success-soft: rgba(21, 128, 79, 0.12);
-  --warning: #96650a;
-  --warning-soft: rgba(150, 101, 10, 0.12);
-  --danger: #d93a52;
-  --danger-soft: rgba(217, 58, 82, 0.12);
-  --info: #2e6fd6;
-  --info-soft: rgba(46, 111, 214, 0.12);
+  --cyan: #525252;
+  --cyan-soft: rgba(82, 82, 82, 0.12);
+  --success: #15803d;
+  --success-soft: rgba(21, 128, 61, 0.12);
+  --warning: #b45309;
+  --warning-soft: rgba(180, 83, 9, 0.12);
+  --danger: #b91c1c;
+  --danger-soft: rgba(185, 28, 28, 0.12);
+  --info: #525252;
+  --info-soft: rgba(82, 82, 82, 0.12);
 
-  /* §13 gives dark-theme shadows only; the light counterparts keep the same
-     geometry with navy-tinted ink instead of black. */
-  --elevation-sm: 0 2px 8px rgba(23, 32, 51, 0.1);
-  --elevation-md: 0 8px 30px rgba(23, 32, 51, 0.14);
-  --elevation-lg: 0 18px 60px rgba(23, 32, 51, 0.2);
-
-  /* §14 glass treatment, dark-tinted border on light surfaces. */
-  --glass-bg: rgba(255, 255, 255, 0.82);
-  --glass-border: rgba(23, 32, 51, 0.07);
-  --glass-blur: 14px;
+  /* No shadows in Ultra Minimal — every elevation token is none, so every
+     `shadow-*` utility in the tree collapses to box-shadow: none from here. */
+  --elevation-sm: none;
+  --elevation-md: none;
+  --elevation-lg: none;
 
   /* shadcn/ui contract: components pasted from the generated set use
-     `rounded-[var(--radius)]`, so it stays and equals the §12 control radius. */
-  --radius: 8px;
+     `rounded-[var(--radius)]`. Ultra Minimal = square, so radius is 0;
+     only explicit `rounded-full` (dots, switch pill) stays round. */
+  --radius: 0px;
   --background: var(--bg-app);
   --foreground: var(--text-primary);
   --card: var(--bg-surface);
@@ -84,7 +68,7 @@
   --popover: var(--bg-elevated);
   --popover-foreground: var(--text-primary);
   --primary: var(--accent);
-  --primary-foreground: #ffffff;
+  --primary-foreground: #fafafa;
   --secondary: var(--bg-surface-2);
   --secondary-foreground: var(--text-primary);
   --muted: var(--bg-surface-2);
@@ -104,51 +88,43 @@
 }
 
 .dark {
-  /* ---- §8 Dark theme: graphite base, coral accent ----------------------
-     The ramp keeps the L* steps of the navy it replaces, so contrast between
-     layers is unchanged; the blue channel sits one step above red/green to
-     avoid a dead-grey cast. */
-  --bg-app: #0e0e0f;
-  --bg-sidebar: #0f0f10;
-  --bg-topbar: #111112;
-  --bg-surface: #141415;
-  --bg-surface-2: #1a1a1b;
+  /* ---- Dark theme: the same ramp inverted ----------------------------- */
+  --bg-app: #0a0a0a;
+  --bg-sidebar: #111111;
+  --bg-topbar: #111111;
+  --bg-surface: #111111;
+  --bg-surface-2: #1a1a1a;
   --bg-elevated: #1f1f20;
-  --bg-hover: #242425;
+  --bg-hover: #222222;
 
-  --border-subtle: #29292a;
-  --border-default: #373738;
-  --border-strong: #49494a;
+  --border-subtle: #262626;
+  --border-default: #333333;
+  --border-strong: #525252;
 
-  --text-primary: #f7f7f8;
-  --text-secondary: #b2b2b3;
-  --text-muted: #7c7c7d;
+  --text-primary: #fafafa;
+  --text-secondary: #d4d4d4;
+  --text-muted: #a3a3a3;
   --text-disabled: #515152;
 
-  --accent: #ff6b5a;
-  --accent-hover: #ff8a7a;
-  /* §8: coral as a channel triplet so --accent-soft and the §15 particle dots
-     all retint from one line. */
-  --accent-rgb: 255, 107, 90;
+  --accent: #fafafa;
+  --accent-hover: #d4d4d4;
+  --accent-rgb: 250, 250, 250;
   --accent-soft: rgba(var(--accent-rgb), 0.14);
 
-  --cyan: #39c6ff;
-  --cyan-soft: rgba(57, 198, 255, 0.12);
-  --success: #32d583;
-  --success-soft: rgba(50, 213, 131, 0.12);
-  --warning: #f5b942;
-  --warning-soft: rgba(245, 185, 66, 0.12);
-  --danger: #ff5d73;
-  --danger-soft: rgba(255, 93, 115, 0.12);
-  --info: #55a6ff;
-  --info-soft: rgba(85, 166, 255, 0.12);
+  --cyan: #a3a3a3;
+  --cyan-soft: rgba(163, 163, 163, 0.12);
+  --success: #4ade80;
+  --success-soft: rgba(74, 222, 128, 0.12);
+  --warning: #fbbf24;
+  --warning-soft: rgba(251, 191, 36, 0.12);
+  --danger: #f87171;
+  --danger-soft: rgba(248, 113, 113, 0.12);
+  --info: #a3a3a3;
+  --info-soft: rgba(163, 163, 163, 0.12);
 
-  --elevation-sm: 0 2px 8px rgba(0, 0, 0, 0.18);
-  --elevation-md: 0 8px 30px rgba(0, 0, 0, 0.24);
-  --elevation-lg: 0 18px 60px rgba(0, 0, 0, 0.35);
-
-  --glass-bg: rgba(20, 20, 21, 0.82);
-  --glass-border: rgba(255, 255, 255, 0.055);
+  --elevation-sm: none;
+  --elevation-md: none;
+  --elevation-lg: none;
 
   --background: var(--bg-app);
   --foreground: var(--text-primary);
@@ -157,7 +133,7 @@
   --popover: var(--bg-elevated);
   --popover-foreground: var(--text-primary);
   --primary: var(--accent);
-  --primary-foreground: #0e0e0f;
+  --primary-foreground: #0a0a0a;
   --secondary: var(--bg-surface-2);
   --secondary-foreground: var(--text-primary);
   --muted: var(--bg-surface-2);
@@ -165,7 +141,7 @@
   --accent-surface: var(--bg-hover);
   --accent-surface-foreground: var(--text-primary);
   --destructive: var(--danger);
-  --destructive-foreground: #0e0e0f;
+  --destructive-foreground: #0a0a0a;
   --border: var(--border-default);
   --input: var(--border-default);
   --ring: var(--accent);
@@ -190,8 +166,8 @@
   --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
-  /* shadcn's `--accent` is the hover surface; §8's `--accent` is the coral
-     brand colour and maps to `--primary`. Kept apart so neither name lies. */
+  /* shadcn's `--accent` is the hover surface; `--primary` is the ink accent.
+     Kept apart so neither name lies. */
   --color-accent: var(--accent-surface);
   --color-accent-foreground: var(--accent-surface-foreground);
   --color-destructive: var(--destructive);
@@ -208,7 +184,7 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
 
-  /* ---- Colour: DESIGN.md §8/§9 names, exposed as utilities -------------- */
+  /* ---- Colour: DESIGN.md names, exposed as utilities ------------------- */
   --color-app: var(--bg-app);
   --color-topbar: var(--bg-topbar);
   --color-surface: var(--bg-surface);
@@ -231,75 +207,67 @@
   --color-info: var(--info);
   --color-info-soft: var(--info-soft);
 
-  /* ---- §12 Border radius ----------------------------------------------
-     inputs/buttons 8px, cards 12px, dialogs 16px, command palette 14px,
-     pills 999px. */
-  --radius-xs: 4px;
-  --radius-sm: 6px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
-  --radius-xl: 16px;
-  --radius-2xl: 20px;
-  --radius-command: 14px;
+  /* ---- Border radius: square (preview authority); rounded-full is explicit -- */
+  --radius-xs: 0px;
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+  --radius-xl: 0px;
+  --radius-2xl: 0px;
+  --radius-command: 0px;
 
-  /* ---- §13 Shadows ------------------------------------------------------ */
-  --shadow-sm: var(--elevation-sm);
-  --shadow-md: var(--elevation-md);
-  --shadow-lg: var(--elevation-lg);
+  /* ---- Shadows: flat. Every step none, including Tailwind's own steps,
+     so shadow-xs … shadow-2xl all collapse to box-shadow: none. ---------- */
+  --shadow-xs: none;
+  --shadow-sm: none;
+  --shadow-md: none;
+  --shadow-lg: none;
+  --shadow-xl: none;
+  --shadow-2xl: none;
 
-  /* ---- §10 Typography — Vercel minimal (Geist, tight tracking) -----------
-     Offline-first: Geist when installed, Inter fallback, system stack.
-     Minimal: smaller h1/h2, tight -0.02em, weight 600 — clean, not loud. */
+  /* ---- Typography — bigger, looser --------------------------------------
+     Offline-first: Geist when installed, Inter fallback, system stack. */
   --font-sans: "Geist Sans", "Geist", Inter, ui-sans-serif, system-ui, -apple-system,
     BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: "Geist Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
 
   --text-xs: 12px;
   --text-xs--line-height: 16px;
-  --text-sm: 13px;
-  --text-sm--line-height: 18px;
+  --text-sm: 14px;
+  --text-sm--line-height: 22px;
   --text-caption: 11px;
   --text-caption--line-height: 14px;
   --text-caption--font-weight: 500;
-  --text-h3: 14px;
-  --text-h3--line-height: 18px;
+  --text-h3: 16px;
+  --text-h3--line-height: 24px;
   --text-h3--font-weight: 600;
-  --text-h3--letter-spacing: -0.01em;
+  --text-h3--letter-spacing: -0.005em;
   --text-nav: 14px;
-  --text-nav--line-height: 18px;
-  --text-h2: 16px;
-  --text-h2--line-height: 22px;
+  --text-nav--line-height: 22px;
+  --text-h2: 20px;
+  --text-h2--line-height: 28px;
   --text-h2--font-weight: 600;
-  --text-h2--letter-spacing: -0.015em;
-  --text-h1: 22px;
-  --text-h1--line-height: 28px;
+  --text-h2--letter-spacing: -0.01em;
+  --text-h1: 26px;
+  --text-h1--line-height: 34px;
   --text-h1--font-weight: 600;
-  --text-h1--letter-spacing: -0.02em;
-  --text-display: 28px;
-  --text-display--line-height: 34px;
+  --text-h1--letter-spacing: -0.01em;
+  --text-display: 32px;
+  --text-display--line-height: 40px;
   --text-display--font-weight: 600;
-  --text-display--letter-spacing: -0.02em;
+  --text-display--letter-spacing: -0.01em;
   --text-code: 12px;
   --text-code--line-height: 17px;
 
-  /* ---- §11 Spacing: 4px base grid (§73 names the steps used in practice) */
+  /* ---- Spacing: 4px base grid ------------------------------------------ */
   --spacing: 4px;
 
-  /* ---- §52 Motion ------------------------------------------------------- */
+  /* ---- Motion: colour/border transitions only --------------------------- */
   --ease-standard: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-exit: cubic-bezier(0.4, 0, 1, 1);
 }
 
-@keyframes ambient-drift {
-  from {
-    transform: translate3d(0, 0, 0);
-  }
-  to {
-    transform: translate3d(0, -10px, 0);
-  }
-}
-
-/* §51 toast entrance: 8px up into place, nothing more. */
+/* Toast entrance: 8px up into place, nothing more. */
 @keyframes toast-in {
   from {
     opacity: 0;
@@ -311,17 +279,7 @@
   }
 }
 
-/* §31 drawer entrance: up from the bottom edge, one pass, no loop. */
-@keyframes drawer-in {
-  from {
-    transform: translateY(12px);
-  }
-  to {
-    transform: translateY(0);
-  }
-}
-
-/* Dialog entrance: slight scale + fade, cinematic without being slow. */
+/* Dialog entrance: slight scale + fade, one pass. */
 @keyframes dialog-in {
   from {
     opacity: 0;
@@ -333,7 +291,7 @@
   }
 }
 
-/* Skeleton shimmer: a gradient slide that feels alive, not just pulsing. */
+/* Skeleton shimmer: a gradient slide that reads as loading, not a pulse. */
 @keyframes shimmer {
   from {
     background-position: -200% 0;
@@ -343,24 +301,10 @@
   }
 }
 
-/* Status dot pulse: gentle opacity cycle for running indicators. */
-@keyframes status-pulse {
-  0%, 100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.55;
-  }
-}
-
-/* Subtle glow: box-shadow ring pulse for active service dots. */
-@keyframes subtle-glow {
-  0%, 100% {
-    box-shadow: 0 0 0 0 var(--glow-color, rgba(50, 213, 131, 0.35));
-  }
-  50% {
-    box-shadow: 0 0 0 3px var(--glow-color, rgba(50, 213, 131, 0.12));
-  }
+/* Shell rail: collapsed to zero while no page has portaled content into it
+   (sites list is the only occupant today), so the grid's auto column is 0. */
+#shell-rail:empty {
+  display: none;
 }
 
 @layer base {
@@ -389,8 +333,8 @@
     user-select: text;
   }
 
-  /* §55: focus is always visible — 2px accent, 2px offset. Utilities can
-     still override this, but nothing silently removes it. */
+  /* Focus is always visible — 2px ink, 2px offset. Utilities can still
+     override this, but nothing silently removes it. */
   :focus-visible {
     outline: 2px solid var(--ring);
     outline-offset: 2px;
@@ -414,13 +358,13 @@
     @apply bg-muted-foreground/40;
   }
 
-  /* Branded text selection for a cohesive premium feel. */
+  /* Selection is ink on paper: solid, monochrome, unmistakable. */
   ::selection {
-    background: var(--accent-soft);
-    color: var(--text-primary);
+    background: var(--text-primary);
+    color: var(--bg-app);
   }
 
-  /* §15/§52: every animation has a reduced-motion fallback. */
+  /* Every animation has a reduced-motion fallback. */
   @media (prefers-reduced-motion: reduce) {
     *,
     *::before,
@@ -441,65 +385,15 @@
     letter-spacing: -0.01em;
   }
 
-  /* §51: toast in. Reduced motion collapses it to nothing via the base rule. */
   .toast-enter {
     animation: toast-in 160ms var(--ease-standard);
   }
 
-  /* §51/§31: the terminal drawer rises into place once. Reduced motion
-     collapses it the same way the toast is collapsed. */
-  .drawer-enter {
-    animation: drawer-in 180ms var(--ease-standard);
-  }
-
-  /* §14: glass is an accent layer for chrome and floating surfaces.
-     Regular cards stay real, opaque surfaces. */
-  .glass-surface {
-    background: var(--glass-bg);
-    border: 1px solid var(--glass-border);
-    backdrop-filter: blur(var(--glass-blur));
-  }
-
-  /* §15 particle field: sparse 1px dots, no animation of their own — the
-     wrapper drifts, and reduced motion removes the layer entirely. The two
-     accent dots take the same channel triplet as the primary accent; the ink
-     and cyan dots stay literal because those tokens do not move between
-     themes. */
-  .ambient-particles {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 2px;
-    height: 2px;
-    border-radius: 999px;
-    background: transparent;
-    box-shadow:
-      8vw 14vh 0 rgba(168, 179, 197, 0.28),
-      19vw 62vh 0 rgba(168, 179, 197, 0.22),
-      27vw 31vh 0 rgba(57, 198, 255, 0.18),
-      35vw 84vh 0 rgba(168, 179, 197, 0.26),
-      44vw 9vh 0 rgba(var(--accent-rgb), 0.24),
-      52vw 47vh 0 rgba(168, 179, 197, 0.2),
-      61vw 76vh 0 rgba(168, 179, 197, 0.24),
-      69vw 22vh 0 rgba(57, 198, 255, 0.16),
-      77vw 58vh 0 rgba(168, 179, 197, 0.22),
-      86vw 12vh 0 rgba(var(--accent-rgb), 0.2),
-      93vw 41vh 0 rgba(168, 179, 197, 0.24),
-      13vw 91vh 0 rgba(168, 179, 197, 0.2),
-      58vw 33vh 0 rgba(168, 179, 197, 0.18);
-  }
-
-  /* Dial 1 — no endless drift. Keep particles static. */
-  .ambient-drift {
-    animation: none;
-  }
-
-  /* Dialog entrance animation. */
   .dialog-enter {
     animation: dialog-in 180ms var(--ease-standard);
   }
 
-  /* Shimmer skeleton: replaces animate-pulse with a sliding gradient. */
+  /* Shimmer skeleton: loading affordance, kept (functional, not decor). */
   .shimmer-skeleton {
     background: linear-gradient(
       90deg,
@@ -511,58 +405,10 @@
     animation: shimmer 1.8s linear infinite;
   }
 
-  /* Glass card: the §14 treatment on a card surface for elevated UI. */
-  .glass-card {
-    background: var(--glass-bg);
-    border: 1px solid var(--glass-border);
-    backdrop-filter: blur(var(--glass-blur));
-    @apply rounded-lg shadow-sm;
-  }
-
-  /* Gradient border: a top accent line that fades away. */
-  .gradient-border-top {
-    position: relative;
-  }
-  .gradient-border-top::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 2px;
-    background: linear-gradient(90deg, var(--accent), transparent 80%);
-    border-radius: inherit;
-    pointer-events: none;
-  }
-
-  /* Press effect: tactile button/control feedback. */
-  .press-effect {
-    transition: transform 100ms;
-  }
-  .press-effect:active:not(:disabled) {
-    transform: scale(0.97);
-  }
-
-  /* Dial 1 (hover only) — no endless pulse. Dot is solid for real running state only. */
-  .status-ring-pulse,
-  .status-dot-pulse {
-    animation: none;
-  }
-
   @media (prefers-reduced-motion: reduce) {
-    .ambient-drift {
-      animation: none;
-    }
-
-    /* §15: particles are disabled outright, not merely slowed. */
-    .ambient-particles {
-      display: none;
-    }
-
     .dialog-enter,
-    .shimmer-skeleton,
-    .status-ring-pulse,
-    .status-dot-pulse {
+    .toast-enter,
+    .shimmer-skeleton {
       animation: none;
     }
   }

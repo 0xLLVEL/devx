@@ -96,7 +96,7 @@ export function TrayPopup() {
           <div className="space-y-1.5 p-1" role="status">
             <span className="sr-only">Loading sites…</span>
             {[0, 1].map((row) => (
-              <span key={row} aria-hidden className="block h-11 animate-pulse rounded-md bg-secondary" />
+              <span key={row} aria-hidden className="block h-11 shimmer-skeleton rounded-md" />
             ))}
           </div>
         ) : sites.isError ? (

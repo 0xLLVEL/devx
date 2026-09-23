@@ -1,0 +1,995 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DevX — Mockup Ultra Minimal v2 (bukan bagian app)</title>
+<style>
+  :root {
+    --bg: #fafafa; --surface: #ffffff; --surface-2: #f5f5f5; --hover: #f0f0f0;
+    --border: #e5e5e5; --border-strong: #a3a3a3;
+    --ink: #0a0a0a; --muted: #525252; --faint: #737373;
+    --success: #15803d; --warning: #b45309; --danger: #b91c1c;
+  }
+  body.dark {
+    --bg: #0a0a0a; --surface: #111111; --surface-2: #1a1a1a; --hover: #222222;
+    --border: #262626; --border-strong: #525252;
+    --ink: #fafafa; --muted: #d4d4d4; --faint: #a3a3a3;
+    --success: #4ade80; --warning: #fbbf24; --danger: #f87171;
+  }
+  * { box-sizing: border-box; }
+  ::selection { background: var(--ink); color: var(--bg); }
+  button:focus-visible, a:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+  .mono, .meter, .card .v, .statusbox { font-variant-numeric: tabular-nums; }
+  table.grid tbody tr:hover td { background: var(--hover); }
+  ul.tight li:hover { background: var(--hover); }
+  ul.tight li { padding-left: 8px; padding-right: 8px; margin-left: -8px; margin-right: -8px; }
+  .sidelist .item:hover { background: var(--hover); }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  kbd { font-family: monospace; font-size: 11px; border: 1px solid var(--border-strong); padding: 1px 6px; color: var(--faint); }
+  .tabs span:hover { color: var(--ink); cursor: pointer; }
+  .sidelist .item { cursor: pointer; }
+  ul.tight li { flex-wrap: wrap; }
+  .filterrow .in:hover { border-color: var(--ink); cursor: pointer; }
+  .logline { padding: 2px 8px; margin: 0 -8px; }
+  .logline:hover { background: var(--hover); }
+  .catgrid { display: grid; grid-template-columns: 260px minmax(0,1fr); gap: 24px; align-items: start; margin-top: 24px; }
+  .catnav { border: 1px solid var(--border); background: var(--surface); padding: 12px; }
+  .catnav .grp { font-size: 12px; color: var(--faint); text-transform: uppercase; letter-spacing: 0.08em; padding: 12px 10px 6px; }
+  .catnav .grp:first-child { padding-top: 4px; }
+  .catnav button { display: flex; width: 100%; align-items: center; gap: 8px; padding: 9px 10px; background: none; border: 0; border-left: 2px solid transparent; font: inherit; font-size: 14px; color: var(--ink); cursor: pointer; text-align: left; }
+  .catnav button:hover { background: var(--hover); }
+  .catnav button.on { background: var(--surface-2); border-left-color: var(--ink); font-weight: 600; }
+  .catnav .n { margin-left: auto; font-family: monospace; font-size: 12px; color: var(--faint); }
+  .catnav .n.has { color: var(--success); font-weight: 600; }
+  .warnmark { color: var(--warning); font-weight: 700; }
+  .catchips { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  tr.hi td { background: var(--surface-2); }
+  tr.hi td:first-child { box-shadow: inset 2px 0 0 var(--ink); }
+  .prog { height: 6px; background: var(--surface-2); margin-top: 8px; }
+  .prog i { display: block; height: 100%; background: var(--ink); }
+  .cellbtn { text-align: right; white-space: nowrap; }
+  .verify { color: var(--success); font-size: 12px; white-space: nowrap; }
+  tr.bad td { background: var(--surface-2); }
+  tr.bad td:first-child { box-shadow: inset 2px 0 0 var(--danger); }
+  tr.open td { background: var(--surface-2); }
+  tr.open td:first-child { box-shadow: inset 2px 0 0 var(--ink); }
+  .kvhead { font-size: 12px; color: var(--faint); text-transform: uppercase; letter-spacing: 0.08em; margin: 20px 0 8px; }
+  .kvhead:first-child { margin-top: 0; }
+  .tabcount { font-family: monospace; font-size: 12px; color: var(--faint); margin-left: 6px; }
+  .card.bad { box-shadow: inset 2px 0 0 var(--danger); }
+  .seg { display: flex; gap: 3px; }
+  .seg i { width: 16px; height: 10px; border: 1px solid var(--border-strong); }
+  .seg i.on { background: var(--ink); border-color: var(--ink); }
+  .consumer { display: flex; align-items: baseline; gap: 8px; font-size: 13px; }
+  .route { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  .hop { border: 1px solid var(--border-strong); padding: 6px 12px; font-family: monospace; font-size: 12px; }
+  .hop.you { border-color: var(--ink); background: var(--surface-2); font-weight: 600; }
+  .hop small { display: block; font-family: "Inter", system-ui, sans-serif; font-size: 10px; color: var(--faint); font-weight: 400; }
+  .rarrow { color: var(--faint); }
+  .method { font-weight: 700; font-size: 11px; border: 1px solid var(--border-strong); padding: 1px 6px; }
+  .livechip { font-size: 12px; border: 1px solid var(--success); color: var(--success); padding: 3px 10px; white-space: nowrap; }
+  .lvlchips { display: flex; gap: 8px; flex-wrap: wrap; }
+  .lvl { font-size: 12px; border: 1px solid var(--border-strong); padding: 4px 10px; cursor: pointer; white-space: nowrap; }
+  .lvl:hover { background: var(--hover); }
+  .lvl.on { border-color: var(--ink); background: var(--surface-2); font-weight: 600; }
+  .lvl .n { font-family: monospace; color: var(--faint); margin-left: 6px; }
+  .lvl.err .n { color: var(--danger); }
+  .lvl.warnl .n { color: var(--warning); }
+  .logline.err { background: var(--surface-2); box-shadow: inset 2px 0 0 var(--danger); }
+  .logline.warnl { box-shadow: inset 2px 0 0 var(--warning); }
+  mark { background: var(--ink); color: var(--bg); padding: 0 2px; }
+  .switch { width: 34px; height: 18px; border: 1px solid var(--border-strong); border-radius: 99px; position: relative; display: inline-block; vertical-align: middle; }
+  .switch::after { content: ""; position: absolute; top: 2px; left: 18px; width: 12px; height: 12px; border-radius: 99px; background: var(--success); }
+  .unreaddot { width: 8px; height: 8px; border-radius: 99px; background: var(--ink); flex-shrink: 0; }
+  .mailbody { font-family: monospace; font-size: 12px; border: 1px solid var(--border); background: var(--surface-2); padding: 16px; white-space: pre-wrap; margin: 16px 0 0; }
+  .del { border: 0; background: none; color: var(--faint); font-size: 14px; cursor: pointer; padding: 2px 6px; margin-left: auto; }
+  .del:hover { color: var(--danger); }
+  ul.tight li.msel { background: var(--surface-2); box-shadow: inset 2px 0 0 var(--ink); padding-left: 12px; }
+  .kv2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .conn { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .conngroup { display: flex; flex-direction: column; gap: 8px; }
+  .clabel { font-size: 12px; color: var(--faint); }
+  .connrow { display: flex; gap: 8px; align-items: center; }
+  .att { margin-top: 12px; }
+  .fineprint { font-size: 12px; color: var(--muted); margin: 12px 0 0; }
+  .tightbtn { margin-top: 12px; }
+  .cols2 > .panel { margin-bottom: 0; }
+  .filterrow .in { flex: 1; }
+  .connchip { font-family: monospace; font-size: 13px; border: 1px solid var(--border-strong); padding: 8px 14px; background: var(--surface); }
+  body { margin: 0; font-family: "Inter", system-ui, sans-serif; background: var(--bg); color: var(--ink); font-size: 14px; line-height: 1.6; }
+  .bar { max-width: 1280px; margin: 16px auto; padding: 0 32px; display: flex; gap: 12px; align-items: center; }
+  .bar h1 { font-size: 20px; margin: 0; }
+  .bar p { margin: 0; color: var(--faint); font-size: 13px; }
+  button.theme { margin-left: auto; font: inherit; font-size: 13px; padding: 8px 16px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--ink); cursor: pointer; }
+  .page-label { max-width: 1280px; margin: 32px auto 16px; padding: 0 32px; font-size: 14px; font-weight: 600; }
+  .app {
+    max-width: 1280px; min-width: 1000px; margin: 0 auto 40px;
+    border: 1px solid var(--border); background: var(--surface); display: grid;
+    grid-template-columns: 220px 1fr; grid-template-rows: 72px 1fr;
+    grid-template-areas: "side top" "side main"; min-height: 720px;
+  }
+  .side { grid-area: side; border-right: 1px solid var(--border); padding: 16px 12px; display: flex; flex-direction: column; gap: 2px; }
+  .side .sec { font-size: 12px; color: var(--faint); text-transform: uppercase; letter-spacing: 0.08em; padding: 16px 12px 8px; }
+  .side a { display: flex; align-items: center; gap: 10px; padding: 10px 12px; color: var(--ink); text-decoration: none; font-size: 14px; border-left: 2px solid transparent; }
+  .side a:hover { background: var(--hover); }
+  .side a.active { border-left-color: var(--ink); background: var(--surface-2); font-weight: 600; }
+  .side .count { margin-left: auto; font-size: 12px; color: var(--faint); font-family: monospace; }
+  .ic { width: 14px; height: 14px; flex-shrink: 0; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .top { grid-area: top; display: flex; align-items: center; gap: 16px; padding: 0 32px; border-bottom: 1px solid var(--border); }
+  .brand { display: flex; align-items: center; gap: 10px; font-family: monospace; font-weight: 600; font-size: 15px; }
+  .search { margin-left: auto; border: 1px solid var(--border-strong); padding: 10px 16px; font-size: 13px; color: var(--faint); min-width: 160px; }
+  .brand .ver { font-weight: 400; font-size: 11px; color: var(--muted); }
+  .crumbs { font-size: 13px; color: var(--muted); white-space: nowrap; border-left: 1px solid var(--border); padding-left: 16px; }
+  .crumbs b { color: var(--ink); font-weight: 600; }
+  .crumbs span { margin: 0 6px; color: var(--faint); }
+  .statusvoice { font-size: 12px; color: var(--muted); white-space: nowrap; display: flex; gap: 6px; align-items: center; }
+  .topactions { display: flex; gap: 4px; align-items: center; }
+  .ticon { position: relative; display: inline-flex; padding: 6px; border: 1px solid transparent; cursor: pointer; color: var(--muted); }
+  .ticon:hover { color: var(--ink); border-color: var(--border-strong); }
+  .ticon .ic { width: 16px; height: 16px; }
+  .tbadge { position: absolute; top: 0; right: 0; min-width: 14px; height: 14px; background: var(--danger); color: #fff; font-size: 9px; font-style: normal; display: flex; align-items: center; justify-content: center; border-radius: 99px; padding: 0 3px; }
+  .main { grid-area: main; padding: 32px; background: var(--bg); min-width: 0; }
+  .eyebrow { font-size: 13px; color: var(--faint); text-transform: uppercase; letter-spacing: 0.08em; margin: 0 0 8px; }
+  h2.title { font-size: 26px; margin: 0; letter-spacing: -0.01em; font-weight: 600; }
+  .subtitle { color: var(--muted); font-size: 14px; margin: 8px 0 0; }
+  .headrow { display: flex; align-items: flex-start; gap: 24px; margin-bottom: 24px; }
+  .headrow .spacer { flex: 1; }
+  .statusbox { border: 1px solid var(--border); background: var(--surface); padding: 12px 16px; text-align: right; font-size: 13px; }
+  .statusbox .lbl { font-weight: 600; display: flex; gap: 8px; align-items: center; justify-content: flex-end; }
+  .statusbox .sub { color: var(--faint); font-size: 12px; }
+  .statusbox .prob { color: var(--warning); font-size: 12px; }
+  .btn { font-size: 13px; padding: 8px 16px; border: 1px solid var(--ink); background: var(--ink); color: var(--bg); cursor: pointer; white-space: nowrap; }
+  .btn:active { opacity: 0.8; }
+  .btn.ghost { background: transparent; color: var(--ink); border-color: var(--border-strong); }
+  .btn.ghost:hover { background: var(--hover); }
+  .btnrow { display: flex; gap: 12px; }
+  .grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; margin-bottom: 24px; }
+  .card { border: 1px solid var(--border); background: var(--surface); padding: 24px; text-decoration: none; color: var(--ink); display: block; }
+  a.card:hover { border-color: var(--border-strong); }
+  .card .k { font-size: 13px; color: var(--faint); margin-bottom: 8px; }
+  .card .v { font-size: 32px; letter-spacing: -0.02em; font-weight: 600; line-height: 1.2; }
+  .card .s { font-size: 13px; color: var(--muted); margin-top: 8px; }
+  .card .s.ok { color: var(--success); }
+  .card .s.warn { color: var(--warning); }
+  .panel { border: 1px solid var(--border); background: var(--surface); padding: 24px; margin-bottom: 24px; min-width: 0; }
+  .panel h3 { font-size: 20px; margin: 0 0 16px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .panel h3 .more { margin-left: auto; font-size: 13px; font-weight: 400; color: var(--muted); }
+  table.grid { width: 100%; border-collapse: collapse; font-size: 14px; }
+  table.grid th { text-align: left; font-size: 12px; color: var(--faint); font-weight: 400; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  table.grid td { padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  table.grid tr:last-child td { border-bottom: 0; }
+  .mono { font-family: monospace; font-size: 13px; }
+  .muted { color: var(--muted); }
+  .dot { width: 8px; height: 8px; border-radius: 99px; background: var(--success); flex-shrink: 0; display: inline-block; }
+  .dot.warn { background: var(--warning); }
+  .dot.bad { background: var(--danger); }
+  .dot.off { background: var(--border-strong); }
+  .badge { font-size: 12px; border: 1px solid var(--border-strong); padding: 4px 12px; white-space: nowrap; }
+  .badge.ok { color: var(--success); border-color: var(--success); }
+  .badge.warn { color: var(--warning); border-color: var(--warning); }
+  .badge.bad { color: var(--danger); border-color: var(--danger); }
+  .meter { display: inline-block; width: 64px; height: 6px; background: var(--surface-2); vertical-align: middle; }
+  .meter i { display: block; height: 100%; background: var(--muted); }
+  .callout { border: 1px solid var(--border-strong); border-left: 2px solid var(--danger); padding: 16px 24px; margin-bottom: 24px; font-size: 14px; display: flex; gap: 12px; align-items: center; background: var(--surface); }
+  .callout.warn { border-left-color: var(--warning); }
+  .cols2 { display: grid; grid-template-columns: minmax(0,1fr) 320px; gap: 24px; align-items: start; }
+  ul.tight { list-style: none; margin: 0; padding: 0; }
+  ul.tight li { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--border); font-size: 14px; }
+  ul.tight li:first-child { border-top: 0; }
+  .feed { font-size: 13px; }
+  .feed .t { color: var(--faint); font-family: monospace; font-size: 12px; }
+  .kv { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px 24px; font-size: 13px; }
+  .kv dt { color: var(--faint); font-size: 12px; margin-bottom: 2px; }
+  .kv dd { margin: 0; }
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
+  .tabs span { padding: 8px 12px; font-size: 14px; color: var(--muted); }
+  .tabs span.on { color: var(--ink); font-weight: 600; border-bottom: 2px solid var(--ink); margin-bottom: -1px; }
+  .filterrow { display: flex; gap: 12px; margin-bottom: 16px; }
+  .filterrow .in { border: 1px solid var(--border-strong); padding: 8px 12px; font-size: 13px; color: var(--faint); }
+  .sidelist { border: 1px solid var(--border); background: var(--surface); }
+  .sidelist .item { padding: 14px 16px; border-bottom: 1px solid var(--border); }
+  .sidelist .item:last-child { border-bottom: 0; }
+  .sidelist .item.sel { background: var(--surface-2); border-left: 2px solid var(--ink); }
+  .strip { border: 1px solid var(--border); background: var(--surface); padding: 12px 16px; font-size: 12px; color: var(--muted); margin-top: 16px; display: flex; gap: 16px; align-items: center; }
+  footer.note { max-width: 1280px; margin: 0 auto 40px; padding: 0 32px; font-size: 13px; color: var(--faint); }
+  code.mono { font-family: monospace; }
+</style>
+</head>
+<body class="dark">
+<svg width="0" height="0" style="position:absolute" aria-hidden>
+  <defs>
+    <symbol id="i-dash" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></symbol>
+    <symbol id="i-box" viewBox="0 0 24 24"><path d="M21 8l-9-5-9 5v8l9 5 9-5z"/><path d="M3 8l9 5 9-5"/><path d="M12 13v8"/></symbol>
+    <symbol id="i-svc" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="7" rx="1"/><rect x="2" y="14" width="20" height="7" rx="1"/><path d="M6 6.5h.01M6 17.5h.01"/></symbol>
+    <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c3 3.5 3 14 0 18"/><path d="M12 3c-3 3.5-3 14 0 18"/></symbol>
+    <symbol id="i-db" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></symbol>
+    <symbol id="i-log" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 13h6M9 17h6"/></symbol>
+    <symbol id="i-share" viewBox="0 0 24 24"><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M8.2 10.8l7.6-3.6M8.2 13.2l7.6 3.6"/></symbol>
+    <symbol id="i-mail" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="1"/><path d="M2 7l10 6 10-6"/></symbol>
+    <symbol id="i-diag" viewBox="0 0 24 24"><path d="M22 12h-4l-3 8-6-16-3 8H2"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"/></symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></symbol>
+  </defs>
+</svg>
+<div class="bar">
+  <div>
+    <h1>Mockup Ultra Minimal v2 — padat seperti sekarang</h1>
+    <p>Statis, bukan bagian app. Semua angka contoh; di implementasi nyata dari query backend yang sudah ada.</p>
+  </div>
+  <button class="theme" id="themeToggle" type="button">Ganti tema</button>
+</div>
+
+<!-- ============ FRAME 1: Dashboard v2 ============ -->
+<div class="page-label">Frame 1 — Dashboard v2: kartu keputusan + pool berkolom + aktivitas berlabel</div>
+<div class="app">
+  <div class="side">
+    <div class="sec">Environment</div>
+    <a href="#" class="active">Dashboard</a>
+    <a href="#">Components <span class="count">9</span></a>
+    <a href="#">Services <span class="count">8</span></a>
+    <a href="#">Sites <span class="count">2</span></a>
+    <a href="#">Databases <span class="count">2</span></a>
+    <div class="sec">Workspace</div>
+    <a href="#">Logs</a><a href="#">Share</a><a href="#">Mail</a>
+    <div class="sec">System</div>
+    <a href="#">Diagnostics</a><a href="#">Settings</a>
+  </div>
+  <div class="top">
+    <div class="brand"><span class="dot warn"></span>DEVX <span class="ver">v0.2.0</span></div>
+    <div class="crumbs" data-crumbs></div>
+    <div class="statusvoice"><span class="dot warn"></span>Needs attention · 1 failed</div>
+    <div class="search">Search anything...&nbsp;&nbsp;&nbsp;<kbd>Ctrl K</kbd></div>
+    <div class="topactions">
+      <span class="ticon" title="Notifications"><svg class="ic" aria-hidden><use href="#i-bell"/></svg><i class="tbadge">1</i></span>
+      <span class="ticon" title="Theme"><svg class="ic" aria-hidden><use href="#i-moon"/></svg></span>
+      <span class="ticon" title="Settings"><svg class="ic" aria-hidden><use href="#i-gear"/></svg></span>
+    </div>
+  </div>
+  <div class="main">
+    <div class="headrow">
+      <div>
+        <p class="eyebrow">Good afternoon, Developer</p>
+        <h2 class="title">1 service failed.</h2>
+        <p class="subtitle">2 sites served locally · 14% across 7 running services · 412 MB resident</p>
+      </div>
+      <div class="spacer"></div>
+      <div class="statusbox">
+        <div class="lbl"><span class="dot warn"></span>Needs attention</div>
+        <div class="sub">4 runtimes · 8 servers · 2 sites</div>
+        <div class="prob">1 failed</div>
+      </div>
+      <div class="btnrow"><button class="btn">Start all</button><button class="btn ghost">Stop all</button></div>
+    </div>
+
+    <div class="callout"><span class="dot bad"></span><span><b>php84</b> is failing. Check its log on the Services page and restart it.</span><span style="margin-left:auto"><button class="btn ghost">Open Services</button></span></div>
+
+    <div class="grid4">
+      <a class="card" href="#"><div class="k">Runtimes</div><div class="v">4</div><div class="s">PHP · Node · Composer · Go installed</div></a>
+      <a class="card bad" href="#"><div class="k">Servers</div><div class="v">7/8</div><div class="s warn">php84 failed — the rest running</div></a>
+      <a class="card" href="#"><div class="k">Sites</div><div class="v">2</div><div class="s">2 over HTTPS · 200 OK</div></a>
+      <a class="card" href="#"><div class="k">Databases</div><div class="v">2</div><div class="s ok">All reachable</div></a>
+    </div>
+
+    <div class="cols2">
+      <div>
+        <div class="panel">
+          <h3>PHP pools <span class="more">3/4 healthy</span></h3>
+          <table class="grid">
+            <tr><th>Pool</th><th>State</th><th>Workers</th><th>Endpoint</th><th style="text-align:right">CPU</th></tr>
+            <tr class="hi"><td class="mono"><b>8.5.10</b></td><td><span class="badge ok">Running</span></td><td class="mono">4</td><td class="mono muted">127.0.0.1:9100</td><td style="text-align:right"><span class="mono">62%</span> <span class="meter"><i style="width:62%"></i></span></td></tr>
+            <tr class="bad"><td class="mono"><b>8.4.25</b></td><td><span class="badge bad">Failed</span></td><td class="mono muted">4</td><td class="mono muted">127.0.0.1:9101</td><td class="muted" style="text-align:right">—</td></tr>
+            <tr><td class="mono"><b>8.3.19</b></td><td><span class="badge ok">Running</span></td><td class="mono">2</td><td class="mono muted">127.0.0.1:9102</td><td style="text-align:right"><span class="mono">18%</span> <span class="meter"><i style="width:18%"></i></span></td></tr>
+          </table>
+        </div>
+        <div class="panel">
+          <h3>Supervised services <span class="more">Manage</span></h3>
+          <table class="grid">
+            <tr><th>Service</th><th>State</th><th>CPU</th><th style="text-align:right">Memory</th></tr>
+            <tr class="bad"><td class="mono"><b>php84</b></td><td><span class="badge bad">Failed</span></td><td class="muted">—</td><td class="muted" style="text-align:right">—</td></tr>
+            <tr><td class="mono">apache</td><td><span class="badge ok">Running</span></td><td><span class="mono">2%</span> <span class="meter"><i style="width:2%"></i></span></td><td class="mono" style="text-align:right">84 MB</td></tr>
+            <tr><td class="mono">mariadb</td><td><span class="badge ok">Running</span></td><td><span class="mono">1%</span> <span class="meter"><i style="width:1%"></i></span></td><td class="mono" style="text-align:right">112 MB</td></tr>
+            <tr><td class="mono">mailpit</td><td><span class="badge ok">Running</span></td><td><span class="mono">0%</span> <span class="meter"><i style="width:1%"></i></span></td><td class="mono" style="text-align:right">18 MB</td></tr>
+            <tr><td class="mono">nginx</td><td><span class="badge">Stopped</span></td><td class="muted">—</td><td class="muted" style="text-align:right">—</td></tr>
+          </table>
+        </div>
+        <div class="panel">
+          <h3>Sites <span class="more">Manage</span></h3>
+          <ul class="tight">
+            <li><span class="dot"></span><span class="mono">app.test</span><span class="muted" style="margin-left:auto;font-size:13px">PHP 8.5.10 · <span style="color:var(--success)">HTTPS</span> · 200 · 12ms</span></li>
+            <li><span class="dot"></span><span class="mono">mtdb.test</span><span class="muted" style="margin-left:auto;font-size:13px">PHP 8.5.10 · <span style="color:var(--success)">HTTPS</span> · 200 · 9ms</span></li>
+          </ul>
+        </div>
+        <div class="panel">
+          <h3>Databases <span class="more">Manage</span></h3>
+          <ul class="tight">
+            <li><span class="dot"></span><span>MariaDB</span><span class="mono muted">127.0.0.1:3306</span><span class="muted" style="margin-left:auto;font-size:13px">reachable</span></li>
+            <li><span class="dot"></span><span>Redis</span><span class="mono muted">127.0.0.1:6379</span><span class="muted" style="margin-left:auto;font-size:13px">reachable</span></li>
+          </ul>
+        </div>
+      </div>
+      <div>
+        <div class="panel">
+          <h3>Quick actions</h3>
+          <ul class="tight">
+            <li><span>Add a runtime<br><small class="muted">Install PHP, Node, Bun or Go</small></span><kbd>Alt 2</kbd></li>
+            <li><span>Add a site<br><small class="muted">Serve a folder locally</small></span><kbd>Alt 4</kbd></li>
+            <li><span>Open Logs<br><small class="muted">What DevX and services wrote</small></span></li>
+          </ul>
+        </div>
+        <div class="panel">
+          <h3>Recent activity <span class="more">service events</span></h3>
+          <ul class="tight feed">
+            <li><span class="dot bad"></span><span class="t">12:04</span><span>php84 failed — exit 1</span></li>
+            <li><span class="dot"></span><span class="t">11:58</span><span>apache restarted</span></li>
+            <li><span class="dot"></span><span class="t">11:42</span><span>mariadb started</span></li>
+            <li><span class="dot off"></span><span class="t">09:15</span><span>nginx stopped — not needed</span></li>
+          </ul>
+        </div>
+        <div class="panel">
+          <h3>Resources <span class="more">23 processes</span></h3>
+          <ul class="tight mono">
+            <li><span class="muted">CPU (supervised)</span><span class="meter"><i style="width:14%"></i></span><span style="margin-left:auto">14%</span></li>
+            <li><span class="muted">Memory resident</span><span class="meter"><i style="width:26%"></i></span><span style="margin-left:auto">412 MB</span></li>
+            <li><span class="muted">Disk (managed)</span><span class="meter"><i style="width:31%"></i></span><span style="margin-left:auto">3.1 GB</span></li>
+          </ul>
+          <div class="kvhead">Top consumers</div>
+          <ul class="tight mono">
+            <li class="consumer"><span>mariadb</span><span class="muted" style="margin-left:auto">112 MB · 1%</span></li>
+            <li class="consumer"><span>apache</span><span class="muted" style="margin-left:auto">84 MB · 2%</span></li>
+            <li class="consumer"><span>mailpit</span><span class="muted" style="margin-left:auto">18 MB · 0%</span></li>
+          </ul>
+          <div class="kvhead">Ports — 8 of 11 active</div>
+          <div class="seg" aria-hidden>
+            <i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i><i></i>
+          </div>
+          <div class="mono muted" style="font-size:12px;margin-top:6px">3 claimed but not listening — stopped services keep their reservations</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ FRAME 2: Services v2 ============ -->
+<div class="page-label">Frame 2 — Services v2: strip ringkasan + failed disorot + detail menempel di baris</div>
+<div class="app">
+  <div class="side">
+    <div class="sec">Environment</div>
+    <a href="#">Dashboard</a>
+    <a href="#">Components <span class="count">9</span></a>
+    <a href="#" class="active">Services <span class="count">8</span></a>
+    <a href="#">Sites <span class="count">2</span></a>
+    <a href="#">Databases <span class="count">2</span></a>
+    <div class="sec">Workspace</div>
+    <a href="#">Logs</a><a href="#">Share</a><a href="#">Mail</a>
+    <div class="sec">System</div>
+    <a href="#">Diagnostics</a><a href="#">Settings</a>
+  </div>
+  <div class="top">
+    <div class="brand"><span class="dot warn"></span>DEVX <span class="ver">v0.2.0</span></div>
+    <div class="crumbs" data-crumbs></div>
+    <div class="statusvoice"><span class="dot warn"></span>Needs attention · 1 failed</div>
+    <div class="search">Search anything...&nbsp;&nbsp;&nbsp;<kbd>Ctrl K</kbd></div>
+    <div class="topactions">
+      <span class="ticon" title="Notifications"><svg class="ic" aria-hidden><use href="#i-bell"/></svg><i class="tbadge">1</i></span>
+      <span class="ticon" title="Theme"><svg class="ic" aria-hidden><use href="#i-moon"/></svg></span>
+      <span class="ticon" title="Settings"><svg class="ic" aria-hidden><use href="#i-gear"/></svg></span>
+    </div>
+  </div>
+  <div class="main">
+    <div class="headrow">
+      <div>
+        <h2 class="title">8 services supervised.</h2>
+        <p class="subtitle">Background services, PHP pools, workers and scheduled tasks.</p>
+      </div>
+      <div class="spacer"></div>
+      <div class="statusbox">
+        <div class="lbl"><span class="dot"></span>6 running · <span class="dot bad"></span>1 failed · <span class="dot off"></span>1 stopped</div>
+        <div class="sub">1 startable · 6 active</div>
+      </div>
+      <div class="btnrow"><button class="btn">Start all</button><button class="btn ghost">Stop all</button></div>
+    </div>
+    <div class="tabs"><span class="on">Services<span class="tabcount">8</span></span><span>Workers<span class="tabcount">2</span></span><span>Scheduled tasks<span class="tabcount">1</span></span></div>
+    <div class="filterrow"><span class="in">Service name…</span><span class="in">All states ▾</span></div>
+    <div class="panel" style="margin-bottom:0;border-bottom:0">
+      <table class="grid">
+        <tr><th></th><th>Server</th><th>State</th><th>Port</th><th>Configuration</th><th style="text-align:right">Actions</th></tr>
+        <tr class="bad">
+          <td class="muted">›</td>
+          <td><b>php84</b><br><small class="muted mono">fastcgi · 4 workers</small></td>
+          <td><span class="badge bad">Failed</span></td>
+          <td class="mono muted">9101</td>
+          <td class="mono muted">…\service-config\php84</td>
+          <td class="cellbtn"><button class="btn">Start</button> <button class="btn ghost">···</button></td>
+        </tr>
+        <tr class="open">
+          <td class="muted">⌄</td>
+          <td><b>apache</b><br><small class="muted mono">v2.4.68</small></td>
+          <td><span class="badge ok">Running</span></td>
+          <td class="mono"><span class="dot"></span> 80</td>
+          <td class="mono muted">…\service-config\apache</td>
+          <td class="cellbtn"><button class="btn ghost">Stop</button> <button class="btn ghost">Restart</button> <button class="btn ghost">···</button></td>
+        </tr>
+        <tr>
+          <td class="muted">›</td>
+          <td><b>PHP 8.5.10</b><br><small class="muted mono">fastcgi · 4 workers</small></td>
+          <td><span class="badge ok">Running</span></td>
+          <td class="mono"><span class="dot"></span> 9100</td>
+          <td class="mono muted">…\service-config\php85</td>
+          <td class="cellbtn"><button class="btn ghost">Stop</button> <button class="btn ghost">Restart</button> <button class="btn ghost">···</button></td>
+        </tr>
+        <tr>
+          <td class="muted">›</td>
+          <td><b>mariadb</b><br><small class="muted mono">v11.8.4</small></td>
+          <td><span class="badge ok">Running</span></td>
+          <td class="mono"><span class="dot"></span> 3306</td>
+          <td class="mono muted">…\service-config\mariadb</td>
+          <td class="cellbtn"><button class="btn ghost">Stop</button> <button class="btn ghost">Restart</button> <button class="btn ghost">···</button></td>
+        </tr>
+        <tr>
+          <td class="muted">›</td>
+          <td><b>nginx</b><br><small class="muted mono">v1.27.4</small></td>
+          <td><span class="badge">Stopped</span></td>
+          <td class="mono muted">80</td>
+          <td class="mono muted">…\service-config\nginx</td>
+          <td class="cellbtn"><button class="btn ghost">Start</button> <button class="btn ghost">···</button></td>
+        </tr>
+      </table>
+    </div>
+    <div class="panel" style="border-top:1px dashed var(--border-strong);background:var(--surface-2)">
+      <div class="tabs"><span class="on">Overview</span><span>Logs</span><span>Ports</span><span>Sites</span><span>Configuration</span></div>
+      <div class="kvhead">Identity</div>
+      <dl class="kv">
+        <div><dt>State</dt><dd><span class="badge ok">Running</span></dd></div>
+        <div><dt>Version</dt><dd class="mono">2.4.68</dd></div>
+        <div><dt>Port</dt><dd class="mono"><span class="dot"></span> 80 · listening</dd></div>
+        <div><dt>Configuration</dt><dd class="mono muted">…\service-config\apache</dd></div>
+      </dl>
+      <div class="kvhead">Resources</div>
+      <dl class="kv">
+        <div><dt>CPU</dt><dd class="mono">2% <span class="meter"><i style="width:2%"></i></span></dd></div>
+        <div><dt>Memory</dt><dd class="mono">84 MB</dd></div>
+        <div><dt>Processes</dt><dd class="mono">3</dd></div>
+      </dl>
+      <div class="kvhead">Serves</div>
+      <dl class="kv">
+        <div><dt>Sites</dt><dd class="mono">app.test · mtdb.test</dd></div>
+      </dl>
+    </div>
+  </div>
+</div>
+
+<!-- ============ FRAME 3: Sites v2 ============ -->
+<div class="page-label">Frame 3 — Sites v2: rute request + fakta berkelompok + strip network berlabel</div>
+<div class="app" style="grid-template-columns: 220px 300px minmax(0,1fr); grid-template-areas: 'nav list top' 'nav list main';min-width:1140px">
+  <div class="side" style="grid-area:nav">
+    <div class="sec">Environment</div>
+    <a href="#">Dashboard</a>
+    <a href="#">Components <span class="count">9</span></a>
+    <a href="#">Services <span class="count">8</span></a>
+    <a href="#" class="active">Sites <span class="count">2</span></a>
+    <a href="#">Databases <span class="count">2</span></a>
+    <div class="sec">Workspace</div>
+    <a href="#">Logs</a><a href="#">Share</a><a href="#">Mail</a>
+    <div class="sec">System</div>
+    <a href="#">Diagnostics</a><a href="#">Settings</a>
+  </div>
+  <div class="side" style="grid-area:list;border-right:1px solid var(--border);padding:0">
+    <div style="padding:16px;border-bottom:1px solid var(--border)">
+      <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:12px"><b style="font-size:15px">Sites</b><span class="mono muted">2 sites</span><span style="margin-left:auto"><button class="btn">Add site</button></span></div>
+      <div class="in" style="border:1px solid var(--border-strong);padding:8px 12px;font-size:13px;color:var(--faint)">Filter by domain, runtime or service…</div>
+    </div>
+    <div class="sidelist" style="border:0">
+      <div class="item sel"><span class="dot"></span> <span class="mono"><b>app.test</b></span><span class="mono muted" style="float:right;font-size:12px">12ms</span><br><small class="muted">PHP 8.5.10 · apache · <span style="color:var(--success)">HTTPS</span></small></div>
+      <div class="item"><span class="dot"></span> <span class="mono"><b>mtdb.test</b></span><span class="mono muted" style="float:right;font-size:12px">9ms</span><br><small class="muted">PHP 8.5.10 · apache · <span style="color:var(--success)">HTTPS</span></small></div>
+    </div>
+  </div>
+  <div class="top">
+    <div class="brand"><span class="dot warn"></span>DEVX <span class="ver">v0.2.0</span></div>
+    <div class="crumbs" data-crumbs></div>
+    <div class="statusvoice"><span class="dot warn"></span>Needs attention · 1 failed</div>
+    <div class="search">Search anything...&nbsp;&nbsp;&nbsp;<kbd>Ctrl K</kbd></div>
+    <div class="topactions">
+      <span class="ticon" title="Notifications"><svg class="ic" aria-hidden><use href="#i-bell"/></svg><i class="tbadge">1</i></span>
+      <span class="ticon" title="Theme"><svg class="ic" aria-hidden><use href="#i-moon"/></svg></span>
+      <span class="ticon" title="Settings"><svg class="ic" aria-hidden><use href="#i-gear"/></svg></span>
+    </div>
+  </div>
+  <div class="main">
+    <div class="headrow">
+      <div>
+        <p class="eyebrow">Apache · PHP 8.5.10 · <span style="color:var(--success)">200 · 12ms</span></p>
+        <h2 class="title mono">app.test</h2>
+        <p class="subtitle mono">https://app.test → C:\projects\app</p>
+      </div>
+      <div class="spacer"></div>
+      <div class="btnrow"><button class="btn ghost">Ping</button><button class="btn ghost">Copy URL</button><button class="btn">Open</button></div>
+    </div>
+    <div class="strip"><span><span class="dot"></span> resolver on</span><span class="mono">suffix .test</span><span><span class="dot"></span> CA installed</span></div>
+    <div class="panel">
+      <h3>Where a request goes</h3>
+      <div class="route">
+        <span class="hop you">browser<small>you</small></span><span class="rarrow">→</span>
+        <span class="hop">app.test<small>hosts · 127.0.0.2</small></span><span class="rarrow">→</span>
+        <span class="hop">apache :80<small>2 vhosts · 2% cpu</small></span><span class="rarrow">→</span>
+        <span class="hop">php85 :9100<small>4 workers · running</small></span><span class="rarrow">→</span>
+        <span class="hop">C:\projects\app<small>docroot</small></span>
+      </div>
+    </div>
+    <div class="tabs"><span class="on">Overview</span><span>Aliases<span class="tabcount">1</span></span><span>Env<span class="tabcount">4</span></span><span>Requests</span><span>Auth</span></div>
+    <div class="panel">
+      <div class="kvhead">Identity</div>
+      <dl class="kv">
+        <div><dt>URL</dt><dd class="mono">https://app.test</dd></div>
+        <div><dt>Document root</dt><dd class="mono muted">C:\projects\app</dd></div>
+        <div><dt>Server</dt><dd class="mono">apache · 127.0.0.2:80</dd></div>
+        <div><dt>Aliases</dt><dd class="mono">www.app.test</dd></div>
+      </dl>
+      <div class="kvhead">Runtime</div>
+      <dl class="kv">
+        <div><dt>PHP</dt><dd class="mono">8.5.10 · 4 workers</dd></div>
+        <div><dt>Endpoint</dt><dd class="mono">127.0.0.1:9100 · <span style="color:var(--success)">answering</span></dd></div>
+      </dl>
+      <div class="kvhead">Trust</div>
+      <dl class="kv">
+        <div><dt>Certificate</dt><dd><span style="color:var(--success)">DevX CA · valid</span></dd></div>
+        <div><dt>DNS</dt><dd class="mono">app.test → 127.0.0.2 · hosts file</dd></div>
+      </dl>
+    </div>
+    <div class="panel">
+      <h3>Recent requests <span class="more">3 × 200 · slowest 14ms</span></h3>
+      <ul class="tight mono feed">
+        <li><span class="t">12:04:11</span><span class="method">GET</span><span>/api/users</span><span style="color:var(--success)">200</span><span class="muted">8ms</span></li>
+        <li><span class="t">12:04:06</span><span class="method">GET</span><span>/style.css</span><span style="color:var(--success)">200</span><span class="muted">2ms</span></li>
+        <li><span class="t">12:03:58</span><span class="method">GET</span><span>/dashboard</span><span style="color:var(--success)">200</span><span class="muted">14ms</span></li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ============ FRAME 4: Components v2 ============ -->
+<div class="page-label">Frame 4 — Components v2: nav katalog + detail versi (kolom sejajar, progress unduhan)</div>
+<div class="app">
+  <div class="side">
+    <div class="sec">Environment</div>
+    <a href="#">Dashboard</a>
+    <a href="#" class="active">Components <span class="count">9</span></a>
+    <a href="#">Services <span class="count">8</span></a>
+    <a href="#">Sites <span class="count">2</span></a>
+    <a href="#">Databases <span class="count">2</span></a>
+    <div class="sec">Workspace</div>
+    <a href="#">Logs</a><a href="#">Share</a><a href="#">Mail</a>
+    <div class="sec">System</div>
+    <a href="#">Diagnostics</a><a href="#">Settings</a>
+  </div>
+  <div class="top">
+    <div class="brand"><span class="dot warn"></span>DEVX <span class="ver">v0.2.0</span></div>
+    <div class="crumbs" data-crumbs></div>
+    <div class="statusvoice"><span class="dot warn"></span>Needs attention · 1 failed</div>
+    <div class="search">Search anything...&nbsp;&nbsp;&nbsp;<kbd>Ctrl K</kbd></div>
+    <div class="topactions">
+      <span class="ticon" title="Notifications"><svg class="ic" aria-hidden><use href="#i-bell"/></svg><i class="tbadge">1</i></span>
+      <span class="ticon" title="Theme"><svg class="ic" aria-hidden><use href="#i-moon"/></svg></span>
+      <span class="ticon" title="Settings"><svg class="ic" aria-hidden><use href="#i-gear"/></svg></span>
+    </div>
+  </div>
+  <div class="main">
+    <div class="headrow">
+      <div>
+        <h2 class="title">Component catalog</h2>
+        <p class="subtitle">14 components · 6 versions installed on this machine.</p>
+      </div>
+      <div class="spacer"></div>
+      <div class="statusbox"><span class="verify">✓ Every download is checksum-verified before it lands.</span></div>
+    </div>
+    <div class="catgrid">
+      <div class="catnav">
+        <div class="grp">Runtimes</div>
+        <button class="on">PHP <span class="n has">2</span></button>
+        <button>Node.js <span class="n has">1</span></button>
+        <button>Composer <span class="n">—</span></button>
+        <div class="grp">Web servers</div>
+        <button>Apache <span class="n has">1</span></button>
+        <button>nginx <span class="n has">1</span></button>
+        <div class="grp">Databases</div>
+        <button>MariaDB <span class="n has">1</span></button>
+        <div class="grp">Tools</div>
+        <button>Mailpit <span class="warnmark" title="Binds port 1025 — some antivirus software flags it">!</span></button>
+      </div>
+      <div class="panel" style="margin-bottom:0">
+        <p class="eyebrow">Runtimes</p>
+        <h3 style="font-size:26px;margin-bottom:0">PHP</h3>
+        <div class="catchips"><span class="badge">PHP License</span><span class="badge">multi-version</span><span class="badge">4 installable · 1 hidden</span></div>
+        <p class="subtitle" style="margin:12px 0 0">The language your .test sites run on — one FastCGI pool per installed version.</p>
+        <table class="grid" style="margin-top:16px">
+          <tr><th>Version</th><th>Channel</th><th>Released</th><th>Size</th><th>Checksum</th><th style="text-align:right">Action</th></tr>
+          <tr class="hi"><td class="mono"><b>8.5.10</b></td><td><span class="badge ok">LTS</span></td><td class="mono muted">Sep 2026</td><td class="mono">28.4 MiB</td><td><span class="verify">✓ verifiable</span></td><td class="cellbtn"><span class="badge">installed</span> <button class="btn ghost">Remove</button></td></tr>
+          <tr class="hi"><td class="mono"><b>8.4.25</b></td><td class="muted">—</td><td class="mono muted">Aug 2026</td><td class="mono">27.9 MiB</td><td><span class="verify">✓ verifiable</span></td><td class="cellbtn"><span class="badge">installed</span> <button class="btn ghost">Remove</button></td></tr>
+          <tr><td class="mono"><b>8.3.19</b></td><td class="muted">—</td><td class="mono muted">Jun 2026</td><td class="mono">64.0 MiB</td><td><span class="verify">✓ verifiable</span></td><td class="cellbtn"><button class="btn ghost">Cancel</button></td></tr>
+          <tr><td colspan="6" style="border-top:0;padding-top:0"><div class="prog"><i style="width:64%"></i></div><div class="mono muted" style="font-size:12px;margin-top:4px">Downloading — 41.2 of 64.0 MiB · 8.4 MiB/s · 64%</div></td></tr>
+          <tr><td class="mono"><b>8.2.28</b></td><td class="muted">—</td><td class="mono muted">Mar 2026</td><td class="mono">26.1 MiB</td><td><span class="verify">✓ verifiable</span></td><td class="cellbtn"><button class="btn ghost">Install</button></td></tr>
+        </table>
+        <div class="callout warn" style="margin:16px 0 0"><span class="dot warn"></span><span>1 release hidden — the upstream publishes no checksum for it: <span class="mono">8.1.31</span></span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ FRAME 5: Databases ============ -->
+<div class="page-label">Frame 5 — Databases: tabel engine + detail (fakta, password, daftar DB, backup)</div>
+<div class="app">
+  <div class="side">
+    <div class="sec">Environment</div>
+    <a href="#">Dashboard</a>
+    <a href="#">Components <span class="count">9</span></a>
+    <a href="#">Services <span class="count">8</span></a>
+    <a href="#">Sites <span class="count">2</span></a>
+    <a href="#" class="active">Databases <span class="count">2</span></a>
+    <div class="sec">Workspace</div>
+    <a href="#">Logs</a><a href="#">Share</a><a href="#">Mail</a>
+    <div class="sec">System</div>
+    <a href="#">Diagnostics</a><a href="#">Settings</a>
+  </div>
+  <div class="top">
+    <div class="brand"><span class="dot warn"></span>DEVX <span class="ver">v0.2.0</span></div>
+    <div class="crumbs" data-crumbs></div>
+    <div class="statusvoice"><span class="dot warn"></span>Needs attention · 1 failed</div>
+    <div class="search">Search anything...&nbsp;&nbsp;&nbsp;<kbd>Ctrl K</kbd></div>
+    <div class="topactions">
+      <span class="ticon" title="Notifications"><svg class="ic" aria-hidden><use href="#i-bell"/></svg><i class="tbadge">1</i></span>
+      <span class="ticon" title="Theme"><svg class="ic" aria-hidden><use href="#i-moon"/></svg></span>
+      <span class="ticon" title="Settings"><svg class="ic" aria-hidden><use href="#i-gear"/></svg></span>
+    </div>
+  </div>
+  <div class="main">
+    <h2 class="title">2 database servers.</h2>
+    <p class="subtitle">Reachability is probed live — never assumed from the config.</p>
+    <div class="panel" style="margin-top:24px">
+      <table class="grid">
+        <tr><th>Engine</th><th>Address</th><th>State</th><th style="text-align:right">Actions</th></tr>
+        <tr><td><b>MariaDB</b> <small class="muted mono">11.8.4</small></td><td class="mono">127.0.0.1:3306</td><td><span class="badge ok">Reachable</span></td><td style="text-align:right"><button class="btn ghost">Stop</button></td></tr>
+        <tr><td><b>Redis</b> <small class="muted mono">7.4.1</small></td><td class="mono">127.0.0.1:6379</td><td><span class="badge ok">Reachable</span></td><td style="text-align:right"><button class="btn ghost">Stop</button></td></tr>
+      </table>
+    </div>
+    <div class="panel">
+      <div class="tabs"><span class="on">Overview</span><span>Databases</span><span>Tables</span><span>Backups</span><span>Logs</span></div>
+      <dl class="kv">
+        <div><dt>Engine</dt><dd>MariaDB</dd></div>
+        <div><dt>Version</dt><dd class="mono">11.8.4</dd></div>
+        <div><dt>Host / Port</dt><dd class="mono">127.0.0.1 : 3306</dd></div>
+        <div><dt>Root password</dt><dd class="mono">•••••••• <button class="btn ghost" style="padding:4px 10px">Show</button></dd></div>
+        <div><dt>Databases</dt><dd class="mono">4</dd></div>
+        <div><dt>Memory</dt><dd class="mono">112 MB</dd></div>
+      </dl>
+      <h3 style="margin-top:24px">Databases</h3>
+      <ul class="tight mono">
+        <li><span>mtdb_shop</span><span class="muted" style="margin-left:auto">14 tables · 2.1 MB</span></li>
+        <li><span>mtdb_blog</span><span class="muted" style="margin-left:auto">9 tables · 840 KB</span></li>
+        <li><span>app_main</span><span class="muted" style="margin-left:auto">22 tables · 5.4 MB</span></li>
+      </ul>
+      <h3 style="margin-top:24px">Backups</h3>
+      <ul class="tight mono">
+        <li><span>mariadb-2026-09-21.sql</span><span class="muted" style="margin-left:auto">8.3 MB · <button class="btn ghost" style="padding:4px 10px">Restore</button></span></li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ============ FRAME 6: Logs v2 ============ -->
+<div class="page-label">Frame 6 — Logs v2: chip level berhitung + highlight search + baris error disorot</div>
+<div class="app">
+  <div class="side">
+    <div class="sec">Environment</div>
+    <a href="#">Dashboard</a>
+    <a href="#">Components <span class="count">9</span></a>
+    <a href="#">Services <span class="count">8</span></a>
+    <a href="#">Sites <span class="count">2</span></a>
+    <a href="#">Databases <span class="count">2</span></a>
+    <div class="sec">Workspace</div>
+    <a href="#" class="active">Logs</a><a href="#">Share</a><a href="#">Mail</a>
+    <div class="sec">System</div>
+    <a href="#">Diagnostics</a><a href="#">Settings</a>
+  </div>
+  <div class="top">
+    <div class="brand"><span class="dot warn"></span>DEVX <span class="ver">v0.2.0</span></div>
+    <div class="crumbs" data-crumbs></div>
+    <div class="statusvoice"><span class="dot warn"></span>Needs attention · 1 failed</div>
+    <div class="search">Search anything...&nbsp;&nbsp;&nbsp;<kbd>Ctrl K</kbd></div>
+    <div class="topactions">
+      <span class="ticon" title="Notifications"><svg class="ic" aria-hidden><use href="#i-bell"/></svg><i class="tbadge">1</i></span>
+      <span class="ticon" title="Theme"><svg class="ic" aria-hidden><use href="#i-moon"/></svg></span>
+      <span class="ticon" title="Settings"><svg class="ic" aria-hidden><use href="#i-gear"/></svg></span>
+    </div>
+  </div>
+  <div class="main">
+    <h2 class="title">5 log files · 1.2 MB.</h2>
+    <p class="subtitle">Everything DevX and its supervised services have written, including rotated generations.</p>
+    <div style="display:grid;grid-template-columns:280px minmax(0,1fr);gap:24px;align-items:start;margin-top:24px">
+      <div class="panel" style="margin-bottom:0">
+        <h3>Log files</h3>
+        <div class="sidelist" style="border:0">
+          <div class="item sel"><span class="mono"><b>php84.log</b></span><span class="mono muted" style="float:right;font-size:12px">412 KB</span></div>
+          <div class="item"><span class="mono"><b>apache.log</b></span> <span class="badge">rotated</span><span class="mono muted" style="float:right;font-size:12px">388 KB</span></div>
+          <div class="item"><span class="mono"><b>mariadb.log</b></span><span class="mono muted" style="float:right;font-size:12px">204 KB</span></div>
+          <div class="item"><span class="mono"><b>devx.log</b></span><span class="mono muted" style="float:right;font-size:12px">96 KB</span></div>
+          <div class="item"><span class="mono"><b>mailpit.log</b></span><span class="mono muted" style="float:right;font-size:12px">12 KB</span></div>
+        </div>
+      </div>
+      <div class="panel" style="margin-bottom:0">
+        <div class="headrow" style="margin-bottom:16px">
+          <div><h3 class="mono" style="margin:0">php84.log</h3><p class="subtitle" style="margin:4px 0 0">Showing the last 500 lines of the file.</p></div>
+          <div class="spacer"></div>
+          <span class="livechip"><span class="dot"></span> live · polls every 2s</span>
+          <div class="btnrow"><span class="muted" style="font-size:12px;align-self:center">Auto-refresh <span class="switch"></span></span><button class="btn ghost">Refresh</button></div>
+        </div>
+        <div class="filterrow" style="align-items:center">
+          <span class="in" style="min-width:180px;color:var(--ink)">pool&nbsp;&nbsp;✕</span>
+          <span class="muted" style="font-size:12px">2 of 5 lines</span>
+        </div>
+        <div class="lvlchips" style="margin-bottom:16px">
+          <span class="lvl on">All<span class="n">5</span></span>
+          <span class="lvl err">Errors<span class="n">1</span></span>
+          <span class="lvl warnl">Warnings<span class="n">1</span></span>
+          <span class="lvl">Info &amp; debug<span class="n">3</span></span>
+        </div>
+        <div class="mono" style="font-size:12px;line-height:2;border:1px solid var(--border);padding:8px 0">
+          <div class="logline err"><span class="muted">12:04:11</span> <span style="color:var(--danger)">ERROR</span> <mark>pool</mark> php84: child exited with code 1</div>
+          <div class="logline warnl"><span class="muted">12:04:10</span> <span style="color:var(--warning)">WARN</span>&nbsp; <mark>pool</mark> php84: slow request /checkout (21ms)</div>
+          <div class="logline"><span class="muted">12:03:58</span> <span class="muted">INFO</span>&nbsp; <mark>pool</mark> php84: ready, 4 workers</div>
+          <div class="logline"><span class="muted">11:58:02</span> <span class="muted">INFO</span>&nbsp; apache: restarted, 2 vhosts loaded</div>
+          <div class="logline"><span class="muted">11:42:44</span> <span class="muted">INFO</span>&nbsp; mariadb: ready for connections on 3306</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ FRAME 7: Share ============ -->
+<div class="page-label">Frame 7 — Share: tunnel per site (URL publik, copy, stop)</div>
+<div class="app">
+  <div class="side">
+    <div class="sec">Environment</div>
+    <a href="#">Dashboard</a>
+    <a href="#">Components <span class="count">9</span></a>
+    <a href="#">Services <span class="count">8</span></a>
+    <a href="#">Sites <span class="count">2</span></a>
+    <a href="#">Databases <span class="count">2</span></a>
+    <div class="sec">Workspace</div>
+    <a href="#">Logs</a><a href="#" class="active">Share</a><a href="#">Mail</a>
+    <div class="sec">System</div>
+    <a href="#">Diagnostics</a><a href="#">Settings</a>
+  </div>
+  <div class="top">
+    <div class="brand"><span class="dot warn"></span>DEVX <span class="ver">v0.2.0</span></div>
+    <div class="crumbs" data-crumbs></div>
+    <div class="statusvoice"><span class="dot warn"></span>Needs attention · 1 failed</div>
+    <div class="search">Search anything...&nbsp;&nbsp;&nbsp;<kbd>Ctrl K</kbd></div>
+    <div class="topactions">
+      <span class="ticon" title="Notifications"><svg class="ic" aria-hidden><use href="#i-bell"/></svg><i class="tbadge">1</i></span>
+      <span class="ticon" title="Theme"><svg class="ic" aria-hidden><use href="#i-moon"/></svg></span>
+      <span class="ticon" title="Settings"><svg class="ic" aria-hidden><use href="#i-gear"/></svg></span>
+    </div>
+  </div>
+  <div class="main">
+    <div class="headrow">
+      <div><h2 class="title">1 tunnel open.</h2><p class="subtitle">A public URL for a local site — hand it to anyone, close it when done.</p></div>
+      <div class="spacer"></div>
+      <div class="btnrow"><button class="btn">Share a site</button></div>
+    </div>
+    <div class="panel">
+      <div class="row"><span class="dot"></span><span class="mono"><b>mtdb.test</b></span><span class="mono muted">→ https://mtdb-8f3a.trydevx.app</span><span class="right"><button class="btn ghost">Copy URL</button><button class="btn ghost">Open</button><button class="btn ghost">Stop</button></span></div>
+      <div class="row"><span class="dot off"></span><span class="mono"><b>app.test</b></span><span class="muted">not shared</span><span class="right"><button class="btn ghost">Share</button></span></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ FRAME 8: Mail v2 ============ -->
+<div class="page-label">Frame 8 — Mail v2: strip koneksi SMTP + unread-first + viewer berlabel</div>
+<div class="app">
+  <div class="side">
+    <div class="sec">Environment</div>
+    <a href="#">Dashboard</a>
+    <a href="#">Components <span class="count">9</span></a>
+    <a href="#">Services <span class="count">8</span></a>
+    <a href="#">Sites <span class="count">2</span></a>
+    <a href="#">Databases <span class="count">2</span></a>
+    <div class="sec">Workspace</div>
+    <a href="#">Logs</a><a href="#">Share</a><a href="#" class="active">Mail</a>
+    <div class="sec">System</div>
+    <a href="#">Diagnostics</a><a href="#">Settings</a>
+  </div>
+  <div class="top">
+    <div class="brand"><span class="dot warn"></span>DEVX <span class="ver">v0.2.0</span></div>
+    <div class="crumbs" data-crumbs></div>
+    <div class="statusvoice"><span class="dot warn"></span>Needs attention · 1 failed</div>
+    <div class="search">Search anything...&nbsp;&nbsp;&nbsp;<kbd>Ctrl K</kbd></div>
+    <div class="topactions">
+      <span class="ticon" title="Notifications"><svg class="ic" aria-hidden><use href="#i-bell"/></svg><i class="tbadge">1</i></span>
+      <span class="ticon" title="Theme"><svg class="ic" aria-hidden><use href="#i-moon"/></svg></span>
+      <span class="ticon" title="Settings"><svg class="ic" aria-hidden><use href="#i-gear"/></svg></span>
+    </div>
+  </div>
+  <div class="main">
+    <div class="headrow">
+      <div>
+        <p class="eyebrow"><span class="dot"></span> Mail catcher is capturing</p>
+        <h2 class="title">3 unread · 12 captured.</h2>
+        <p class="subtitle">Mail your sites send lands here — nothing leaves the machine.</p>
+      </div>
+      <div class="spacer"></div>
+      <div class="btnrow"><button class="btn">Send test email</button><button class="btn ghost">Mark all read</button><button class="btn ghost">Delete all</button></div>
+    </div>
+    <div class="panel">
+      <div class="conn">
+        <div class="conngroup"><span class="clabel">SMTP — point your app here</span><span class="connrow"><span class="connchip">127.0.0.1:1025</span><button class="btn ghost">Copy</button></span></div>
+        <div class="conngroup"><span class="clabel">Mailpit's own UI</span><span class="connrow"><span class="connchip">127.0.0.1:8025</span><button class="btn ghost">Open</button></span></div>
+      </div>
+    </div>
+    <div class="cols2">
+      <div class="panel">
+        <h3>Inbox <span class="more">3 unread · newest first</span></h3>
+        <div class="filterrow"><span class="in">Filter by sender or subject…</span></div>
+        <ul class="tight">
+          <li class="msel"><span class="unreaddot"></span><span><b>Order #4812 confirmed</b><br><small class="muted">shop@mtdb.test → buyer@example.com</small></span><button class="del">✕</button></li>
+          <li><span class="unreaddot"></span><span><b>Reset your password</b><br><small class="muted">noreply@app.test → user@example.com</small></span><button class="del">✕</button></li>
+          <li><span class="unreaddot"></span><span><b>Your receipt is ready</b><br><small class="muted">billing@mtdb.test → buyer@example.com</small></span><button class="del">✕</button></li>
+          <li><span class="muted">Welcome to the blog<br><small>hello@app.test → reader@example.com</small></span><button class="del">✕</button></li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h3>Order #4812 confirmed</h3>
+        <dl class="kv kv2">
+          <div><dt>From</dt><dd class="mono">Shop &lt;shop@mtdb.test&gt;</dd></div>
+          <div><dt>To</dt><dd class="mono">buyer@example.com</dd></div>
+        </dl>
+        <div class="att"><span class="badge">invoice-4812.pdf · 84 KB</span></div>
+        <div class="mailbody">Hi — thanks for your order.
+
+Total: Rp 214.000. Your receipt is attached.</div>
+        <p class="fineprint">Opened messages are marked read.</p>
+        <div class="btnrow tightbtn"><button class="btn ghost">Delete message</button></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ FRAME 9: Diagnostics ============ -->
+<div class="page-label">Frame 9 — Diagnostics: checks + repair + kartu System</div>
+<div class="app">
+  <div class="side">
+    <div class="sec">Environment</div>
+    <a href="#">Dashboard</a>
+    <a href="#">Components <span class="count">9</span></a>
+    <a href="#">Services <span class="count">8</span></a>
+    <a href="#">Sites <span class="count">2</span></a>
+    <a href="#">Databases <span class="count">2</span></a>
+    <div class="sec">Workspace</div>
+    <a href="#">Logs</a><a href="#">Share</a><a href="#">Mail</a>
+    <div class="sec">System</div>
+    <a href="#" class="active">Diagnostics</a><a href="#">Settings</a>
+  </div>
+  <div class="top">
+    <div class="brand"><span class="dot warn"></span>DEVX <span class="ver">v0.2.0</span></div>
+    <div class="crumbs" data-crumbs></div>
+    <div class="statusvoice"><span class="dot warn"></span>Needs attention · 1 failed</div>
+    <div class="search">Search anything...&nbsp;&nbsp;&nbsp;<kbd>Ctrl K</kbd></div>
+    <div class="topactions">
+      <span class="ticon" title="Notifications"><svg class="ic" aria-hidden><use href="#i-bell"/></svg><i class="tbadge">1</i></span>
+      <span class="ticon" title="Theme"><svg class="ic" aria-hidden><use href="#i-moon"/></svg></span>
+      <span class="ticon" title="Settings"><svg class="ic" aria-hidden><use href="#i-gear"/></svg></span>
+    </div>
+  </div>
+  <div class="main">
+    <div class="headrow">
+      <div><h2 class="title">11 of 12 checks pass.</h2><p class="subtitle">Self-tests DevX runs against its own setup — a failing check offers its own repair.</p></div>
+      <div class="spacer"></div>
+      <div class="btnrow"><button class="btn ghost">Re-run checks</button></div>
+    </div>
+    <div class="panel">
+      <ul class="tight">
+        <li><span class="dot"></span><span>Hosts file writable</span><span class="muted" style="margin-left:auto">pass</span></li>
+        <li><span class="dot"></span><span>Resolver answering *.test</span><span class="muted" style="margin-left:auto">pass</span></li>
+        <li><span class="dot"></span><span>CA installed in Windows store</span><span class="muted" style="margin-left:auto">pass</span></li>
+        <li><span class="dot bad"></span><span>config.toml parses</span><span style="margin-left:auto"><span style="color:var(--danger)">fail — duplicate [sites] key, line 41</span> <button class="btn" style="margin-left:12px">Regenerate config.toml</button></span></li>
+        <li><span class="dot"></span><span>Ports 80/443 free for DevX</span><span class="muted" style="margin-left:auto">pass</span></li>
+      </ul>
+    </div>
+    <div class="panel">
+      <h3>System</h3>
+      <dl class="kv">
+        <div><dt>DevX version</dt><dd class="mono">0.2.0</dd></div>
+        <div><dt>Build</dt><dd class="mono">f94b5b6 · Tauri 2</dd></div>
+        <div><dt>Config directory</dt><dd class="mono muted">…\AppData\Roaming\devx</dd></div>
+        <div><dt>Data directory</dt><dd class="mono muted">…\AppData\Local\devx</dd></div>
+        <div><dt>Logs</dt><dd class="muted">Read on the Logs page</dd></div>
+        <div><dt>OS, shell, PATH</dt><dd class="muted">Not reported by this build</dd></div>
+      </dl>
+    </div>
+  </div>
+</div>
+
+<!-- ============ FRAME 10: Settings ============ -->
+<div class="page-label">Frame 10 — Settings: Profiles + Local domains + Service Ports + Application + Updates</div>
+<div class="app">
+  <div class="side">
+    <div class="sec">Environment</div>
+    <a href="#">Dashboard</a>
+    <a href="#">Components <span class="count">9</span></a>
+    <a href="#">Services <span class="count">8</span></a>
+    <a href="#">Sites <span class="count">2</span></a>
+    <a href="#">Databases <span class="count">2</span></a>
+    <div class="sec">Workspace</div>
+    <a href="#">Logs</a><a href="#">Share</a><a href="#">Mail</a>
+    <div class="sec">System</div>
+    <a href="#">Diagnostics</a><a href="#" class="active">Settings</a>
+  </div>
+  <div class="top">
+    <div class="brand"><span class="dot warn"></span>DEVX <span class="ver">v0.2.0</span></div>
+    <div class="crumbs" data-crumbs></div>
+    <div class="statusvoice"><span class="dot warn"></span>Needs attention · 1 failed</div>
+    <div class="search">Search anything...&nbsp;&nbsp;&nbsp;<kbd>Ctrl K</kbd></div>
+    <div class="topactions">
+      <span class="ticon" title="Notifications"><svg class="ic" aria-hidden><use href="#i-bell"/></svg><i class="tbadge">1</i></span>
+      <span class="ticon" title="Theme"><svg class="ic" aria-hidden><use href="#i-moon"/></svg></span>
+      <span class="ticon" title="Settings"><svg class="ic" aria-hidden><use href="#i-gear"/></svg></span>
+    </div>
+  </div>
+  <div class="main">
+    <h2 class="title">Settings</h2>
+    <p class="subtitle">Everything here writes config.toml — nothing applies without a save.</p>
+    <div class="panel" style="margin-top:24px">
+      <h3>Local domains</h3>
+      <dl class="kv">
+        <div><dt>Suffix</dt><dd class="mono">.test</dd></div>
+        <div><dt>DNS mode</dt><dd>Local resolver (NRPT) <button class="btn ghost" style="padding:4px 10px;margin-left:8px">Change</button></dd></div>
+        <div><dt>HTTPS</dt><dd><span style="color:var(--success)">DevX CA installed</span></dd></div>
+      </dl>
+    </div>
+    <div class="panel">
+      <h3>Service Ports</h3>
+      <ul class="tight mono">
+        <li><span>Apache</span><span style="margin-left:auto">80 · default</span></li>
+        <li><span>MariaDB</span><span style="margin-left:auto">3306 · default</span></li>
+        <li><span>PHP 8.5.10 pool</span><span style="margin-left:auto">9100 · default</span></li>
+      </ul>
+    </div>
+    <div class="panel">
+      <h3>Application</h3>
+      <dl class="kv">
+        <div><dt>Theme</dt><dd>System</dd></div>
+        <div><dt>Start with Windows</dt><dd>Off</dd></div>
+        <div><dt>Profiles</dt><dd class="mono">default · shop-debug <button class="btn ghost" style="padding:4px 10px;margin-left:8px">Manage</button></dd></div>
+      </dl>
+    </div>
+    <div class="panel">
+      <h3>Updates <span class="more">v0.2.0</span></h3>
+      <div class="callout warn" style="margin-bottom:16px"><span class="dot warn"></span><span><b>DevX 0.3.0 tersedia</b> — kamu di v0.2.0.</span><span style="margin-left:auto"><button class="btn">Download &amp; install</button></span></div>
+      <div class="btnrow"><button class="btn ghost">Import configuration</button><button class="btn ghost">Export configuration</button><button class="btn ghost">Restore defaults</button></div>
+    </div>
+  </div>
+</div>
+
+<footer class="note">Buka langsung di browser: <code class="mono">preview/ultra-minimal.html</code>. Bukan bagian app, tidak di-bundle. Tetap monochrome — satu-satunya warna = status operasional (dot/badge). Vonis: kepadatan info sudah setara sekarang?</footer>
+
+<script>
+  document.getElementById("themeToggle").addEventListener("click", function () {
+    document.body.classList.toggle("dark");
+  });
+  // Breadcrumb per frame, derived from the sidebar's own active link —
+  // one script instead of ten hand-written crumbs that could drift.
+  document.querySelectorAll(".app").forEach(function (app) {
+    var active = app.querySelector(".side a.active");
+    var crumb = app.querySelector("[data-crumbs]");
+    if (!active || !crumb) return;
+    var label = active.textContent.replace(/[0-9]+/g, "").trim();
+    var sec = null, sib = active.previousElementSibling;
+    while (sib) {
+      if (sib.classList && sib.classList.contains("sec")) { sec = sib.textContent.trim(); break; }
+      sib = sib.previousElementSibling;
+    }
+    crumb.innerHTML = (sec ? sec + " <span>/</span> " : "") + "<b>" + label + "</b>";
+  });
+</script>
+</body>
+</html>

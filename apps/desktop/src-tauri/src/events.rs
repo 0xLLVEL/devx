@@ -65,20 +65,6 @@ pub struct InstallProgress {
     pub phase: InstallPhase,
 }
 
-/// One chunk of output from a terminal command run.
-///
-/// The backend streams lines as they are written instead of returning the
-/// whole output at the end, so long-running commands feel live.
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type, Event)]
-pub struct TerminalOutput {
-    /// Which run the line belongs to.
-    pub run_id: u32,
-    /// Which stream it came from: `out` or `err`.
-    pub stream: String,
-    /// The line text, without its newline.
-    pub text: String,
-}
-
 /// A state transition of a supervised service.
 ///
 /// Mirrors [`devx_proc::ServiceEvent`] so the frontend can update status

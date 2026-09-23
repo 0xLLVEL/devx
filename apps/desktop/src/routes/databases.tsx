@@ -2,8 +2,6 @@ import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/rea
 import {
   Database,
   Download,
-  Eye,
-  EyeOff,
   HardDrive,
   Loader2,
   Play,
@@ -23,7 +21,6 @@ import { StatusBadge } from "@/components/status-dot";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Callout } from "@/components/ui/callout";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
@@ -67,14 +64,14 @@ const NO_CREDENTIALS: Credentials = { username: "", password: "" };
 /**
  * Database Manager (§25) and Database Detail (§26).
  *
- * The cards carry what the backend actually reports: engine, installed
+ * The table carries what the backend actually reports: engine, installed
  * version, host, port, database count, and two distinct facts about state.
  * The first is the supervised process (§119 `running`/`stopped`/`failed`), the
  * second whether the port accepts a TCP connection. §119 forbids overloading
  * one state with both
  * meanings, so they are never merged into a single dot.
  *
- * The detail behind the cards is tabbed, and only for surfaces with data
+ * The detail behind the table is tabbed, and only for surfaces with data
  * behind them: §26 also sketches Users and Connections, which no command
  * exposes, so no tab pretends otherwise.
  */
@@ -89,26 +86,6 @@ export function DatabasesPage() {
     queryFn: ipc.serviceMetrics,
     refetchInterval: 2000,
   });
-
-  // Total backups across the three services; the per-tab query reuses the same
-  // cache key, so this is one fetch per engine.
-  const mariadbBackups = useQuery({
-    queryKey: ["backups", "mariadb"],
-    queryFn: () => ipc.backupList("mariadb"),
-  });
-  const postgresBackups = useQuery({
-    queryKey: ["backups", "postgresql"],
-    queryFn: () => ipc.backupList("postgresql"),
-  });
-  const redisBackups = useQuery({
-    queryKey: ["backups", "redis"],
-    queryFn: () => ipc.backupList("redis"),
-  });
-  const backupLists = [mariadbBackups, postgresBackups, redisBackups];
-  const backupCount = backupLists.reduce((total, list) => total + (list.data?.length ?? 0), 0);
-  // A list that failed or has not answered is not "no backups": summing the
-  // ones that did answer would print a false zero in the header (§121).
-  const backupCountKnown = backupLists.every((list) => list.data !== undefined);
 
   const [selected, setSelected] = useState("");
   const [activeClientId, setActiveClientId] = useState<string | null>(null);
@@ -188,15 +165,20 @@ export function DatabasesPage() {
 
   if (servers.isPending) {
     return (
-      <div className="space-y-4 p-5" role="status">
+      <div className="space-y-6 p-8" role="status">
         <span className="sr-only">Detecting database servers…</span>
         <div aria-hidden className="space-y-2 border-b border-border pb-4">
-          <span className="block h-6 w-72 animate-pulse rounded-sm bg-secondary" />
-          <span className="block h-4 w-96 animate-pulse rounded-sm bg-secondary" />
+          <span className="block h-6 w-72 shimmer-skeleton rounded-sm" />
+          <span className="block h-4 w-96 shimmer-skeleton rounded-sm" />
         </div>
-        <div aria-hidden className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {[0, 1, 2].map((card) => (
-            <span key={card} className="block h-36 animate-pulse rounded-lg bg-secondary" />
+        <div aria-hidden className="border border-border">
+          <div className="border-b border-border px-3 py-2">
+            <span className="block h-4 w-96 shimmer-skeleton rounded-sm" />
+          </div>
+          {[0, 1, 2].map((row) => (
+            <div key={row} className="border-b border-border px-3 py-3 last:border-b-0">
+              <span className="block h-4 w-64 shimmer-skeleton rounded-sm" />
+            </div>
           ))}
         </div>
       </div>
@@ -205,7 +187,7 @@ export function DatabasesPage() {
 
   if (servers.isError) {
     return (
-      <div className="space-y-4 p-5">
+      <div className="space-y-6 p-8">
         <Callout variant="destructive" title="Could not read the database servers.">
           <p>{servers.error.message}</p>
           <Button
@@ -223,7 +205,7 @@ export function DatabasesPage() {
 
   if (allServers.length === 0) {
     return (
-      <div className="space-y-4 p-5">
+      <div className="space-y-6 p-8">
         <EmptyState
           icon={<Database />}
           title="No database servers registered yet."
@@ -240,8 +222,6 @@ export function DatabasesPage() {
       </div>
     );
   }
-
-  const reachable = allServers.filter((server) => server.reachable).length;
 
   const activeFilters: ActiveFilter[] = [];
   if (engineFilter !== "all") {
@@ -279,18 +259,10 @@ export function DatabasesPage() {
   };
 
   return (
-    <div className="space-y-4 p-5">
+    <div className="space-y-6 p-8">
       <PageHeader
-        title={
-          reachable === 0
-            ? "No database engines are running."
-            : `${reachable} of ${allServers.length} engines reachable.`
-        }
-        description={`${
-          backupCountKnown
-            ? `${backupCount} backup${backupCount === 1 ? "" : "s"} across all services`
-            : "Backup counts unavailable"
-        } · the query browser never writes.`}
+        title={`${allServers.length} database server${allServers.length === 1 ? "" : "s"}.`}
+        description="Reachability is probed live — never assumed from the config."
       >
         {allServers.length > 1 ? (
           <FilterBar active={activeFilters} onClear={clearFilters}>
@@ -332,35 +304,55 @@ export function DatabasesPage() {
           description={`${allServers.length} engines are registered and none of them match the current filters.`}
         />
       ) : (
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {visibleServers.map((server) => (
-            <DatabaseCard
-              key={server.service_id}
-              server={server}
-              version={installedVersionOf(installed.data, server.service_id)?.version}
-              state={stateOf(server)}
-              databaseCount={countOf(server.service_id)}
-              databaseCountPending={countPending(server.service_id)}
-              selected={server.service_id === chosen?.service_id}
-              active={activeClientId === server.service_id}
-              // Picking another card changes which engine the detail is
-              // about; it does not throw away the surface the user is on.
-              onSelect={() => {
-                selectServer(server.service_id, tab);
-              }}
-              onOpenClient={() => {
-                setActiveClientId(server.service_id);
-                selectServer(
-                  server.service_id,
-                  server.engine === "redis" ? "databases" : "query",
-                );
-              }}
-              onOpenTab={(nextTab) => {
-                setActiveClientId(server.service_id);
-                selectServer(server.service_id, nextTab);
-              }}
-            />
-          ))}
+        <div className="overflow-x-auto border border-border">
+          <table className="w-full min-w-[46rem] text-left text-sm">
+            <thead className="text-xs text-ink-muted">
+              <tr>
+                <th scope="col" className="px-3 py-2 font-normal">
+                  Engine
+                </th>
+                <th scope="col" className="px-3 py-2 font-normal">
+                  Address
+                </th>
+                <th scope="col" className="px-3 py-2 font-normal">
+                  State
+                </th>
+                <th scope="col" className="px-3 py-2 text-right font-normal">
+                  Actions
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleServers.map((server) => (
+                <DatabaseRow
+                  key={server.service_id}
+                  server={server}
+                  version={installedVersionOf(installed.data, server.service_id)?.version}
+                  state={stateOf(server)}
+                  databaseCount={countOf(server.service_id)}
+                  databaseCountPending={countPending(server.service_id)}
+                  selected={server.service_id === chosen?.service_id}
+                  active={activeClientId === server.service_id}
+                  // Picking another row changes which engine the detail is
+                  // about; it does not throw away the surface the user is on.
+                  onSelect={() => {
+                    selectServer(server.service_id, tab);
+                  }}
+                  onOpenClient={() => {
+                    setActiveClientId(server.service_id);
+                    selectServer(
+                      server.service_id,
+                      server.engine === "redis" ? "databases" : "query",
+                    );
+                  }}
+                  onOpenTab={(nextTab) => {
+                    setActiveClientId(server.service_id);
+                    selectServer(server.service_id, nextTab);
+                  }}
+                />
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
 
@@ -421,12 +413,12 @@ function installedVersionOf(
 }
 
 /**
- * One connectable engine as a §25 card. §91: the action a database card is
- * mostly for, opening the client, stays on the card; starting, stopping and
- * jumping to the detail's other surfaces sit one click away behind §62's
- * overflow.
+ * One connectable engine as a §25 table row (preview Frame 5). §91: the action
+ * a database row is mostly for, opening the client, stays on the row;
+ * starting, stopping and jumping to the detail's other surfaces sit one click
+ * away behind §62's overflow.
  */
-function DatabaseCard({
+function DatabaseRow({
   server,
   version,
   state,
@@ -509,49 +501,46 @@ function DatabaseCard({
   });
 
   return (
-    <Card
-      role="group"
-      aria-label={`${label} engine`}
+    <tr
       onContextMenu={menu.onContextMenu}
-      // §123: the engine name below is a click target, so hovering the card it
-      // sits in has to acknowledge that. The unselected case uses the same
-      // hover recipe as the outline Button; the selected case already owns the
-      // accent border and must not have it overwritten on hover.
+      // §123: the engine name is a click target, so hovering the row it sits
+      // in has to acknowledge that. The unselected case uses the table's own
+      // hover recipe; the selected case owns the soft ink wash.
       className={cn(
-        "flex flex-col transition-colors duration-150",
-        active
-          ? "border-primary bg-primary-soft shadow-sm ring-1 ring-primary/20"
-          : "hover:border-line-strong hover:bg-hover",
+        "border-t border-border transition-colors duration-150",
+        active ? "bg-primary-soft" : "hover:bg-hover",
       )}
     >
-      <CardHeader className="pb-1.5">
-        <div className="flex items-start justify-between gap-2">
-          <button
-            type="button"
-            onClick={onSelect}
-            aria-pressed={selected}
-            aria-label={`Select ${label} on ${server.host}:${server.port}`}
-            className="min-w-0 cursor-pointer text-left"
-          >
-            {/* Spans, not a heading: a button takes phrasing content only. */}
-            <span className="text-h3 flex items-baseline gap-2 tracking-tight">
-              <span className="data-value text-base">{label}</span>
-              {version ? (
-                <span className="data-value font-normal text-ink-muted">v{version}</span>
-              ) : null}
-            </span>
-            <span className="data-value mt-1 block text-ink-muted">
-              {server.host}:{server.port}
-            </span>
-          </button>
-          <OverflowMenu label={`Actions for ${label}`} items={actions} />
-        </div>
-        {/* A portal: it renders to the body, so the card's markup is unchanged. */}
+      <td className="px-3 py-2">
+        <button
+          type="button"
+          onClick={onSelect}
+          aria-pressed={selected}
+          aria-label={`Select ${label} on ${server.host}:${server.port}`}
+          className="flex cursor-pointer items-baseline gap-2 text-left"
+        >
+          <span className="font-medium" data-selectable>
+            {label}
+          </span>
+          <span className="data-value text-ink-muted">
+            {version ? `v${version}` : "not installed"}
+          </span>
+        </button>
+        {/* A portal: it renders to the body, so the row's markup is unchanged. */}
         {menu.panel}
-      </CardHeader>
-
-      <CardContent className="space-y-2">
-        <div className="flex flex-wrap items-center justify-between gap-2">
+      </td>
+      <td className="px-3 py-2">
+        <span className="data-value block" data-selectable>
+          {server.host}:{server.port}
+        </span>
+        {/* §119: reachability is its own fact, never folded into the process
+            state beside it. */}
+        <span className="block text-xs text-ink-muted">
+          {server.reachable ? "accepting connections" : "nothing listening"}
+        </span>
+      </td>
+      <td className="px-3 py-2">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           {state === null ? (
             <Badge variant="outline">not installed</Badge>
           ) : state === "unknown" ? (
@@ -561,7 +550,7 @@ function DatabaseCard({
               <span className="sr-only">Checking state…</span>
               <span
                 aria-hidden
-                className="block h-5 w-16 animate-pulse rounded-sm bg-secondary"
+                className="block h-5 w-16 shimmer-skeleton rounded-sm"
               />
             </span>
           ) : (
@@ -572,26 +561,26 @@ function DatabaseCard({
               <span className="sr-only">Counting databases…</span>
               <span
                 aria-hidden
-                className="block h-4 w-24 animate-pulse rounded-sm bg-secondary"
+                className="block h-4 w-20 shimmer-skeleton rounded-sm"
               />
             </span>
           ) : (
             <span className="data-value text-ink-secondary">
               {databaseCount === undefined
-                ? "database count unknown"
+                ? "count unknown"
                 : `${databaseCount} database${databaseCount === 1 ? "" : "s"}`}
             </span>
           )}
         </div>
-
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          {/* §119: reachability is its own fact, never folded into the process
-              state above it. */}
-          <span className="text-xs text-ink-muted">
-            {server.reachable
-              ? `accepting connections on :${server.port}`
-              : `nothing listening on :${server.port}`}
-          </span>
+        {failure instanceof Error ? (
+          <p className="mt-1 text-xs text-destructive">
+            {start.error ? `Could not start ${label}.` : `Could not stop ${label}.`}{" "}
+            {failure.message}
+          </p>
+        ) : null}
+      </td>
+      <td className="px-3 py-2 text-right">
+        <div className="flex items-center justify-end gap-1">
           <Button
             type="button"
             size="sm"
@@ -600,18 +589,10 @@ function DatabaseCard({
           >
             Open client
           </Button>
+          <OverflowMenu label={`Actions for ${label}`} items={actions} />
         </div>
-
-        {failure instanceof Error ? (
-          <Callout
-            variant="destructive"
-            title={start.error ? `Could not start ${label}.` : `Could not stop ${label}.`}
-          >
-            <p>{failure.message}</p>
-          </Callout>
-        ) : null}
-      </CardContent>
-    </Card>
+      </td>
+    </tr>
   );
 }
 
@@ -645,20 +626,22 @@ function DatabaseDetail({
 }) {
   const label = engineLabel(server.engine);
 
+  // Query is the EXTRA surface (read-only console), last after Frame 5's
+  // Overview / Databases / Backups / Logs.
   const tabs: { id: TabId; label: string }[] = [
     { id: "overview", label: "Overview" },
     {
       id: "databases",
       label: `Databases${databaseCount === undefined ? "" : ` (${databaseCount})`}`,
     },
-    ...(server.engine === "redis" ? [] : [{ id: "query" as const, label: "Query" }]),
     { id: "backups", label: "Backups" },
     { id: "logs", label: "Logs" },
+    ...(server.engine === "redis" ? [] : [{ id: "query" as const, label: "Query" }]),
   ];
   const active = tabs.some((entry) => entry.id === tab) ? tab : "overview";
 
   return (
-    <section aria-label="Database detail" className="rounded-md border border-border bg-card">
+    <section aria-label="Database detail" className="border border-border bg-card">
       <header className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-2.5">
         <h2 className="flex items-baseline gap-2 text-sm font-semibold">
           {label}
@@ -675,7 +658,7 @@ function DatabaseDetail({
             <span className="sr-only">Checking state…</span>
             <span
               aria-hidden
-              className="block h-5 w-16 animate-pulse rounded-sm bg-secondary"
+              className="block h-5 w-16 shimmer-skeleton rounded-sm"
             />
           </span>
         ) : (
@@ -698,10 +681,10 @@ function DatabaseDetail({
             aria-selected={active === entry.id}
             aria-controls={`db-tabpanel-${entry.id}`}
             onClick={() => onTab(entry.id)}
-            className={`relative h-9 cursor-pointer px-3 text-sm transition-colors duration-150 ${
+            className={`h-9 cursor-pointer px-3 text-[14px] transition-colors duration-150 ${
               active === entry.id
-                ? "font-medium text-foreground after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full after:bg-primary"
-                : "text-muted-foreground hover:text-foreground"
+                ? "border-b-2 border-foreground -mb-px font-semibold text-foreground"
+                : "text-ink-muted hover:text-foreground"
             }`}
           >
             {entry.label}
@@ -750,10 +733,10 @@ function DatabaseDetail({
 }
 
 /**
- * What the backend knows about one connection: the endpoint, the version, the
- * two state facts, and the credentials the browse uses. §26/§78: the password
- * is masked until asked for, and an empty password means the engine's own
- * default (DevX services answer as `root`/`postgres` with none).
+ * What the backend knows about one connection (preview Frame 5): facts on a
+ * 3-col `dl.kv`, then the engine's own database and backup lists. §26/§78:
+ * the password is masked until asked for, and an empty password means the
+ * engine's own default (DevX services answer as `root`/`postgres` with none).
  */
 function OverviewPanel({
   server,
@@ -787,96 +770,52 @@ function OverviewPanel({
       ? "could not be read"
       : null;
 
+  const listingParams = connectionParams(server, credentials, null);
+  const databaseList = useQuery({
+    queryKey: databaseListKey(server.service_id, listingParams.username),
+    queryFn: () => ipc.dbListDatabases(listingParams),
+    enabled: server.reachable,
+    retry: false,
+  });
+  const databaseNames = (databaseList.data?.rows ?? []).map((row) => cellText(row[0]));
+
+  const backups = useQuery({
+    queryKey: ["backups", server.service_id],
+    queryFn: () => ipc.backupList(server.service_id),
+  });
+
   return (
-    <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,22rem)]">
-      <section className="space-y-3">
-        <h3 className="text-xs font-semibold text-muted-foreground">Connection</h3>
-        <dl className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
-          <Fact label="Engine" value={engineLabel(server.engine)} />
-          <Fact
-            label="Version"
-            value={version ? `v${version}` : "not installed"}
-            mono={version !== undefined}
-          />
-          <Fact label="Host" value={server.host} mono />
-          <Fact label="Port" value={String(server.port)} mono />
-          <Fact
-            label="Databases"
-            value={databaseCount === undefined ? "unknown" : String(databaseCount)}
-            mono={databaseCount !== undefined}
-          />
-          <Fact
-            label="Listening"
-            value={server.reachable ? "accepting connections" : "nothing on this port"}
-          />
-        </dl>
-
-        <h3 className="pt-2 text-xs font-semibold text-muted-foreground">Process</h3>
-        <dl className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
-          <Fact
-            label="State"
-            value={
-              state === null
-                ? "no local binary"
-                : state === "pending"
-                  ? "reading…"
-                  : state === "unknown"
-                    ? "could not be read"
-                    : state
-            }
-          />
-          <Fact
-            label="Memory"
-            value={
-              metricUnread ??
-              (metric === undefined
-                ? "unknown"
-                : metric.memory_bytes === 0
-                  ? "not running"
-                  : formatBytes(metric.memory_bytes))
-            }
-            mono={metricUnread === null && metric !== undefined && metric.memory_bytes > 0}
-          />
-          <Fact
-            label="Processes"
-            value={metricUnread ?? (metric === undefined ? "unknown" : String(metric.processes))}
-            mono={metricUnread === null && metric !== undefined}
-          />
-        </dl>
-        <p className="text-xs text-ink-muted">
-          Memory and process counts cover the service DevX supervises. There is
-          no connection count: the backend does not sample one.
-        </p>
-      </section>
-
-      <section className="space-y-3">
-        <h3 className="text-xs font-semibold text-muted-foreground">Credentials</h3>
-        <p className="text-xs text-ink-muted">
-          Used for every statement and listing on this page. Left empty, the
-          engines DevX installs answer as <span className="font-mono">root</span>{" "}
-          (MariaDB) or <span className="font-mono">postgres</span> with no
-          password.
-        </p>
-        <div className="space-y-1.5">
-          <Label htmlFor="db-username">User</Label>
-          <Input
-            id="db-username"
-            className="font-mono text-xs"
-            value={credentials.username}
-            placeholder={server.engine === "postgre_sql" ? "postgres" : "root"}
-            onChange={(event) =>
-              onCredentials({ ...credentials, username: event.target.value })
-            }
-            autoComplete="off"
-            spellCheck={false}
-          />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="db-password">Password</Label>
-          <div className="flex items-center gap-2">
+    <div className="space-y-6">
+      <dl className="grid gap-x-6 gap-y-3 text-[13px] sm:grid-cols-2 lg:grid-cols-3">
+        <Fact label="Engine" value={engineLabel(server.engine)} />
+        <Fact
+          label="Version"
+          value={version ? `v${version}` : "not installed"}
+          mono={version !== undefined}
+        />
+        <Fact label="Host / Port" value={`${server.host} : ${server.port}`} mono />
+        <div className="min-w-0">
+          <dt className="text-xs text-ink-muted">User</dt>
+          <dd>
             <Input
-              id="db-password"
-              className="font-mono text-xs"
+              aria-label="User"
+              className="mt-0.5 h-8 font-mono text-xs"
+              value={credentials.username}
+              placeholder={server.engine === "postgre_sql" ? "postgres" : "root"}
+              onChange={(event) =>
+                onCredentials({ ...credentials, username: event.target.value })
+              }
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </dd>
+        </div>
+        <div className="min-w-0">
+          <dt className="text-xs text-ink-muted">Password</dt>
+          <dd className="mt-0.5 flex items-center gap-2">
+            <Input
+              aria-label="Password"
+              className="h-8 min-w-0 flex-1 font-mono text-xs"
               type={revealed ? "text" : "password"}
               value={credentials.password}
               placeholder="no password"
@@ -896,15 +835,131 @@ function OverviewPanel({
               aria-label={`${revealed ? "Hide" : "Show"} password`}
               onClick={() => setRevealed((current) => !current)}
             >
-              {revealed ? <EyeOff /> : <Eye />}
               {revealed ? "Hide" : "Show"}
             </Button>
-          </div>
+          </dd>
         </div>
-        <p className="text-xs text-ink-muted">
-          Held in memory for this window only; nothing is written to
-          <span className="font-mono"> config.toml</span>.
-        </p>
+        <Fact
+          label="Databases"
+          value={databaseCount === undefined ? "unknown" : String(databaseCount)}
+          mono={databaseCount !== undefined}
+        />
+        <Fact
+          label="State"
+          value={
+            state === null
+              ? "no local binary"
+              : state === "pending"
+                ? "reading…"
+                : state === "unknown"
+                  ? "could not be read"
+                  : state
+          }
+        />
+        <Fact
+          label="Listening"
+          value={server.reachable ? "accepting connections" : "nothing on this port"}
+        />
+        <Fact
+          label="Memory"
+          value={
+            metricUnread ??
+            (metric === undefined
+              ? "unknown"
+              : metric.memory_bytes === 0
+                ? "not running"
+                : formatBytes(metric.memory_bytes))
+          }
+          mono={metricUnread === null && metric !== undefined && metric.memory_bytes > 0}
+        />
+        <Fact
+          label="Processes"
+          value={metricUnread ?? (metric === undefined ? "unknown" : String(metric.processes))}
+          mono={metricUnread === null && metric !== undefined}
+        />
+      </dl>
+      <p className="text-xs text-ink-muted">
+        Credentials are held in memory for this window only; nothing is written to{" "}
+        <span className="font-mono">config.toml</span>. Memory and process counts
+        cover the service DevX supervises — there is no connection count: the
+        backend does not sample one.
+      </p>
+
+      <section className="space-y-3">
+        <h3 className="text-h3 tracking-tight">Databases</h3>
+        {databaseList.isPending ? (
+          <div className="space-y-2" role="status">
+            <span className="sr-only">Listing databases…</span>
+            {[0, 1].map((row) => (
+              <span
+                key={row}
+                aria-hidden
+                className="block h-4 shimmer-skeleton rounded-sm"
+              />
+            ))}
+          </div>
+        ) : databaseList.isError ? (
+          <p className="text-xs text-destructive">Could not read the database list.</p>
+        ) : databaseNames.length === 0 ? (
+          <p className="text-sm text-ink-muted">
+            {server.reachable
+              ? "This server reported no databases."
+              : "This engine is not reachable, so nothing can be listed."}
+          </p>
+        ) : (
+          <ul className="list-none border-t border-border">
+            {databaseNames.map((name) => (
+              <li
+                key={name}
+                className="flex items-center gap-2 border-b border-border py-2.5 text-sm last:border-b-0"
+                data-selectable
+                title={name}
+              >
+                <span className="truncate font-mono text-[13px]">{name}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="space-y-3">
+        <h3 className="text-h3 tracking-tight">Backups</h3>
+        {backups.isPending ? (
+          <div className="space-y-2" role="status">
+            <span className="sr-only">Loading backups…</span>
+            {[0, 1].map((row) => (
+              <span
+                key={row}
+                aria-hidden
+                className="block h-4 shimmer-skeleton rounded-sm"
+              />
+            ))}
+          </div>
+        ) : backups.isError ? (
+          <p className="text-xs text-destructive">Could not read the backup list.</p>
+        ) : (backups.data ?? []).length === 0 ? (
+          <p className="text-sm text-ink-muted">No backups yet.</p>
+        ) : (
+          <ul className="list-none border-t border-border">
+            {(backups.data ?? []).map((entry) => (
+              <li
+                key={entry.file_name}
+                className="flex items-center gap-2 border-b border-border py-2.5 text-sm last:border-b-0"
+              >
+                <span
+                  className="min-w-0 truncate font-mono text-[13px]"
+                  data-selectable
+                  title={entry.file_name}
+                >
+                  {entry.file_name}
+                </span>
+                <span className="ml-auto shrink-0 text-xs text-ink-muted">
+                  {formatSize(entry.size_bytes)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
     </div>
   );
@@ -995,7 +1050,7 @@ function DatabaseExplorer({
             <span
               key={row}
               aria-hidden
-              className="block h-4 animate-pulse rounded-sm bg-secondary"
+              className="block h-4 shimmer-skeleton rounded-sm"
             />
           ))}
         </div>
@@ -1026,12 +1081,12 @@ function DatabaseExplorer({
       ) : (
         <div className="max-h-[32rem] overflow-auto rounded-sm border border-border">
           <table className="w-full min-w-[28rem] text-left text-sm">
-            <thead className="sticky top-0 z-10 bg-surface-2 text-xs text-muted-foreground">
+            <thead className="sticky top-0 z-10 border-b border-border text-xs text-ink-muted">
               <tr>
-                <th className="px-3 py-2 font-medium">
+                <th className="px-3 py-2 font-normal">
                   {server.engine === "redis" ? "Key space" : "Database"}
                 </th>
-                <th className="px-3 py-2 text-right font-medium">Actions</th>
+                <th className="px-3 py-2 text-right font-normal">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -1084,7 +1139,7 @@ function DatabaseExplorer({
               <span
                 key={row}
                 aria-hidden
-                className="block h-4 animate-pulse rounded-sm bg-secondary"
+                className="block h-4 shimmer-skeleton rounded-sm"
               />
             ))}
           </div>
@@ -1393,7 +1448,7 @@ function BackupsPanel({ server }: { server: DbServer }) {
             <span
               key={row}
               aria-hidden
-              className="block h-4 animate-pulse rounded-sm bg-secondary"
+              className="block h-4 shimmer-skeleton rounded-sm"
             />
           ))}
         </div>
@@ -1419,11 +1474,11 @@ function BackupsPanel({ server }: { server: DbServer }) {
       ) : (
         <div className="max-h-[32rem] overflow-auto rounded-sm border border-border">
           <table className="w-full text-left text-sm">
-            <thead className="sticky top-0 z-10 bg-surface-2 text-xs text-muted-foreground">
+            <thead className="sticky top-0 z-10 border-b border-border text-xs text-ink-muted">
               <tr>
-                <th className="px-3 py-2 font-medium">File</th>
-                <th className="hidden px-3 py-2 font-medium sm:table-cell">Taken</th>
-                <th className="px-3 py-2 text-right font-medium">Actions</th>
+                <th className="px-3 py-2 font-normal">File</th>
+                <th className="hidden px-3 py-2 font-normal sm:table-cell">Taken</th>
+                <th className="px-3 py-2 text-right font-normal">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -1603,7 +1658,7 @@ function LogsPanel({ server, state }: { server: DbServer; state: EngineState }) 
             <span
               key={row}
               aria-hidden
-              className="block h-4 animate-pulse rounded-sm bg-secondary"
+              className="block h-4 shimmer-skeleton rounded-sm"
             />
           ))}
         </div>

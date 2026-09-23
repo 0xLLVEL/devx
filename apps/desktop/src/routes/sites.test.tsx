@@ -109,7 +109,10 @@ describe("SitesPage", () => {
     expect(screen.getByText("static.test")).toBeInTheDocument();
     expect(screen.getByText("PHP 8.4.25")).toBeInTheDocument();
     expect(screen.getByText("static")).toBeInTheDocument();
-    expect(screen.getByText(/fastcgi_pass 127\.0\.0\.1:9100/)).toBeInTheDocument();
+
+    // The FastCGI endpoint is detail-pane data (route hop + Runtime kv).
+    await userEvent.click(screen.getByRole("button", { name: /edit myapp\.test/i }));
+    expect(await screen.findByText(/127\.0\.0\.1:9100/)).toBeInTheDocument();
   });
 
   it("shows each site's URL with the scheme it is served on (§23)", async () => {
@@ -120,8 +123,10 @@ describe("SitesPage", () => {
 
     renderWithProviders(<SitesPage />);
 
-    expect(await screen.findByText("http://myapp.test")).toBeInTheDocument();
-    expect(screen.getByText("https://secure.test")).toBeInTheDocument();
+    await userEvent.click(await screen.findByRole("button", { name: /edit myapp\.test/i }));
+    expect((await screen.findAllByText("http://myapp.test")).length).toBeGreaterThan(0);
+    await userEvent.click(screen.getByRole("button", { name: /edit secure\.test/i }));
+    expect((await screen.findAllByText("https://secure.test")).length).toBeGreaterThan(0);
   });
 
   it("marks HTTPS sites with a badge", async () => {
@@ -387,6 +392,7 @@ describe("SitesPage", () => {
     renderWithProviders(<SitesPage />);
 
     await screen.findByText("myapp.test");
+    await user.click(screen.getByRole("button", { name: /edit myapp\.test/i }));
     await user.click(screen.getByRole("button", { name: /more actions for myapp\.test/i }));
     await user.click(await screen.findByRole("menuitem", { name: /remove site/i }));
 
@@ -402,19 +408,33 @@ describe("SitesPage", () => {
     await waitFor(() => expect(mocks.siteRemove).toHaveBeenCalledWith("myapp.test"));
   });
 
-  it("opens a site in the browser and its folder from the row actions (§91)", async () => {
+  it("opens a site in the browser and its folder from the detail actions (§91)", async () => {
     const user = userEvent.setup();
     mocks.siteList.mockResolvedValue([site({ https: true, url: "https://myapp.test" })]);
 
     renderWithProviders(<SitesPage />);
 
     await screen.findByText("myapp.test");
+    await user.click(screen.getByRole("button", { name: /edit myapp\.test/i }));
     await user.click(screen.getByRole("button", { name: /open myapp\.test in browser/i }));
     expect(mocks.openInBrowser).toHaveBeenCalledWith("https://myapp.test");
 
     await user.click(screen.getByRole("button", { name: /more actions for myapp\.test/i }));
     await user.click(await screen.findByRole("menuitem", { name: /open folder/i }));
     expect(mocks.openFolder).toHaveBeenCalledWith("C:\\dev\\myapp\\public");
+  });
+
+  it("copies the URL from the detail headrow", async () => {
+    const user = userEvent.setup();
+    mocks.siteList.mockResolvedValue([site()]);
+
+    renderWithProviders(<SitesPage />);
+
+    await screen.findByText("myapp.test");
+    await user.click(screen.getByRole("button", { name: /edit myapp\.test/i }));
+    await user.click(screen.getByRole("button", { name: /copy url for myapp\.test/i }));
+    await waitFor(() => expect(mocks.openInBrowser).not.toHaveBeenCalled());
+    expect(await screen.findByText("URL copied")).toBeInTheDocument();
   });
 
   it("opens whatever URL the backend resolved (bare on owner loopback)", async () => {
@@ -426,6 +446,7 @@ describe("SitesPage", () => {
     renderWithProviders(<SitesPage />);
 
     await screen.findByText("mtdb.test");
+    await user.click(screen.getByRole("button", { name: /edit mtdb\.test/i }));
     await user.click(screen.getByRole("button", { name: /open mtdb\.test in browser/i }));
     expect(mocks.openInBrowser).toHaveBeenCalledWith("http://mtdb.test");
   });
@@ -439,6 +460,7 @@ describe("SitesPage", () => {
     renderWithProviders(<SitesPage />);
 
     await screen.findByText("mtdb.test");
+    await user.click(screen.getByRole("button", { name: /edit mtdb\.test/i }));
     await user.click(screen.getByRole("button", { name: /open mtdb\.test in browser/i }));
     expect(mocks.openInBrowser).toHaveBeenCalledWith("http://mtdb.test:8085");
   });
@@ -450,7 +472,7 @@ describe("SitesPage", () => {
 
     renderWithProviders(<SitesPage />);
 
-    const row = (await screen.findByText("myapp.test")).closest("tr");
+    const row = (await screen.findByText("myapp.test")).closest(".group");
     expect(row).not.toBeNull();
     fireEvent.contextMenu(row!, { clientX: 44, clientY: 70 });
 
@@ -511,7 +533,7 @@ describe("SitesPage", () => {
 
     renderWithProviders(<SitesPage />);
 
-    expect(await screen.findByText(/resolver stopped/i)).toBeInTheDocument();
+    expect(await screen.findByText(/resolver off/i)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /start/i }));
     await waitFor(() => expect(mocks.dnsStart).toHaveBeenCalledTimes(1));
   });
@@ -537,7 +559,7 @@ describe("SitesPage", () => {
 
     renderWithProviders(<SitesPage />);
 
-    expect(await screen.findByText(/resolver :9353/i)).toBeInTheDocument();
+    expect(await screen.findByText(/resolver on/i)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /stop/i }));
     await waitFor(() => expect(mocks.dnsStop).toHaveBeenCalledTimes(1));
   });

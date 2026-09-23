@@ -1,17 +1,9 @@
 import type { ReactNode } from "react";
 
-import { cn } from "@/lib/utils";
-
 /**
- * Flat, functional page header: a solid title row with optional context
- * above it and the page's primary action opposite. Replaces the old gradient
- * HeroBand — the page headline reads as a sentence, not a banner
- * (see DESIGN.md §63).
- *
- * §63 asks for Title + Description + Primary Action, with the row of search,
- * filters or tabs underneath: that is `primaryAction` and `children`. `right`
- * predates §63 and keeps working, so pages that put status or secondary text
- * opposite the headline stay exactly as they were.
+ * Flat page header: eyebrow, big title, subtitle, optional status box and the
+ * page's primary action opposite. No bottom rule — panels below supply their
+ * own borders (preview `.headrow`).
  */
 export function PageHeader({
   eyebrow,
@@ -27,36 +19,38 @@ export function PageHeader({
   title: ReactNode;
   description?: ReactNode;
   right?: ReactNode;
-  /** §63's primary action, pinned to the far end of the title row. */
+  /** Primary action, pinned to the far end of the title row. */
   primaryAction?: ReactNode;
-  /** §63's search / filters / tabs row, below the title. */
+  /** Search / filters / tabs row, below the title. */
   children?: ReactNode;
   className?: string;
 }) {
   return (
-    <div className={cn("border-b border-border pb-4", className)}>
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0 space-y-1">
+    <div className={className}>
+      <div className="flex flex-wrap items-start justify-between gap-6">
+        <div className="min-w-0 space-y-2">
           {eyebrow ? (
-            <p className="text-caption text-ink-muted">{eyebrow}</p>
+            <p className="text-[13px] tracking-[0.08em] text-ink-muted uppercase">
+              {eyebrow}
+            </p>
           ) : null}
-          <h2 className="text-xl font-semibold tracking-tight">{title}</h2>
+          <h2 className="text-h1 tracking-tight">{title}</h2>
           {description ? (
             <div className="text-sm text-muted-foreground">{description}</div>
           ) : null}
         </div>
         {right || primaryAction ? (
-          <div className="flex flex-wrap items-start gap-4">
+          <div className="flex flex-wrap items-start gap-6">
             {right ? (
               <div className="flex flex-col items-end gap-2">{right}</div>
             ) : null}
             {primaryAction ? (
-              <div className="flex items-center gap-2">{primaryAction}</div>
+              <div className="flex items-center gap-3">{primaryAction}</div>
             ) : null}
           </div>
         ) : null}
       </div>
-      {children ? <div className="mt-3">{children}</div> : null}
+      {children ? <div className="mt-6">{children}</div> : null}
     </div>
   );
 }

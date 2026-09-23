@@ -126,7 +126,7 @@ function MenuPanel({
         top: position?.top ?? 0,
         visibility: position ? "visible" : "hidden",
       }}
-      className="fixed z-50 min-w-44 rounded-lg border border-line-strong bg-elevated p-1 shadow-md"
+      className="fixed z-50 min-w-44 rounded-lg border border-line-strong bg-elevated p-1"
     >
       {items.map((item) => (
         <button

@@ -17,9 +17,6 @@ import { DashboardPage } from "@/routes/dashboard";
  * chunk, and the dashboard is left as a static import on purpose, since it is
  * the route the window opens on.
  */
-const ProjectsPage = lazy(() =>
-  import("@/routes/projects").then((module) => ({ default: module.ProjectsPage })),
-);
 const ComponentsPage = lazy(() =>
   import("@/routes/components").then((module) => ({ default: module.ComponentsPage })),
 );
@@ -31,9 +28,6 @@ const SitesPage = lazy(() =>
 );
 const LogsPage = lazy(() =>
   import("@/routes/logs").then((module) => ({ default: module.LogsPage })),
-);
-const TerminalPage = lazy(() =>
-  import("@/routes/terminal").then((module) => ({ default: module.TerminalPage })),
 );
 const SharePage = lazy(() =>
   import("@/routes/share").then((module) => ({ default: module.SharePage })),
@@ -77,12 +71,10 @@ export function App() {
       <Suspense fallback={<RouteSkeleton />}>
         <Routes>
           <Route path="/" element={<DashboardPage />} />
-          <Route path="/projects" element={<ProjectsPage />} />
           <Route path="/components" element={<ComponentsPage />} />
           <Route path="/services" element={<ServicesPage />} />
           <Route path="/sites" element={<SitesPage />} />
           <Route path="/logs" element={<LogsPage />} />
-          <Route path="/terminal" element={<TerminalPage />} />
           <Route path="/share" element={<SharePage />} />
           <Route path="/databases" element={<DatabasesPage />} />
           <Route path="/mail" element={<MailPage />} />
@@ -94,14 +86,14 @@ export function App() {
   );
 }
 
-/** §101/§37: a page-shaped skeleton, not a spinner, while a chunk arrives. */
+/** A page-shaped skeleton, not a spinner, while a chunk arrives. */
 function RouteSkeleton() {
   return (
-    <div className="space-y-4 p-5" role="status">
+    <div className="space-y-6 p-8" role="status">
       <span className="sr-only">Loading this page…</span>
-      <div className="h-6 w-56 animate-pulse rounded-sm bg-secondary" />
-      <div className="h-4 w-80 animate-pulse rounded-sm bg-secondary" />
-      <div className="h-48 animate-pulse rounded-md bg-secondary" />
+      <div className="h-6 w-56 shimmer-skeleton rounded-sm" />
+      <div className="h-4 w-80 shimmer-skeleton rounded-sm" />
+      <div className="h-48 shimmer-skeleton rounded-md" />
     </div>
   );
 }

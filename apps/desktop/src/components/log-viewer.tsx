@@ -331,7 +331,7 @@ export function LogViewer({
               aria-hidden
               className={cn(
                 "size-1.5 rounded-full",
-                paused ? "bg-warning" : "animate-pulse bg-success",
+                paused ? "bg-warning" : "bg-success",
               )}
             />
             {paused ? "Paused — the feed is stopped" : "Live"}

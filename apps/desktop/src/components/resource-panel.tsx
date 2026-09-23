@@ -1,4 +1,4 @@
-import { CircleAlert, Gauge, Loader2 } from "lucide-react";
+import { CircleAlert, Loader2 } from "lucide-react";
 
 import { PortInspectorButton } from "@/components/port-inspector";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -58,12 +58,11 @@ export function ResourcePanel({
   return (
     <Card>
       <CardHeader className="pb-1.5">
-        <CardTitle className="flex items-center gap-2 text-sm font-medium">
-          <Gauge className="size-4 text-muted-foreground" aria-hidden />
-          System resources
+        <CardTitle className="flex items-center gap-2">
+          Resources
           {/* Said out loud: these are the services DevX supervises, not the
               machine. The backend has no machine-wide sampler. */}
-          <span className="ml-auto text-caption font-normal text-ink-muted">
+          <span className="ml-auto text-[13px] font-normal text-ink-muted">
             supervised services
           </span>
         </CardTitle>

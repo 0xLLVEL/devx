@@ -83,12 +83,12 @@ export function CreateSiteDialog({ open, phpChoices, phpChoicesError, onRetryPhp
       <div className="space-y-4">
         <div className="flex items-center justify-between gap-3 rounded-lg border border-border/70 bg-surface-2/30 p-2.5">
           <div className="min-w-0 flex-1"><p className="text-xs font-medium text-foreground">{isTemplate ? "Starter templates" : "Need a starter project?"}</p><p className="text-[11px] text-muted-foreground truncate">{isTemplate ? "Select a template below to scaffold files into your project folder." : "Scaffold Laravel, WordPress, PHP, static sites, or clone a Git repository."}</p></div>
-          <Button type="button" variant="outline" size="sm" className="h-7 shrink-0 gap-1.5 text-xs font-medium border-border/80 bg-surface-1 hover:bg-surface-2" onClick={() => { setMode(isTemplate ? "manual" : "template"); if (!isTemplate && !hostname) setHostname("mysite.test"); }}>{isTemplate ? "Manual configuration" : <><Sparkles className="size-3 text-primary" />Import from template</>}</Button>
+          <Button type="button" variant="outline" size="sm" className="h-7 shrink-0 gap-1.5 text-xs font-medium border-border/80 bg-surface-2 hover:bg-hover" onClick={() => { setMode(isTemplate ? "manual" : "template"); if (!isTemplate && !hostname) setHostname("mysite.test"); }}>{isTemplate ? "Manual configuration" : <><Sparkles className="size-3 text-ink-muted" />Import from template</>}</Button>
         </div>
         {isTemplate && (
           <div className="space-y-2">
             <Label className="text-xs">Choose template</Label>
-            {templates.isPending ? <div className="grid grid-cols-2 gap-2">{[0,1,2,3].map((i) => <div key={i} className="h-16 animate-pulse rounded-lg bg-surface-2/60" />)}</div>
+            {templates.isPending ? <div className="grid grid-cols-2 gap-2">{[0,1,2,3].map((i) => <div key={i} className="h-16 shimmer-skeleton rounded-lg" />)}</div>
               : templates.data && templates.data.length > 0 ? (
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   {templates.data.map((tmpl) => {
@@ -98,13 +98,13 @@ export function CreateSiteDialog({ open, phpChoices, phpChoicesError, onRetryPhp
                         <div className="flex items-center justify-between w-full">
                           <span className="font-semibold text-xs text-foreground flex items-center gap-1.5">
                             {tmpl.id === "laravel" && <span className="text-destructive font-bold text-xs">▲</span>}
-                            {tmpl.id === "wordpress" && <Globe className="size-3.5 text-primary" />}
-                            {tmpl.id === "git" && <GitBranch className="size-3.5 text-primary" />}
-                            {tmpl.id === "php" && <FileCode className="size-3.5 text-primary" />}
+                            {tmpl.id === "wordpress" && <Globe className="size-3.5 text-ink-muted" />}
+                            {tmpl.id === "git" && <GitBranch className="size-3.5 text-ink-muted" />}
+                            {tmpl.id === "php" && <FileCode className="size-3.5 text-ink-muted" />}
                             {tmpl.id === "static" && <Globe className="size-3.5 text-muted-foreground" />}
                             {tmpl.name}
                           </span>
-                          {tmpl.local ? <Badge variant="outline" className="text-[10px] px-1 py-0">Local</Badge> : <Badge variant="secondary" className="text-[10px] px-1 py-0">Scaffold</Badge>}
+                          {tmpl.local ? <Badge variant="outline" className="text-[10px] px-1 py-0">Local</Badge> : <Badge variant="default" className="text-[10px] px-1 py-0">Scaffold</Badge>}
                         </div>
                         <p className="mt-1 text-[11px] text-muted-foreground line-clamp-2">{tmpl.description}</p>
                       </button>

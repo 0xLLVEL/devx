@@ -14,6 +14,17 @@ export function serverLabel(server: SiteStatus["web_server"]): string {
         : "frankenphp";
 }
 
+/** Each web server owns its own loopback (CONTEXT: Site). */
+export function serverLoopback(server: SiteStatus["web_server"]): string {
+  return server === "Nginx"
+    ? "127.0.0.1"
+    : server === "Apache"
+      ? "127.0.0.2"
+      : server === "Caddy"
+        ? "127.0.0.3"
+        : "127.0.0.4";
+}
+
 export function siteUrl(site: SiteStatus): string {
   // ponytail: the backend owns URL resolution (bare on the owner's
   // loopback, `:port` on override); the UI just opens what it is told.

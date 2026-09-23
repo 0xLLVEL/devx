@@ -65,7 +65,7 @@ export function SiteBehaviorEditor({ site, phpChoices }: { site: SiteStatus; php
   const err = save.error instanceof Error ? save.error : null;
 
   return (
-    <div className="rounded-lg border border-border bg-surface-1/80 p-4 space-y-4">
+    <div className="rounded-lg border border-border bg-surface-2/80 p-4 space-y-4">
       <h3 className="text-xs font-semibold text-foreground">Behavior</h3>
       <DocrootField id={`edit-docroot-${site.hostname}`} value={docroot} onChange={setDocroot} />
       <div className="grid gap-3 sm:grid-cols-3">

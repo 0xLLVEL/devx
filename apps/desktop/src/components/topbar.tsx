@@ -1,14 +1,4 @@
-import {
-  Monitor,
-  Moon,
-  PanelLeftClose,
-  PanelLeftOpen,
-  Search,
-  Settings,
-  Sun,
-  TerminalSquare,
-  type LucideIcon,
-} from "lucide-react";
+import { Monitor, Moon, Settings, Sun, type LucideIcon } from "lucide-react";
 import { useEffect } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
@@ -19,121 +9,130 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
 import { useToast } from "@/components/ui/toast";
 import { ipc } from "@/lib/ipc";
+import { navCrumb } from "@/lib/navigation";
+import { useSystemStatus, type SystemState } from "@/lib/shell-data";
+import { useServiceMetrics } from "@/lib/queries";
+import { cn } from "@/lib/utils";
 
 /**
- * Topbar (§6): page context on the left, the global search trigger in the
- * middle, the terminal, notification, settings and theme slots on the right.
- * 64px tall.
- *
- * It is an opaque surface rather than glass: §14 keeps the blur treatment for
- * floating layers and asks for real surfaces everywhere else.
+ * Topbar (preview `.top`): brand · crumbs · status voice · search · actions.
+ * Square controls, hairline borders, no logo mark — a dot and the wordmark.
  */
+
+const STATUS_DOT: Record<SystemState, string> = {
+  ready: "bg-success",
+  attention: "bg-warning",
+  error: "bg-destructive",
+  starting: "bg-warning",
+  stopping: "bg-warning",
+  unknown: "bg-muted-foreground/40",
+};
+
+const UNREADABLE_LABEL = "Status unavailable";
+const UNREADABLE_DETAIL = "The service metrics could not be read.";
+
 export function Topbar({
-  collapsed,
-  onToggleSidebar,
+  className,
   onOpenSearch,
-  terminalOpen,
-  onToggleTerminal,
 }: {
-  collapsed: boolean;
-  onToggleSidebar: () => void;
+  className?: string;
   onOpenSearch: () => void;
-  /** Whether the bottom terminal drawer (§31) is showing. */
-  terminalOpen: boolean;
-  onToggleTerminal: () => void;
 }) {
-  const { pathname } = useLocation();
   const appInfo = useQuery({ queryKey: ["app-info"], queryFn: ipc.appInfo });
-  // §31: the Terminal page already shows the console, so the drawer has
-  // nothing to add there — and its toggle is not offered there either (§56: no
-  // control that does nothing).
-  const showTerminalToggle = pathname !== "/terminal";
+  const location = useLocation();
+  const status = useSystemStatus();
+  const metrics = useServiceMetrics();
+  const crumb = navCrumb(location.pathname);
+
+  // §120 #10: a failed read stays visible; a read still in flight stays absent.
+  const resolved =
+    status ??
+    (metrics.isError
+      ? {
+          state: "unknown" as SystemState,
+          label: UNREADABLE_LABEL,
+          detail: UNREADABLE_DETAIL,
+          failedCount: 0,
+        }
+      : null);
 
   return (
-    <header className="flex h-16 shrink-0 items-center gap-4 border-b border-line-subtle bg-topbar px-3">
-      <div className="flex min-w-0 flex-1 items-center gap-3">
-        <Tooltip label={collapsed ? "Expand sidebar" : "Collapse sidebar"}>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            aria-expanded={!collapsed}
-            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-            onClick={onToggleSidebar}
-          >
-            {collapsed ? <PanelLeftOpen /> : <PanelLeftClose />}
-          </Button>
-        </Tooltip>
-
-        <div className="flex min-w-0 items-center gap-2" aria-label="DEVX">
-          <svg
-            width="18"
-            height="18"
-            viewBox="0 0 64 64"
-            aria-hidden
-            className="shrink-0"
-          >
-            <path
-              d="M51 12 L37 52"
-              stroke="currentColor"
-              strokeWidth="11"
-              strokeLinecap="round"
-              className="text-foreground"
-            />
-            <circle cx="19" cy="44" r="8" style={{ fill: "var(--accent)" }} />
-          </svg>
-          <span className="font-mono text-sm font-semibold tracking-tight text-foreground flex items-center">
-            DEV<span className="bg-gradient-to-r from-accent to-accent-hover bg-clip-text text-transparent font-bold">X</span>
-          </span>
-          {appInfo.data ? (
-            <span className="font-mono text-caption text-ink-muted">
-              v{appInfo.data.version}
-            </span>
-          ) : null}
-        </div>
+    <header
+      className={cn(
+        "flex h-[72px] shrink-0 items-center gap-4 border-b border-line-subtle bg-topbar px-8",
+        className,
+      )}
+    >
+      <div className="flex min-w-0 items-center gap-2.5" aria-label="DEVX">
+        <span
+          aria-hidden
+          className={cn(
+            "size-2 shrink-0 rounded-full",
+            resolved ? STATUS_DOT[resolved.state] : "bg-muted-foreground/40",
+          )}
+        />
+        <span className="font-mono text-[15px] font-semibold tracking-tight text-foreground">
+          DEVX
+        </span>
+        {appInfo.data ? (
+          <span className="text-[11px] text-ink-muted">v{appInfo.data.version}</span>
+        ) : null}
       </div>
 
-      {/* §6: the search trigger sits in the middle and names its own shortcut. */}
+      <div className="flex min-w-0 items-center gap-1.5 border-l border-border pl-4 text-[13px] whitespace-nowrap text-ink-muted">
+        {crumb.section ? (
+          <>
+            <span>{crumb.section}</span>
+            <span className="text-ink-muted/60">/</span>
+          </>
+        ) : null}
+        <b className="font-semibold text-foreground">{crumb.page}</b>
+      </div>
+
+      {resolved ? (
+        <div className="flex items-center gap-1.5 text-xs whitespace-nowrap text-ink-muted">
+          <span
+            aria-hidden
+            className={cn("size-2 shrink-0 rounded-full", STATUS_DOT[resolved.state])}
+          />
+          <span>{resolved.label}</span>
+          {resolved.failedCount > 0 ? (
+            <span> · {resolved.failedCount} failed</span>
+          ) : null}
+          {!status && metrics.isError ? (
+            <span className="text-ink-muted">{UNREADABLE_DETAIL}</span>
+          ) : null}
+        </div>
+      ) : null}
+
       <button
         type="button"
         onClick={onOpenSearch}
-        className="group flex h-9 w-full max-w-md items-center gap-2.5 rounded-md border border-border bg-gradient-to-b from-surface-2 to-surface-1 px-3 text-left text-sm text-ink-muted shadow-xs transition-[border-color,background-color,box-shadow] duration-150 hover:border-line-strong hover:bg-hover hover:shadow-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+        className="ml-auto flex h-9 min-w-40 items-center gap-3 border border-line-strong bg-transparent px-4 text-left text-[13px] text-ink-muted transition-colors duration-150 hover:border-foreground hover:bg-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
       >
-        <Search className="size-4 shrink-0 transition-colors duration-150 group-hover:text-foreground" aria-hidden />
         <span className="min-w-0 flex-1 truncate">Search anything...</span>
-        <kbd className="rounded-sm border border-line-subtle bg-surface-2/60 px-1.5 py-0.5 font-mono text-caption text-ink-muted transition-colors duration-150 group-hover:border-line-strong group-hover:text-ink-secondary">
+        <kbd className="border border-line-strong px-1.5 py-0.5 font-mono text-[11px] text-ink-muted">
           Ctrl K
         </kbd>
       </button>
 
-      <div className="flex flex-1 items-center justify-end gap-1">
-        {showTerminalToggle ? (
-          <Tooltip label={`Terminal drawer (Ctrl T)`}>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              aria-label="Terminal drawer"
-              aria-expanded={terminalOpen}
-              onClick={onToggleTerminal}
-            >
-              <TerminalSquare />
-            </Button>
-          </Tooltip>
-        ) : null}
+      <div className="flex items-center gap-1">
         <NotificationSlot />
+        <ThemeSlot />
         <Tooltip label="Settings">
           {/* A link, not a button wrapping a link: nested interactive elements
               break keyboard navigation. */}
           <Link
             to="/settings"
             aria-label="Settings"
-            className={buttonVariants({ variant: "ghost", size: "icon" })}
+            className={cn(
+              buttonVariants({ variant: "ghost", size: "icon" }),
+              "border-transparent text-ink-muted hover:border-line-strong hover:text-foreground",
+            )}
           >
             <Settings />
           </Link>
         </Tooltip>
-        <ThemeSlot />
       </div>
     </header>
   );
@@ -145,7 +144,7 @@ const THEME_ICONS: Record<string, LucideIcon> = {
   dark: Moon,
 };
 
-/** §46: the three choices, cycled from the chrome. */
+/** The three theme choices, cycled from the chrome. */
 function ThemeSlot() {
   const theme = useTheme();
   const toast = useToast();
@@ -172,6 +171,7 @@ function ThemeSlot() {
         aria-label={theme.ready ? `${label}, change theme` : "Change theme"}
         disabled={!theme.ready || theme.saving}
         onClick={() => theme.setTheme(nextTheme(theme.theme))}
+        className="border-transparent text-ink-muted hover:border-line-strong hover:text-foreground"
       >
         <Icon />
       </Button>

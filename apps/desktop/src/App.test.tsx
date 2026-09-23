@@ -35,7 +35,6 @@ const ROUTES: readonly { path: string; label: string }[] = [
   { path: "/services", label: "Services" },
   { path: "/sites", label: "Sites" },
   { path: "/logs", label: "Logs" },
-  { path: "/terminal", label: "Terminal" },
   { path: "/share", label: "Share" },
   { path: "/databases", label: "Databases" },
   { path: "/mail", label: "Mail" },
@@ -63,7 +62,6 @@ vi.mock("@/lib/ipc", async (importOriginal) => {
     mailStatus: { running: false, port: null, smtp_port: 1025, total: null, unread: null },
     updateCheck: { current: "0.1.0", latest: null, update_available: false, url: null },
     doctorRun: { status: "pass", checks: [] },
-    terminalPath: "",
     profileList: [],
     eventsRecent: [],
     // §98: nothing recorded on a fresh machine, which the bell must render
@@ -95,7 +93,7 @@ vi.mock("@/lib/ipc", async (importOriginal) => {
       },
     ),
     // No event bus outside the Tauri runtime; a listening stub is enough for
-    // the shell's subscription and the terminal's output stream.
+    // the shell's subscription.
     ipcEvents: new Proxy({}, { get: () => ({ listen: () => Promise.resolve(() => {}) }) }),
   };
 });
@@ -144,7 +142,7 @@ describe("every route (§132)", () => {
   it("covers every route the router declares", () => {
     // A route added to App.tsx without a smoke entry is the one that would
     // reach a user unverified, so the list is asserted rather than trusted.
-    expect(ROUTES).toHaveLength(11);
+    expect(ROUTES).toHaveLength(10);
     expect(new Set(ROUTES.map((route) => route.path)).size).toBe(ROUTES.length);
     expect(ROUTES.map((route) => route.path)).toContain("/");
   });

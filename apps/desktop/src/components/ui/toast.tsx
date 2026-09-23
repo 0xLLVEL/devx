@@ -170,7 +170,7 @@ function ToastItem({
     <div
       // Errors interrupt; everything else waits its turn.
       role={record.type === "error" ? "alert" : "status"}
-      className="toast-enter glass-surface pointer-events-auto flex items-start gap-3 rounded-lg p-3 shadow-lg"
+      className="toast-enter pointer-events-auto flex items-start gap-3 rounded-lg border border-border bg-elevated p-3"
     >
       <Icon className={cn("mt-0.5 size-4 shrink-0", ACCENTS[record.type])} aria-hidden />
       <div className="min-w-0 flex-1">

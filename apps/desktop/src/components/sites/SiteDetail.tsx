@@ -1,12 +1,14 @@
-import { ExternalLink } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Copy, ExternalLink } from "lucide-react";
+import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { OverflowMenu } from "@/components/ui/menu";
 import { cn } from "@/lib/utils";
-import type { SiteStatus, CaStatus, DnsStatus } from "@/lib/ipc";
-import { serverLabel, siteUrl } from "./site-helpers";
+import type { SiteStatus, CaStatus, DnsStatus, DnsMode, PhpPoolStatus } from "@/lib/ipc";
+import { PingButton, type PingResult } from "./PingButton";
+import { RoutePanel } from "./RoutePanel";
+import { serverLabel, serverLoopback, siteUrl } from "./site-helpers";
 import { Globe } from "lucide-react";
 
 type TabId = "overview" | "aliases" | "env" | "requests" | "auth";
@@ -15,16 +17,16 @@ type Props = {
   site: SiteStatus | null;
   tab: TabId;
   onTabChange: (t: TabId) => void;
-  phpChoices: string[];
   dns?: DnsStatus;
   ca?: CaStatus;
-  dnsSuffix?: string;
-  configDnsMode?: string;
+  mode?: DnsMode;
+  pool?: PhpPoolStatus | null;
   onOpenInBrowser: (s: SiteStatus) => void;
   onOpenFolder: (s: SiteStatus) => void;
   onRemove: (s: SiteStatus) => void;
   onCopyUrl: (s: SiteStatus) => void;
-  pingSlot: React.ReactNode;
+  /** Network status strip, rendered under the headrow (preview Frame 3). */
+  networkStrip?: React.ReactNode;
   overviewSlot: React.ReactNode;
   aliasesSlot: React.ReactNode;
   envSlot: React.ReactNode;
@@ -32,84 +34,137 @@ type Props = {
   authSlot: React.ReactNode;
 };
 
-const TABS: Array<[TabId, (s: SiteStatus) => string]> = [
-  ["overview", () => "Overview"],
-  ["aliases", (s) => `Aliases${s.aliases.length > 0 ? ` (${s.aliases.length})` : ""}`],
-  ["env", (s) => `Environment${Object.keys(s.env).length > 0 ? ` (${Object.keys(s.env).length})` : ""}`],
-  ["requests", () => "Requests"],
-  ["auth", () => "Auth"],
+const TABS: Array<[TabId, (s: SiteStatus) => string, (s: SiteStatus) => number | null]> = [
+  ["overview", () => "Overview", () => null],
+  ["aliases", () => "Aliases", (s) => s.aliases.length],
+  ["env", () => "Env", (s) => Object.keys(s.env).length],
+  ["requests", () => "Requests", () => null],
+  ["auth", () => "Auth", () => null],
 ];
 
-export function SiteDetail({ site, tab, onTabChange, onOpenInBrowser, onOpenFolder, onRemove, onCopyUrl, pingSlot, overviewSlot, aliasesSlot, envSlot, requestsSlot, authSlot, dns, ca, configDnsMode, dnsSuffix }: Props) {
+function KvHead({ children }: { children: React.ReactNode }) {
+  return <div className="mt-5 text-xs tracking-[0.08em] text-ink-muted uppercase first:mt-0">{children}</div>;
+}
+
+function Kv({ label, value, mono }: { label: string; value: React.ReactNode; mono?: boolean }) {
+  return (
+    <div className="flex gap-4 border-b border-border/50 py-2 last:border-0">
+      <dt className="w-36 shrink-0 text-[13px] text-ink-muted">{label}</dt>
+      <dd className={cn("min-w-0 flex-1 truncate text-[13px] text-foreground", mono && "font-mono")} title={typeof value === "string" ? value : undefined} data-selectable={mono ? true : undefined}>
+        {value}
+      </dd>
+    </div>
+  );
+}
+
+export function SiteDetail({ site, tab, onTabChange, onOpenInBrowser, onOpenFolder, onRemove, onCopyUrl, networkStrip, overviewSlot, aliasesSlot, envSlot, requestsSlot, authSlot, dns, ca, mode, pool }: Props) {
+  const [ping, setPing] = useState<PingResult | null>(null);
+  useEffect(() => { setPing(null); }, [site?.hostname]);
+
   if (!site) {
     return (
-      <div className="flex flex-1 flex-col items-center justify-center p-8 text-center">
-        <EmptyState icon={<Globe />} title="No site selected." description="Choose a site from the list on the left to view its overview, DNS, behavior, aliases and logs." />
+      <div className="flex flex-col">
+        {networkStrip ?? null}
+        <div className="flex flex-1 flex-col items-center justify-center p-8 text-center">
+          <EmptyState icon={<Globe />} title="No site selected." description="Choose a site from the list on the left to view its overview, DNS, behavior, aliases and logs." />
+        </div>
       </div>
     );
   }
 
+  const aliasesText = site.aliases.length > 0 ? site.aliases.join(", ") : "None";
+  const cert = !site.https
+    ? "Not issued"
+    : ca?.trusted === true
+      ? "DevX CA · valid"
+      : ca?.trusted === false
+        ? "Issued · CA untrusted"
+        : "Issued · CA unknown";
+  const dnsValue =
+    mode === "hosts_file" || mode === undefined
+      ? `${site.hostname} → ${serverLoopback(site.web_server)} · hosts file`
+      : `${site.hostname} → ${serverLoopback(site.web_server)} · resolver .${dns?.suffix ?? "test"}`;
+
   return (
     <div className="flex flex-col">
-      <div className="flex items-start justify-between gap-4 p-6 pb-4">
-        <div className="min-w-0 space-y-1">
-          <h2 className="truncate font-mono text-2xl font-bold tracking-tight text-foreground"><span className="sr-only">Site </span>{site.hostname}</h2>
-          <a href={siteUrl(site)} target="_blank" rel="noreferrer" onClick={(e) => { e.preventDefault(); void onOpenInBrowser(site); }} className="inline-flex items-center gap-1 font-mono text-xs text-muted-foreground hover:text-primary transition-colors">{siteUrl(site)}</a>
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0 space-y-2">
+          <p className="text-[13px] tracking-[0.08em] text-ink-muted uppercase">
+            {serverLabel(site.web_server)} · {site.php_version ? `PHP ${site.php_version}` : "Static"} ·{" "}
+            <span className={site.https ? "text-success" : undefined}>{site.https ? "HTTPS" : "HTTP"}</span>
+            {ping && ping.status !== null ? (
+              <>
+                {" · "}
+                <span className={ping.status < 500 ? "text-success" : "text-warning"}>
+                  {ping.status}{ping.latency_ms !== null ? ` · ${ping.latency_ms}ms` : ""}
+                </span>
+              </>
+            ) : null}
+          </p>
+          <h2 className="truncate font-mono text-h1 font-semibold tracking-tight text-foreground"><span className="sr-only">Site </span>{site.hostname}</h2>
+          <p className="font-mono text-[13px] text-ink-muted">
+            <a href={siteUrl(site)} target="_blank" rel="noreferrer" onClick={(e) => { e.preventDefault(); void onOpenInBrowser(site); }} className="hover:text-foreground transition-colors" data-selectable>{siteUrl(site)}</a>
+            {" → "}
+            <span data-selectable>{site.docroot}</span>
+          </p>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
-          {pingSlot}
-          <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs font-medium border-border/80 bg-surface-1 hover:bg-surface-2" onClick={() => void onOpenInBrowser(site)} aria-label={`Open ${site.hostname} in browser`}>
-            <ExternalLink className="size-3.5 text-muted-foreground" />Open
+        <div className="flex shrink-0 items-center gap-1">
+          <PingButton hostname={site.hostname} onResult={setPing} />
+          <Button variant="ghost" size="sm" className="h-8 gap-1.5 text-[13px]" onClick={() => onCopyUrl(site)} aria-label={`Copy URL for ${site.hostname}`}>
+            <Copy className="size-3.5" />Copy URL
+          </Button>
+          <Button variant="ghost" size="sm" className="h-8 gap-1.5 text-[13px]" onClick={() => void onOpenInBrowser(site)} aria-label={`Open ${site.hostname} in browser`}>
+            <ExternalLink className="size-3.5" />Open
           </Button>
           <OverflowMenu
             label={`More actions for ${site.hostname}`}
             items={[
               { id: "folder", label: "Open folder", onSelect: () => void onOpenFolder(site) } as never,
-              { id: "copy", label: "Copy URL", onSelect: () => onCopyUrl(site) } as never,
               { id: "remove", label: "Remove site", destructive: true, onSelect: () => onRemove(site) } as never,
             ]}
           />
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-4 border-y border-border/60 px-6 py-3.5 sm:grid-cols-3 lg:grid-cols-6">
-        <div><span className="block text-[11px] text-muted-foreground">Status</span><span className="mt-0.5 block text-xs font-medium text-foreground">Stopped</span></div>
-        <div><span className="block text-[11px] text-muted-foreground">Document root</span><span className="mt-0.5 block truncate font-mono text-xs text-foreground" title={site.docroot} data-selectable>{site.docroot}</span></div>
-        <div><span className="block text-[11px] text-muted-foreground">Runtime</span><span className="mt-0.5 block text-xs font-medium text-foreground">{site.php_version ? `PHP ${site.php_version}` : "Static"}</span>{site.php_endpoint ? <span className="mt-0.5 block truncate font-mono text-[10px] text-muted-foreground" data-selectable>fastcgi_pass {site.php_endpoint}</span> : null}</div>
-        <div><span className="block text-[11px] text-muted-foreground">Web server</span><span className="mt-0.5 block text-xs font-medium lowercase text-foreground">{serverLabel(site.web_server)}</span></div>
-        <div><span className="block text-[11px] text-muted-foreground">HTTPS</span><span className="mt-0.5 block text-xs font-medium text-foreground">{site.https ? "On" : "Off"}</span></div>
-        <div><span className="block text-[11px] text-muted-foreground">Aliases</span><span className="mt-0.5 block text-xs font-medium text-foreground">{site.aliases.length > 0 ? `${site.aliases.length} alias${site.aliases.length === 1 ? "" : "es"}` : "None"}</span></div>
-      </div>
+      {networkStrip ?? null}
 
-      <div className="border-b border-border/60 px-6">
-        <div role="tablist" aria-label="Site sections" className="flex gap-6">
-          {TABS.map(([id, labelFn]) => (
-            <button key={id} role="tab" type="button" aria-selected={tab === id} onClick={() => onTabChange(id)} className={cn("relative cursor-pointer py-3 text-xs font-medium transition-colors duration-150", tab === id ? "text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:rounded-full after:bg-primary" : "text-muted-foreground hover:text-foreground")}>
-              {labelFn(site)}
-            </button>
-          ))}
+      <RoutePanel site={site} dns={dns} mode={mode} pool={pool} />
+
+      <div className="mt-4 border-b border-border">
+        <div role="tablist" aria-label="Site sections" className="flex gap-1">
+          {TABS.map(([id, labelFn, countFn]) => {
+            const count = countFn(site);
+            return (
+              <button key={id} role="tab" type="button" aria-selected={tab === id} onClick={() => onTabChange(id)} className={cn("cursor-pointer px-3 py-2 text-[14px] transition-colors duration-150", tab === id ? "border-b-2 border-foreground -mb-px font-semibold text-foreground" : "text-ink-muted hover:text-foreground")}>
+                {labelFn(site)}
+                {count !== null && count > 0 ? <span className="ml-1.5 font-mono text-xs text-ink-muted">{count}</span> : null}
+              </button>
+            );
+          })}
         </div>
       </div>
 
-      <div className="p-6">
+      <div className="mt-4">
         {tab === "overview" && (
           <div className="space-y-6">
-            <div className="overflow-hidden rounded-lg border border-border/70 bg-surface-1/40">
-              <div className="flex items-center justify-between border-b border-border/60 bg-surface-2/20 px-4 py-2.5">
-                <h3 className="text-xs font-semibold text-foreground">Recent transitions</h3>
-                <Link to="/logs" className="flex items-center gap-1 text-xs text-primary hover:underline">All logs</Link>
-              </div>
-              <div className="divide-y divide-border/50 text-xs">
-                <div className="flex items-center justify-between px-4 py-2.5"><span className="font-mono text-foreground/90">{site.hostname}</span><span className="text-muted-foreground">stopped</span><span className="text-muted-foreground/70">2 min ago</span></div>
-                <div className="flex items-center justify-between px-4 py-2.5"><span className="font-mono text-foreground/90">{site.hostname}</span><span className="text-muted-foreground">restart requested</span><span className="text-muted-foreground/70">18 min ago</span></div>
-              </div>
-            </div>
-            <div className="overflow-hidden rounded-lg border border-border/70 bg-surface-1/40">
-              <div className="border-b border-border/60 bg-surface-2/20 px-4 py-2.5"><h3 className="text-xs font-semibold text-foreground">Local DNS</h3></div>
-              <div className="divide-y divide-border/50 font-mono text-xs">
-                <div className="flex items-center justify-between px-4 py-2.5"><span className="text-muted-foreground">resolve</span><span className="text-foreground">{configDnsMode === "hosts_file" ? "127.0.0.1 (hosts entry)" : `127.0.0.1 (*.${dnsSuffix ?? dns?.suffix ?? "test"} resolver)`}</span></div>
-                <div className="flex items-center justify-between px-4 py-2.5"><span className="text-muted-foreground">certificate</span><span className="text-foreground">{site.https ? (ca?.trusted ? "valid (DevX CA)" : "issued (CA untrusted)") : "not issued"}</span></div>
-              </div>
+            <div className="border border-border bg-surface px-6 py-4">
+              <KvHead>Identity</KvHead>
+              <dl>
+                <Kv label="URL" value={siteUrl(site)} mono />
+                <Kv label="Document root" value={site.docroot} mono />
+                <Kv label="Server" value={`${serverLabel(site.web_server)} · ${serverLoopback(site.web_server)}:${site.https ? site.https_port : site.port}`} mono />
+                <Kv label="Aliases" value={aliasesText} mono />
+              </dl>
+              <KvHead>Runtime</KvHead>
+              <dl>
+                <Kv label="PHP" value={site.php_version ? `${site.php_version}${pool ? ` · ${pool.workers} workers` : ""}` : "Static"} mono />
+                <Kv label="Endpoint" value={site.php_endpoint ?? "—"} mono />
+              </dl>
+              <KvHead>Trust</KvHead>
+              <dl>
+                <Kv label="Certificate" value={cert} />
+                <Kv label="DNS" value={dnsValue} mono />
+              </dl>
             </div>
             {overviewSlot}
           </div>

@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   eventsRecent: vi.fn(),
   servicesStartAll: vi.fn(),
   servicesStopAll: vi.fn(),
+  phpPoolList: vi.fn(),
 }));
 
 vi.mock("@/lib/ipc", async () => {
@@ -66,6 +67,7 @@ beforeEach(() => {
   mocks.diskUsage.mockResolvedValue([]);
   mocks.portMap.mockResolvedValue([]);
   mocks.eventsRecent.mockResolvedValue([]);
+  mocks.phpPoolList.mockResolvedValue([]);
 });
 
 describe("DashboardPage", () => {
@@ -352,11 +354,10 @@ describe("DashboardPage", () => {
     expect(links.map((link) => link.getAttribute("href"))).toEqual([
       "/components",
       "/sites",
-      "/terminal",
       "/logs",
     ]);
-    // Alt+2 and Alt+4 are installed by the shell; Terminal and Logs have none,
-    // so no shortcut is advertised for them.
+    // Alt+2 and Alt+4 are installed by the shell; Logs has none,
+    // so no shortcut is advertised for it.
     expect(screen.getByText("Alt 2")).toBeInTheDocument();
     expect(screen.getByText("Alt 4")).toBeInTheDocument();
     expect(screen.queryByText(/Ctrl/)).not.toBeInTheDocument();

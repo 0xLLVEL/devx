@@ -82,13 +82,12 @@ export function Dialog({
         onClose();
       }}
       className={cn(
-        "m-auto rounded-xl border border-line-strong bg-elevated p-0 text-foreground shadow-2xl backdrop:bg-black/65 backdrop:backdrop-blur-[10px] dialog-enter overflow-hidden",
+        "m-auto rounded-xl border border-line-strong bg-elevated p-0 text-foreground backdrop:bg-black/60 dialog-enter overflow-hidden",
         SIZES[size],
         className,
       )}
     >
-      <div className="relative flex items-start justify-between gap-4 border-b border-line-subtle p-5 pb-4">
-        <div className="absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-accent via-accent/40 to-transparent" />
+      <div className="flex items-start justify-between gap-4 border-b border-line-subtle p-5 pb-4">
         <div className="min-w-0 space-y-1">
           <h2 id={titleId} className="text-h2">
             {title}

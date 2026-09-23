@@ -10,9 +10,9 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Callout } from "@/components/ui/callout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { ipc, type LogFileInfo } from "@/lib/ipc";
+import { cn } from "@/lib/utils";
 
 const TAIL_LINES = 500;
 
@@ -28,7 +28,7 @@ export function LogsPage() {
   const active = selected ?? entries[0]?.file_name ?? null;
 
   return (
-    <div className="space-y-4 p-5">
+    <div className="space-y-6 p-8">
       {entries.length > 0 ? (
         <PageHeader
             title={`${entries.length} log file${entries.length === 1 ? "" : "s"} · ${formatBytes(
@@ -38,10 +38,10 @@ export function LogsPage() {
         />
       ) : null}
 
-      <div className="grid gap-4 lg:grid-cols-[280px_1fr]">
+      <div className="grid gap-6 lg:grid-cols-[280px_1fr]">
         <Card className="h-fit">
           <CardHeader>
-            <CardTitle className="text-base">Log files</CardTitle>
+            <CardTitle>Log files</CardTitle>
           </CardHeader>
           <CardContent>
             {files.isPending ? (
@@ -100,8 +100,8 @@ export function LogsPage() {
             {/* §121: the right panel is loading too — saying "select a file"
                 here would report an empty state that has not happened yet. */}
             <span className="sr-only">Loading logs…</span>
-            <span aria-hidden className="block h-4 w-64 animate-pulse rounded-sm bg-secondary" />
-            <span aria-hidden className="block h-4 w-40 animate-pulse rounded-sm bg-secondary" />
+            <span aria-hidden className="block h-4 w-64 shimmer-skeleton rounded-sm" />
+            <span aria-hidden className="block h-4 w-40 shimmer-skeleton rounded-sm" />
           </CardContent>
         </Card>
       ) : files.isError ? (
@@ -219,23 +219,42 @@ function LogViewer({ fileName }: { fileName: string }) {
 
   // Filtering is derived per render: the tail is small (≤ 500 lines) and
   // re-polling keeps it fresh, so a memo over the current lines is enough.
+  const allLines = content.data?.lines ?? [];
   const visible = useMemo(() => {
-    const lines = content.data?.lines ?? [];
     const needle = search.trim().toLowerCase();
-    return lines.filter((line) => {
+    return allLines.filter((line) => {
       if (level !== "all" && lineLevel(line) !== level) {
         return false;
       }
       return needle === "" || line.toLowerCase().includes(needle);
     });
-  }, [content.data?.lines, search, level]);
+  }, [allLines, search, level]);
   const filtering = search.trim() !== "" || level !== "all";
+
+  // Level chips carry counts over the whole tail (Frame 6), not the search hit.
+  const counts = useMemo(() => {
+    const tally = { all: allLines.length, error: 0, warn: 0, info: 0 };
+    for (const line of allLines) {
+      const bucket = lineLevel(line);
+      if (bucket !== "other") {
+        tally[bucket] += 1;
+      }
+    }
+    return tally;
+  }, [allLines]);
+
+  const chips: { id: LevelFilter; label: string; n: number; nClass?: string }[] = [
+    { id: "all", label: "All", n: counts.all },
+    { id: "error", label: "Errors", n: counts.error, nClass: "text-destructive" },
+    { id: "warn", label: "Warnings", n: counts.warn, nClass: "text-warning" },
+    { id: "info", label: "Info & debug", n: counts.info },
+  ];
 
   return (
     <Card>
       <CardHeader>
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <CardTitle className="data-value min-w-0 truncate text-sm" title={fileName}>
+          <CardTitle className="min-w-0 truncate font-mono" title={fileName}>
             {fileName}
           </CardTitle>
           <div className="flex items-center gap-3">
@@ -272,20 +291,28 @@ function LogViewer({ fileName }: { fileName: string }) {
               aria-label={`Search in ${fileName}`}
             />
           </div>
-          <Select
-            value={level}
-            onChange={(event) => setLevel(event.target.value as LevelFilter)}
-            className="w-36"
-            aria-label={`Filter ${fileName} by level`}
-          >
-            <option value="all">All levels</option>
-            <option value="info">Info & debug</option>
-            <option value="warn">Warnings</option>
-            <option value="error">Errors</option>
-          </Select>
+          <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label={`Filter ${fileName} by level`}>
+            {chips.map((chip) => (
+              <button
+                key={chip.id}
+                type="button"
+                aria-pressed={level === chip.id}
+                onClick={() => setLevel(chip.id)}
+                className={cn(
+                  "cursor-pointer border border-line-strong px-2.5 py-1 text-xs transition-colors duration-150 hover:bg-hover",
+                  level === chip.id && "border-foreground bg-surface-2 font-semibold text-foreground",
+                )}
+              >
+                {chip.label}
+                <span className={cn("ml-1.5 font-mono font-normal text-ink-muted", chip.nClass)}>
+                  {chip.n}
+                </span>
+              </button>
+            ))}
+          </div>
           {filtering ? (
             <span className="text-xs text-muted-foreground" role="status">
-              {visible.length} of {content.data?.lines.length ?? 0} lines
+              {visible.length} of {allLines.length} lines
             </span>
           ) : null}
         </div>
@@ -354,14 +381,24 @@ function LogViewer({ fileName }: { fileName: string }) {
                   }
                 />
               ) : (
-                visible.map((line, index) => (
-                  <div
-                    key={`${index}-${line.slice(0, 12)}`}
-                    className="data-value break-all"
-                  >
-                    {line}
-                  </div>
-                ))
+                visible.map((line, index) => {
+                  const bucket = lineLevel(line);
+                  return (
+                    <div
+                      key={`${index}-${line.slice(0, 12)}`}
+                      className={cn(
+                        "data-value break-all border-l-2 pl-2",
+                        bucket === "error"
+                          ? "border-destructive bg-surface-2"
+                          : bucket === "warn"
+                            ? "border-warning"
+                            : "border-transparent",
+                      )}
+                    >
+                      {line}
+                    </div>
+                  );
+                })
               )}
             </div>
           </>
